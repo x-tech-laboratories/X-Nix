@@ -11,6 +11,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool } from "./agents/agent.ts";
+import { probe_cache_server, type CacheServerReading, type Fetcher } from "./cache_server.ts";
 import { level_of_status, type CacheSettings, type Status } from "./config.ts";
 import type { Message } from "./deployment.ts";
 import { build_command, check_command, parse_report, push_command, report_mark, rows_status, target_row, targets, type TargetRow } from "./nixos/attic.ts";
@@ -46,6 +47,8 @@ export interface CacheOptions {
   agents: AgentPool;
   // The time in seconds, which tests set.
   now?: () => number;
+  // How the cache server's endpoints are fetched, which tests set.
+  fetch?: Fetcher;
 }
 
 const cache_job_kinds: JobKind[] = ["check", "build-target", "push"];
@@ -61,6 +64,7 @@ export class Cache {
   private readonly store: Store;
   private readonly agents: AgentPool;
   private readonly now: () => number;
+  private readonly fetcher: Fetcher;
   // Cycles and actions run one at a time.
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -69,6 +73,7 @@ export class Cache {
     this.store = options.store;
     this.agents = options.agents;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
+    this.fetcher = options.fetch ?? fetch;
   }
 
   get id(): string {
@@ -77,6 +82,10 @@ export class Cache {
 
   reading(): CacheReading | null {
     return this.store.cache_reading<CacheReading>(this.id);
+  }
+
+  server_reading(): CacheServerReading | null {
+    return this.store.cache_server_reading<CacheServerReading>(this.id);
   }
 
   running_job(): Job | null {
@@ -103,13 +112,24 @@ export class Cache {
 
   // ── Cycle ────────────────────────────────────────────────────────────────
 
-  // Follows the running job, or starts a check when none runs.
+  // Follows the running job, or starts a check when none runs, and reads the cache server's endpoints beside either.
   cycle(): Promise<void> {
     return this.serial(async () => {
       const job = this.running_job();
-      if (job !== null) return this.poll_job(job);
-      return this.launch_check();
+      await Promise.all([job !== null ? this.poll_job(job) : this.launch_check(), this.probe_server()]);
     });
+  }
+
+  // Saves what the cache server's endpoints answered, noting a change of their status once one was known.
+  private async probe_server(): Promise<void> {
+    const reading = await probe_cache_server(this.settings, this.fetcher, this.now());
+    if (reading === null) return;
+    const previous = this.server_reading();
+    this.store.save_cache_server_reading(this.id, reading);
+    if (previous === null || previous.status === reading.status) return;
+    const level = level_of_status[reading.status];
+    const reason = reading.messages.find((message) => message.level === level && level !== "info");
+    this.store.add_event(this.id, reading.checked_epoch, level, `Cache server now ${reading.status}${reason ? `: ${reason.text}` : ""}`);
   }
 
   private serial<Answer>(work: () => Promise<Answer>): Promise<Answer> {

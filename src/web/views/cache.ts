@@ -1,7 +1,7 @@
 // The Cache pages: every Attic cache as a card, and one cache with each target's build and push state and its buttons.
 
 import { api, type ActionOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
-import { age, h, stamp } from "../dom.ts";
+import { age, bytes, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import { events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile, type View } from "./shared.ts";
@@ -42,6 +42,7 @@ function cache_card(cache: Cache): HTMLElement {
       h("dt", {}, "Built"), h("dd", {}, count(cache, (row) => row.built === true)),
       h("dt", {}, "Pushed"), h("dd", {}, count(cache, (row) => row.pushed_ok)),
       h("dt", {}, "Checked"), h("dd", {}, reading ? age(reading.checked_epoch) : "—"),
+      cache.server && [h("dt", {}, "Server"), h("dd", { class: `tone-${status_tones[cache.server.status]}` }, server_word(cache))],
       job && [h("dt", {}, "Running"), h("dd", {}, `${job.kind}${job.progress ? `: ${job.progress}` : ""}`)],
     ));
 }
@@ -69,6 +70,7 @@ export function cache_view(id: string): View {
     return [
       tiles(cache),
       section("Findings", messages_list(cache.reading?.messages ?? [])),
+      cache.server && section(h("span", {}, "Cache server ", status_badge(cache.server.status)), server_details(cache)),
       section("Tracked targets", rows.length === 0 ? empty("Not checked yet.") : targets_table(cache, rows)),
       missing.length > 0 && section("Paths not in the cache", data_table<{ name: string; store_path: string }>([
         { label: "Target", cell: (item) => item.name },
@@ -142,7 +144,38 @@ function tiles(cache: Cache): HTMLElement {
     tile("Missing paths", reading ? missing.toLocaleString() : "—", missing > 0 ? "tone-edge-warn" : null),
     tile("Revision", short_revision(reading?.revision ?? null)),
     tile("Checked", reading ? age(reading.checked_epoch) : "—"),
+    cache.server && tile("Server", server_word(cache), cache.server.status === "online" ? null : `tone-edge-${status_tones[cache.server.status]}`),
+    cache.server?.size_bytes != null && tile("Cache size", bytes(cache.server.size_bytes)),
   );
+}
+
+// The cache server's state in a word or two.
+function server_word(cache: Cache): string {
+  const server = cache.server;
+  if (server === null) return "—";
+  if (server.status !== "online") return server.healthy === false ? "Unhealthy" : "Unreachable";
+  return server.healthy === true ? "Healthy" : "Answering";
+}
+
+// What the cache server's own endpoints answered.
+function server_details(cache: Cache): HTMLElement[] {
+  const server = cache.server!;
+  const code = (text: string) => h("code", {}, text);
+  const rows: Parameters<typeof facts>[0] = [];
+  if (cache.server_urls.info !== null) rows.push(["Cache info", code(cache.server_urls.info)]);
+  for (const [key, value] of Object.entries(server.info ?? {})) rows.push([key, value]);
+  if (cache.server_urls.health !== null) rows.push(["Health", h("span", {}, code(cache.server_urls.health), ` ${server.healthy === null ? "" : server.healthy ? "healthy" : "not healthy"}`)]);
+  if (cache.server_urls.metrics !== null) rows.push(["Metrics", code(cache.server_urls.metrics)]);
+  if (server.size_bytes !== null) rows.push(["Size", bytes(server.size_bytes)]);
+  rows.push(["Last read", h("span", { title: stamp(server.checked_epoch) }, age(server.checked_epoch))]);
+  const parts = [messages_list(server.messages), facts(rows, "rows")];
+  if (server.metrics.length > 0) {
+    parts.push(data_table<{ name: string; value: number }>([
+      { label: "Metric", cell: (sample) => h("code", { class: "small" }, sample.name) },
+      { label: "Value", cell: (sample) => (/_bytes(\{|$)/.test(sample.name) ? bytes(sample.value) : sample.value.toLocaleString()) },
+    ], server.metrics, "Cache server metrics"));
+  }
+  return parts;
 }
 
 function details(cache: Cache): HTMLElement {

@@ -182,6 +182,16 @@ export interface CacheReading {
   rows: TargetRow[];
 }
 
+export interface CacheServerReading {
+  status: Status;
+  checked_epoch: number;
+  messages: Message[];
+  info: Record<string, string> | null;
+  healthy: boolean | null;
+  size_bytes: number | null;
+  metrics: { name: string; value: number }[];
+}
+
 export interface Cache {
   id: string;
   name: string;
@@ -191,6 +201,8 @@ export interface Cache {
   interval: number;
   can_push: boolean;
   reading: CacheReading | null;
+  server_urls: { info: string | null; health: string | null; metrics: string | null };
+  server: CacheServerReading | null;
   running_job: Job | null;
   targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
 }

@@ -92,6 +92,10 @@ const schema = `
     job_id INTEGER NOT NULL,
     added_epoch INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS cache_server_state (
+    cache_id TEXT PRIMARY KEY,
+    reading TEXT
+  );
 `;
 
 const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, output_offset, trigger, started_epoch, finished_epoch";
@@ -161,6 +165,17 @@ export class Store {
 
   save_cache_reading(cache_id: string, reading: unknown): void {
     this.database.prepare(`INSERT INTO cache_state (cache_id, reading) VALUES (?, ?)
+      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`).run(cache_id, JSON.stringify(reading));
+  }
+
+  // What the cache server's own endpoints last answered.
+  cache_server_reading<Shape>(cache_id: string): Shape | null {
+    const row = this.database.prepare("SELECT reading FROM cache_server_state WHERE cache_id = ?").get(cache_id) as { reading: string | null } | undefined;
+    return row?.reading ? (JSON.parse(row.reading) as Shape) : null;
+  }
+
+  save_cache_server_reading(cache_id: string, reading: unknown): void {
+    this.database.prepare(`INSERT INTO cache_server_state (cache_id, reading) VALUES (?, ?)
       ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`).run(cache_id, JSON.stringify(reading));
   }
 

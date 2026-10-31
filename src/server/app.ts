@@ -10,6 +10,7 @@ import type { AgentHub } from "./agents/hub.ts";
 import { register_agent_route } from "./agents/route.ts";
 import { register_auth } from "./auth.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
+import type { CacheServerReading } from "./cache_server.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Poller } from "./poller.ts";
@@ -99,6 +100,9 @@ export interface CacheView {
   interval: number;
   can_push: boolean;
   reading: CacheReading | null;
+  // The cache server's endpoints, and what they last answered.
+  server_urls: { info: string | null; health: string | null; metrics: string | null };
+  server: CacheServerReading | null;
   running_job: Job | null;
   // Each tracked target with where its build is rooted and why each action cannot run on it now.
   targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
@@ -163,6 +167,8 @@ function cache_view(cache: Cache): CacheView {
     interval: settings.interval,
     can_push: settings.push_command !== null,
     reading: cache.reading(),
+    server_urls: { info: settings.info_url, health: settings.health_url, metrics: settings.metrics_url },
+    server: cache.server_reading(),
     running_job: cache.running_job(),
     targets: targets(settings).map(([name, installable]) => ({
       name, installable, build_link: build_link(settings, name), kept_only_in_cache: settings.drop_pushed.includes(name),

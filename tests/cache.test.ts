@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
+import { parse_metrics, probe_cache_server, type Fetcher } from "../src/server/cache_server.ts";
 import { ConfigError, cache_settings, parse_config, type CacheSettings } from "../src/server/config.ts";
 import { build_script, check_command, check_script, parse_report, push_script, report_mark } from "../src/server/nixos/attic.ts";
 import { Store } from "../src/server/store.ts";
@@ -45,13 +46,27 @@ interface Harness {
   cache: Cache;
   agent: FakeAgent;
   store: Store;
+  // What each URL the cache server is asked for answers, by URL; a missing one cannot be reached.
+  answers: Map<string, [status: number, body: string]>;
 }
+
+// A cache server answering from a table of URLs.
+function fake_fetch(answers: Map<string, [number, string]>): Fetcher {
+  return async (url) => {
+    const answer = answers.get(url);
+    if (answer === undefined) throw new Error("connect ECONNREFUSED");
+    return { ok: answer[0] >= 200 && answer[0] < 300, status: answer[0], text: async () => answer[1] };
+  };
+}
+
+const cache_info = "StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 41\n";
 
 function make_cache(values: Record<string, unknown> = {}): Harness {
   const store = new Store(":memory:");
   const agent = new FakeAgent();
-  const cache = new Cache(settings(values), { store, agents: new AgentPool("host", agent), now: () => clock.now });
-  return { cache, agent, store };
+  const answers = new Map<string, [number, string]>([["https://cache.example/fleet/nix-cache-info", [200, cache_info]]]);
+  const cache = new Cache(settings(values), { store, agents: new AgentPool("host", agent), now: () => clock.now, fetch: fake_fetch(answers) });
+  return { cache, agent, store, answers };
 }
 
 // Launches a check and ends it with this output.
@@ -385,6 +400,67 @@ describe("actions", () => {
     await harness.cache.cycle();
     expect(harness.cache.reading()).toEqual(before);
     expect(harness.store.events("fleet")[0].message).toBe("Build failed: Exited with status 1");
+  });
+});
+
+// ── Cache server ─────────────────────────────────────────────────────────────
+
+describe("cache server", () => {
+  const endpoints = { health_url: "https://cache.example/health", metrics_url: "https://cache.example/metrics", size_metric: "attic_storage_bytes" };
+  const metrics_text = [
+    "# HELP attic_storage_bytes Bytes stored.",
+    "# TYPE attic_storage_bytes gauge",
+    'attic_storage_bytes{backend="local"} 1024',
+    'attic_storage_bytes{backend="s3"} 2048',
+    "http_requests_total 17",
+    "garbage line",
+  ].join("\n");
+
+  it("reads nix-cache-info beside an http cache by default, and nothing for another store", () => {
+    expect(settings().info_url).toBe("https://cache.example/fleet/nix-cache-info");
+    expect(settings({ cache_url: "https://cache.example/fleet/" }).info_url).toBe("https://cache.example/fleet/nix-cache-info");
+    expect(settings({ cache_url: "ssh://builder" }).info_url).toBeNull();
+    expect(settings({ info_url: false }).info_url).toBeNull();
+  });
+
+  it("parses Prometheus samples, skipping comments and unreadable lines", () => {
+    expect(parse_metrics(metrics_text)).toEqual([
+      { name: 'attic_storage_bytes{backend="local"}', value: 1024 },
+      { name: 'attic_storage_bytes{backend="s3"}', value: 2048 },
+      { name: "http_requests_total", value: 17 },
+    ]);
+  });
+
+  it("is online with its info, health and size", async () => {
+    const harness = make_cache(endpoints);
+    harness.answers.set("https://cache.example/health", [200, "OK"]);
+    harness.answers.set("https://cache.example/metrics", [200, metrics_text]);
+
+    await harness.cache.cycle();
+
+    const server = harness.cache.server_reading()!;
+    expect(server).toMatchObject({ status: "online", healthy: true, size_bytes: 3072, info: { StoreDir: "/nix/store", Priority: "41" } });
+    expect(server.metrics.map((sample) => sample.name)).toEqual(['attic_storage_bytes{backend="local"}', 'attic_storage_bytes{backend="s3"}']);
+  });
+
+  it("raises server_status when unhealthy or unreachable, and notes the change", async () => {
+    const harness = make_cache({ ...endpoints, server_status: "failed" });
+    harness.answers.set("https://cache.example/health", [200, "OK"]);
+    harness.answers.set("https://cache.example/metrics", [200, metrics_text]);
+    await harness.cache.cycle();
+    harness.answers.set("https://cache.example/health", [503, "database down"]);
+
+    await harness.cache.cycle();
+
+    expect(harness.cache.server_reading()).toMatchObject({ status: "failed", healthy: false });
+    expect(harness.store.events("fleet")[0].message).toBe("Cache server now failed: Not healthy: https://cache.example/health answered 503: database down");
+  });
+
+  it("is unavailable when nix-cache-info cannot be read, and is left alone with no endpoints", async () => {
+    const unreachable = await probe_cache_server(settings({ cache_url: "https://elsewhere.example" }), fake_fetch(new Map()), clock.now);
+    expect(unreachable?.messages[0].text).toContain("Could not reach https://elsewhere.example/nix-cache-info");
+    expect(unreachable?.status).toBe("warning");
+    expect(await probe_cache_server(settings({ info_url: false }), fake_fetch(new Map()), clock.now)).toBeNull();
   });
 });
 

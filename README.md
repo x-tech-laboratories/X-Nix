@@ -149,6 +149,17 @@ the job checks that target again once it ends. Cache ids share one space with de
 | `build_links`    | `<cache id>-<target>`             | Each target's link name under `build_root_dir`.                         |
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
+| `info_url`       | `<cache_url>/nix-cache-info` for an http cache | The cache server's nix-cache-info, or `false` to not read it.  |
+| `health_url`     | none                              | The cache server's health check; any 2xx answer is healthy.           |
+| `metrics_url`    | none                              | The cache server's Prometheus metrics, such as `/metrics`.              |
+| `size_metric`    | none                              | The metric whose samples add up to the cache's size in bytes.           |
+| `server_status`  | `warning`                         | The status an unreachable or unhealthy cache server raises.             |
+
+Every cycle the X-Nix server also fetches the cache server's own `info_url`, `health_url` and
+`metrics_url`, each named or derived, and the cache's page shows what they answered with a status of
+its own, apart from the targets': the store directory and priority, whether it reports itself healthy,
+its size from `size_metric`, and every metric ending in `_bytes`. A cache needing a token to read is
+not read with one, so it shows the status it answered with.
 
 ## Provisioning
 

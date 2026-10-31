@@ -37,7 +37,9 @@
       "cache_url": "https://attic.example/fleet",
       "build_root_dir": "/var/lib/x-nix/build-roots",
       "drop_pushed": ["server"],
-      "push_command": "attic push fleet"
+      "push_command": "attic push fleet",
+      "health_url": "https://attic.example/health",
+      "metrics_url": "https://attic.example/metrics"
     }
   ],
   "provisioning": {

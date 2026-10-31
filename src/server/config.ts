@@ -114,6 +114,14 @@ export interface CacheSettings {
   push_command: string | null;
   // Targets kept only in the cache once fully pushed.
   drop_pushed: string[];
+  // The cache server's own endpoints, each read by the X-Nix server; null when not read.
+  info_url: string | null;
+  health_url: string | null;
+  metrics_url: string | null;
+  // The metric whose samples add up to the cache's size in bytes.
+  size_metric: string | null;
+  // The status an unreachable or unhealthy cache server raises.
+  server_status: Status;
 }
 
 // How new hosts are installed with nixos-anywhere, and where install media is built.
@@ -258,7 +266,17 @@ export function cache_settings(entry: unknown, index = 0): CacheSettings {
     build_links: read.names("build_links"),
     push_command: read.text("push_command"),
     drop_pushed: read.list("drop_pushed", []),
+    info_url: values.info_url === false ? null : read.text("info_url") ?? default_info_url(cache_url),
+    health_url: read.text("health_url"),
+    metrics_url: read.text("metrics_url"),
+    size_metric: read.text("size_metric"),
+    server_status: read.status("server_status", "warning"),
   };
+}
+
+// An http cache answers its nix-cache-info beside its paths; any other store has no URL to read.
+function default_info_url(cache_url: string): string | null {
+  return /^https?:\/\//.test(cache_url) ? `${cache_url.replace(/\/+$/, "")}/nix-cache-info` : null;
 }
 
 export function deployment_settings(entry: unknown, index = 0): DeploymentSettings {
