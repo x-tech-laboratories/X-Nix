@@ -1,15 +1,42 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { hostname } from "node:os";
+import { join } from "node:path";
+
+import { AgentPool } from "./agents/agent.ts";
+import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
+import { load_config, type Config } from "./config.ts";
+import { Deployment } from "./deployment.ts";
+import { Poller } from "./poller.ts";
+import { Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 7720);
 const is_production = process.env.NODE_ENV === "production";
+const state_directory = process.env.X_NIX_STATE_DIR ?? "state";
+const config_path = process.env.X_NIX_CONFIG;
+const server_name = process.env.X_NIX_SERVER_NAME || hostname();
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-const app = await build_app({ serve_web: is_production, logger: true, server_name: process.env.X_NIX_SERVER_NAME });
+const config: Config = config_path ? load_config(config_path) : { deployments: [] };
+const store = new Store(join(state_directory, "x-nix.sqlite"));
+// The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
+const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
+const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
+const poller = new Poller(deployments);
+const app = await build_app({ serve_web: is_production, logger: true, server_name, store, poller });
+
+app.addHook("onClose", async () => {
+  poller.stop();
+  store.close();
+});
+
+if (!config_path) app.log.warn("X_NIX_CONFIG is not set, so there are no deployments to watch");
+app.log.info(`Watching ${deployments.length} deployments`);
 
 await app.listen({ host, port });
+poller.start();

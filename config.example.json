@@ -1,0 +1,21 @@
+{
+  "deployments": [
+    {
+      "id": "workstation",
+      "name": "Workstation",
+      "flake": "/etc/nixos",
+      "configuration": "workstation",
+      "max_input_age": "14d",
+      "build_at": "03:00"
+    },
+    {
+      "id": "server",
+      "host": "server",
+      "flake": "github:example/nixos-config",
+      "push_ssh_key": "/var/lib/x-nix/deploy_key",
+      "update_at": "02:00",
+      "auto_switch": true,
+      "auto_switch_after": "30m"
+    }
+  ]
+}

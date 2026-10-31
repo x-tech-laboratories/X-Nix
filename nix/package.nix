@@ -35,7 +35,7 @@ buildNpmPackage {
 
     mkdir -p $out/lib/x-nix/src
     cp -r package.json dist node_modules $out/lib/x-nix/
-    cp -r src/server $out/lib/x-nix/src/
+    cp -r src/server src/agent src/shared $out/lib/x-nix/src/
 
     makeWrapper ${lib.getExe nodejs_24} $out/bin/x-nix \
       --add-flags $out/lib/x-nix/src/server/main.ts \

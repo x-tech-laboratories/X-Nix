@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev:server": "node --watch src/server/main.ts",
+    "dev:server": "X_NIX_CONFIG=${X_NIX_CONFIG:-config.example.json} node --watch src/server/main.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production node src/server/main.ts",

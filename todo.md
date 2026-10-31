@@ -15,7 +15,7 @@ only the job of watching X-Nix itself, as it does for X-Backups.
 
 1. [ ] **Port X-Monitor's NixOS functions.** Bring every NixOS management function across from
    X-Monitor, then remove it there. Sources, under `../X-Monitor/x_monitor/plugins/`:
-   - `nixos_upgrade.py`: deployment drift, comparing `/run/current-system` with what
+   - **Ported.** `nixos_upgrade.py`: deployment drift, comparing `/run/current-system` with what
      `<flake>#nixosConfigurations.<host>.config.system.build.toplevel` evaluates to, plus the
      running generation, NixOS version, flake revision (`nix flake metadata`) and input ages
      (`max_input_age`).
@@ -32,7 +32,7 @@ only the job of watching X-Nix itself, as it does for X-Backups.
        since the running generation; `update_at` and `build_at` daily slots, with a missed slot
        run once on return; `switch_wrapper` and `post_switch` hooks; `require_sudo`, `nix_bin`,
        `rebuild_bin`, `nix_args`, `rebuild_args`.
-   - `base/nixos_boot.py` and the NixOS part of `reboot_required.py`: reboot needed when the
+   - **Ported.** `base/nixos_boot.py` and the NixOS part of `reboot_required.py`: reboot needed when the
      booted and current `initrd`, `kernel`, `kernel-modules` or `systemd` differ.
    - `nix_gc.py`: store size and path count, every profile's generations, the `nix-gc` unit and
      timer, the last collection's freed space from the journal (kept after the journal rotates),
@@ -42,12 +42,15 @@ only the job of watching X-Nix itself, as it does for X-Backups.
      actions, `build_links`, and `drop_pushed` to keep a closure only in the cache.
    - `host_control.py`, where it concerns boot: boot entries, the default and one-shot next-boot
      entry, reboot.
-   - The Fleet view's "NixOS deployments" tiles (`../X-Monitor/x_monitor/core/ui/views/fleet.py`):
+   - **Ported.** The Fleet view's "NixOS deployments" tiles (`../X-Monitor/x_monitor/core/ui/views/fleet.py`):
      one per deployment with its generation and in-sync, drifting or failed state.
    - The agent's NixOS module (`../X-Monitor/nix/agent-module.nix`): detached jobs such as
      `nixos-rebuild switch` outliving the agent unit, secrets read at runtime rather than from the
      store, `/run/wrappers` first on `PATH`.
-   - Bring the matching tests under `../X-Monitor/tests/plugins/` across as specifications.
+   - Bring the matching tests under `../X-Monitor/tests/plugins/` across as specifications
+     (`test_nixos_upgrade.py` is in `tests/deployment.test.ts` and `tests/commands.test.ts`).
+   - Agents on other hosts, so `host`, `eval_agent`, `build_agent` and `switch_agent` can name
+     them; only the server's own host has an agent so far.
 
 2. [ ] **Assess existing NixOS tooling.** Survey web and desktop software for NixOS deployment,
    installation and orchestration, and list the features worth integrating, each with where it

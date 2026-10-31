@@ -10,14 +10,6 @@ interface Upcoming {
 }
 
 export const upcoming_sections: Record<string, Upcoming> = {
-  deployments: {
-    title: "Deployments",
-    summary: "Each host's running system against what its flake builds, with update, build, switch and reboot.",
-  },
-  jobs: {
-    title: "Jobs",
-    summary: "Every evaluation, update, build, switch and reboot, with its output.",
-  },
   store: {
     title: "Store",
     summary: "The Nix store's size, every profile's generations, and garbage collection.",
