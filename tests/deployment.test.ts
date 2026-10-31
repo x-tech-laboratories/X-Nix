@@ -714,6 +714,14 @@ describe("daily jobs", () => {
     expect(() => make_deployment({ build_at: "half past two" })).toThrow(/build_at/);
   });
 
+  it("refuse a switch from the cache that would skip the guarded switch", () => {
+    const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
+
+    expect(() => make_deployment({ ...from_cache, magic_rollback: true })).toThrow(/switch_from_cache/);
+    expect(() => make_deployment({ ...from_cache, health_commands: ["true"] })).toThrow(/switch_from_cache/);
+    expect(() => make_deployment(from_cache)).not.toThrow();
+  });
+
   it("take the latest slot, never one in the future", () => {
     const one_am = new Date(2026, 9, 10, 1, 0).getTime() / 1000;
 

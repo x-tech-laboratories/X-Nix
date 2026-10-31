@@ -340,7 +340,7 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
   const pin = read.text("pin");
   if (pin !== null && !is_pin(pin)) throw new ConfigError(`\`pin\` of ${read.owner} must be a commit hash or a tag name`);
   if (pin !== null && pinned_flake(flake, pin) === null) throw new ConfigError(`\`pin\` of ${read.owner} needs a git or forge flake, not ${flake}`);
-  return {
+  const settings: DeploymentSettings = {
     id,
     name: read.text("name") ?? id,
     host: read.text("host"),
@@ -391,6 +391,12 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     tags,
     pin,
   };
+  // A switch from the cache activates the store path directly, so it cannot run the guarded switch's checks and watchdog.
+  const guarded = settings.pre_switch_checks.length > 0 || settings.magic_rollback || settings.health_commands.length > 0 || settings.health_urls.length > 0;
+  if (switch_from_cache && guarded) {
+    throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which cannot be combined with pre_switch_checks, magic_rollback or health checks`);
+  }
+  return settings;
 }
 
 function gc_settings(entry: unknown, owner: string): GcSettings | null {
