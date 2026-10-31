@@ -7,9 +7,11 @@ import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastify_static from "@fastify/static";
 
 import { register_auth } from "./auth.ts";
+import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Poller } from "./poller.ts";
+import { build_link, targets } from "./nixos/attic.ts";
 import { collect_command } from "./nixos/garbage.ts";
 import type { EventRow, Job, JobKind, Store } from "./store.ts";
 
@@ -61,6 +63,20 @@ export interface DeploymentView {
   actions: ActionView[];
 }
 
+export interface CacheView {
+  id: string;
+  name: string;
+  host: string | null;
+  flake: string;
+  cache_url: string;
+  interval: number;
+  can_push: boolean;
+  reading: CacheReading | null;
+  running_job: Job | null;
+  // Each tracked target with where its build is rooted and why each action cannot run on it now.
+  targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
+}
+
 const action_labels: Record<ActionId, string> = {
   update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
 };
@@ -103,6 +119,25 @@ function deployment_view(deployment: Deployment): DeploymentView {
       label: action_labels[id],
       refusal: deployment.action_refusal(id),
       confirm: confirmations[id]?.(settings.name) ?? null,
+    })),
+  };
+}
+
+function cache_view(cache: Cache): CacheView {
+  const settings = cache.settings;
+  return {
+    id: settings.id,
+    name: settings.name,
+    host: settings.host,
+    flake: settings.flake,
+    cache_url: settings.cache_url,
+    interval: settings.interval,
+    can_push: settings.push_command !== null,
+    reading: cache.reading(),
+    running_job: cache.running_job(),
+    targets: targets(settings).map(([name, installable]) => ({
+      name, installable, build_link: build_link(settings, name), kept_only_in_cache: settings.drop_pushed.includes(name),
+      refusals: { build: cache.action_refusal("build", name), push: cache.action_refusal("push", name) },
     })),
   };
 }
@@ -156,6 +191,44 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.get<{ Params: { id: string } }>("/api/deployments/:id/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
     const deployment = find(request.params.id, reply);
     return deployment === null ? reply : store.events(deployment.id);
+  });
+
+  // ── Caches ───────────────────────────────────────────────────────────────
+
+  const find_cache = (id: string, reply: FastifyReply): Cache | null => {
+    const cache = poller.caches.get(id) ?? null;
+    if (cache === null) void reply.code(404).send({ error: `No cache named '${id}'` });
+    return cache;
+  };
+
+  app.get("/api/caches", async (): Promise<CacheView[]> => [...poller.caches.values()].map(cache_view));
+
+  app.get<{ Params: { id: string } }>("/api/caches/:id", async (request, reply) => {
+    const cache = find_cache(request.params.id, reply);
+    return cache === null ? reply : cache_view(cache);
+  });
+
+  // Checks every target now, unless a job is already running.
+  app.post<{ Params: { id: string } }>("/api/caches/:id/refresh", async (request, reply) => {
+    const cache = find_cache(request.params.id, reply);
+    if (cache === null) return reply;
+    await poller.refresh(cache);
+    return cache_view(cache);
+  });
+
+  app.post<{ Params: { id: string; name: string; action: string } }>("/api/caches/:id/targets/:name/:action", async (request, reply) => {
+    const cache = find_cache(request.params.id, reply);
+    if (cache === null) return reply;
+    const action = request.params.action as CacheActionId;
+    if (!cache_action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
+    const outcome = await cache.act(action, request.params.name);
+    if (outcome.ok) poller.soon(cache);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/caches/:id/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
+    const cache = find_cache(request.params.id, reply);
+    return cache === null ? reply : store.events(cache.id);
   });
 
   // ── Jobs ─────────────────────────────────────────────────────────────────

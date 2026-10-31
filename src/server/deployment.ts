@@ -25,6 +25,7 @@ import {
   type Collection, type StoreReading,
 } from "./nixos/garbage.ts";
 import { parse_probe, probe_script, reboot_required, type ProbeFields } from "./nixos/probe.ts";
+import { follow, type Followed } from "./runs.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -545,31 +546,9 @@ export class Deployment {
     return job_id;
   }
 
-  // Copies a long run's new output into its job and finishes the job once the run has ended.
-  private async follow(job: Job): Promise<{ outcome: "running" | "ended" | "unreachable"; error: string }> {
-    const agent = this.agents.get(job.agent);
-    let offset = job.output_offset;
-    let poll;
-    try {
-      do {
-        poll = await agent.poll(job.run_id!, offset);
-        this.store.append_output(job.id, poll.new_output, poll.next_offset);
-        offset = poll.next_offset;
-      } while (offset < poll.size && poll.new_output !== "");
-    } catch (error) {
-      if (error instanceof AgentError && error.unreachable) return { outcome: "unreachable", error: error.message };
-      // A run the agent no longer knows has ended without a word.
-      poll = { alive: false, exit_code: null };
-    }
-    if (poll.alive) return { outcome: "running", error: "" };
-
-    let error: string | null = null;
-    if (poll.exit_code === null) error = "The run ended without writing an exit code";
-    else if (poll.exit_code === timed_out_exit_code && job.kind === "eval") error = `Timed out after ${format_duration(this.settings.eval_timeout)}`;
-    else if (poll.exit_code !== 0) error = `Exited with status ${poll.exit_code}`;
-    this.store.finish_job(job.id, error === null ? "succeeded" : "failed", poll.exit_code, error, this.now());
-    await agent.forget(job.run_id!);
-    return { outcome: "ended", error: error ?? "" };
+  private follow(job: Job): Promise<Followed> {
+    const timed_out = (exit_code: number) => (exit_code === timed_out_exit_code && job.kind === "eval" ? `Timed out after ${format_duration(this.settings.eval_timeout)}` : null);
+    return follow(this.store, this.agents, job, this.now, timed_out);
   }
 
   private async poll_job(job: Job): Promise<void> {

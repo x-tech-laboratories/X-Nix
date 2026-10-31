@@ -23,7 +23,7 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
@@ -139,6 +139,43 @@ export interface Deployment {
   evaluating: boolean;
   running_job: Job | null;
   actions: ActionView[];
+}
+
+export type CacheActionId = "build" | "push";
+
+export interface TargetRow {
+  name: string;
+  target: string | null;
+  built: boolean | null;
+  local: boolean;
+  own: number | null;
+  missing_count: number;
+  missing: string[];
+  pushed_ok: boolean;
+  pushed: string;
+  status: Status;
+  summary: string;
+}
+
+export interface CacheReading {
+  status: Status;
+  checked_epoch: number;
+  messages: Message[];
+  revision: string | null;
+  rows: TargetRow[];
+}
+
+export interface Cache {
+  id: string;
+  name: string;
+  host: string | null;
+  flake: string;
+  cache_url: string;
+  interval: number;
+  can_push: boolean;
+  reading: CacheReading | null;
+  running_job: Job | null;
+  targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
 }
 
 export interface EventRow {

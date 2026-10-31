@@ -10,10 +10,6 @@ interface Upcoming {
 }
 
 export const upcoming_sections: Record<string, Upcoming> = {
-  cache: {
-    title: "Cache",
-    summary: "Whether each closure is built from the flake's latest revision and pushed to the Attic cache.",
-  },
   boot: {
     title: "Boot",
     summary: "Boot entries, the next boot's entry, and whether a reboot is needed.",

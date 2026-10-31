@@ -1,5 +1,6 @@
-// Keeps what X-Nix learns in one SQLite file: each deployment's evaluation and last reading, its jobs with their
-// output, and its events.
+// Keeps what X-Nix learns in one SQLite file: each deployment's evaluation and last reading, each cache's last reading,
+// and the jobs with their output and the events of both. Jobs and events name their deployment or cache in
+// `deployment_id`, as ids are unique across the two.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -9,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push";
 export type JobState = "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 
@@ -81,6 +82,10 @@ const schema = `
     message TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS events_by_deployment ON events (deployment_id, id);
+  CREATE TABLE IF NOT EXISTS cache_state (
+    cache_id TEXT PRIMARY KEY,
+    reading TEXT
+  );
 `;
 
 const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, output_offset, trigger, started_epoch, finished_epoch";
@@ -88,7 +93,8 @@ const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exi
 export interface JobFilter {
   deployment_id?: string;
   kind?: JobKind;
-  // Evaluations run every hour and would push every other job out of the list, so they are left out unless asked for.
+  // Evaluations and cache checks run every hour and would push every other job out of the list, so they are left out
+  // unless asked for.
   include_evaluations?: boolean;
   limit?: number;
 }
@@ -132,6 +138,18 @@ export class Store {
     return row?.value ? (JSON.parse(row.value) as Shape) : null;
   }
 
+  // ── Cache state ──────────────────────────────────────────────────────────
+
+  cache_reading<Shape>(cache_id: string): Shape | null {
+    const row = this.database.prepare("SELECT reading FROM cache_state WHERE cache_id = ?").get(cache_id) as { reading: string | null } | undefined;
+    return row?.reading ? (JSON.parse(row.reading) as Shape) : null;
+  }
+
+  save_cache_reading(cache_id: string, reading: unknown): void {
+    this.database.prepare(`INSERT INTO cache_state (cache_id, reading) VALUES (?, ?)
+      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`).run(cache_id, JSON.stringify(reading));
+  }
+
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   create_job(job: Pick<Job, "deployment_id" | "kind" | "command" | "agent" | "run_id" | "trigger" | "started_epoch">): number {
@@ -145,6 +163,10 @@ export class Store {
     const progress = text.split("\n").map((line) => line.trim()).filter(Boolean).pop()?.slice(0, 200) ?? null;
     this.database.prepare(`UPDATE jobs SET output = output || ?, progress = COALESCE(?, progress),
       output_offset = COALESCE(?, output_offset) WHERE id = ?`).run(text, progress, output_offset, job_id);
+  }
+
+  set_progress(job_id: number, progress: string): void {
+    this.database.prepare("UPDATE jobs SET progress = ? WHERE id = ?").run(progress.slice(0, 200), job_id);
   }
 
   finish_job(job_id: number, state: Exclude<JobState, "running">, exit_code: number | null, error: string | null, finished_epoch: number): void {
@@ -174,7 +196,7 @@ export class Store {
     if (filter.kind !== undefined) {
       conditions.push("kind = ?");
       values.push(filter.kind);
-    } else if (!filter.include_evaluations) conditions.push("kind != 'eval'");
+    } else if (!filter.include_evaluations) conditions.push("kind NOT IN ('eval', 'check')");
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.database.prepare(`SELECT ${job_columns} FROM jobs ${where} ORDER BY id DESC LIMIT ${Math.trunc(filter.limit ?? 100)}`).all(...values);
     return rows as unknown as Job[];

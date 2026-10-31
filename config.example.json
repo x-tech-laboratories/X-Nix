@@ -18,5 +18,17 @@
       "auto_switch": true,
       "auto_switch_after": "30m"
     }
+  ],
+  "caches": [
+    {
+      "id": "fleet-cache",
+      "name": "Fleet cache",
+      "flake": "github:example/nixos-config",
+      "configurations": ["workstation", "server"],
+      "cache_url": "https://attic.example/fleet",
+      "build_root_dir": "/var/lib/x-nix/build-roots",
+      "drop_pushed": ["server"],
+      "push_command": "attic push fleet"
+    }
   ]
 }

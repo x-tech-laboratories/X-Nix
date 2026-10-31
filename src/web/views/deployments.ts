@@ -5,7 +5,8 @@ import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { crumbs, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import {
-  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, tile, type View,
+  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile,
+  type View,
 } from "./shared.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
@@ -126,11 +127,4 @@ function details(deployment: Deployment): HTMLElement {
   if (evaluation.eval_error) rows.push(["Evaluation error", h("pre", { class: "output" }, evaluation.eval_error)]);
   if (evaluation.metadata_error) rows.push(["Metadata error", h("pre", { class: "output" }, evaluation.metadata_error)]);
   return facts(rows, "rows");
-}
-
-// A flake revision cut to fit a tile, keeping the -dirty mark.
-function short_revision(revision: string | null): string {
-  if (!revision) return "—";
-  const dash = revision.indexOf("-");
-  return dash === -1 ? revision.slice(0, 8) : revision.slice(0, Math.min(dash, 8)) + revision.slice(dash);
 }

@@ -82,12 +82,22 @@ export function action_button(deployment: Deployment, action: ActionView, done: 
   }, action.label);
 }
 
+// A flake revision cut to fit a tile, keeping the -dirty mark.
+export function short_revision(revision: string | null): string {
+  if (!revision) return "—";
+  const dash = revision.indexOf("-");
+  return dash === -1 ? revision.slice(0, 8) : revision.slice(0, Math.min(dash, 8)) + revision.slice(dash);
+}
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
+
+// The jobs a cache runs, whose owner is a cache rather than a deployment.
+const cache_job_kinds = new Set<Job["kind"]>(["check", "build-target", "push"]);
 
 export function jobs_table(jobs: Job[], show_deployment: boolean): HTMLElement {
   return data_table<Job>([
     { label: "Job", cell: (job) => h("a", { href: link(["jobs", String(job.id)]) }, `${job.kind} #${job.id}`) },
-    ...(show_deployment ? [{ label: "Deployment", cell: (job: Job) => h("a", { href: link(["deployments", job.deployment_id]) }, job.deployment_id) }] : []),
+    ...(show_deployment ? [{ label: "For", cell: (job: Job) => h("a", { href: link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]) }, job.deployment_id) }] : []),
     { label: "State", cell: (job) => job_badge(job.state) },
     { label: "Started", cell: (job) => h("span", { title: stamp(job.started_epoch) }, age(job.started_epoch)) },
     { label: "By", cell: (job) => job.trigger },

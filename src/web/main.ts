@@ -4,6 +4,7 @@ import { api, LoginNeeded } from "./api.ts";
 import { h } from "./dom.ts";
 import { current_route } from "./router.ts";
 import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
+import { cache_view, caches_view } from "./views/cache.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
@@ -29,6 +30,8 @@ function view_for(parts: string[]): View {
   if (section === "deployments") return deployments_view();
   if (section === "jobs" && id && /^\d+$/.test(id)) return job_view(Number(id));
   if (section === "jobs") return jobs_view();
+  if (section === "cache" && id) return cache_view(id);
+  if (section === "cache") return caches_view();
   if (section === "store" && id) return store_view(id);
   if (section === "store") return stores_view();
   if (section !== undefined && section in upcoming_sections) return upcoming_view(section);

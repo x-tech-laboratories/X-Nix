@@ -7,7 +7,12 @@ self:
 }:
 let
   cfg = config.services.x-nix;
-  inherit (lib) mkEnableOption mkIf mkOption types;
+  inherit (lib)
+    mkEnableOption
+    mkIf
+    mkOption
+    types
+    ;
 
   json = pkgs.formats.json { };
 
@@ -16,6 +21,7 @@ let
 
   config_file = json.generate "x-nix.json" {
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
+    caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
   };
 in
 {
@@ -71,6 +77,21 @@ in
         }
       '';
       description = "The deployments to watch, by id, each with the settings README.md lists.";
+    };
+
+    caches = mkOption {
+      type = types.attrsOf json.type;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          fleet = {
+            flake = "github:example/nixos-config";
+            configurations = [ "workstation" "server" ];
+            cache_url = "https://attic.example/fleet";
+          };
+        }
+      '';
+      description = "The Attic caches to watch, by id, each with the settings README.md lists; ids are shared with deployments.";
     };
 
     path = mkOption {

@@ -37,7 +37,7 @@ only the job of watching X-Nix itself, as it does for X-Backups.
    - **Ported.** `nix_gc.py`: store size and path count, every profile's generations, the `nix-gc` unit and
      timer, the last collection's freed space from the journal (kept after the journal rotates),
      `max_generations` and `max_generation_age`, and a `nix-collect-garbage` action.
-   - `attic_push.py`: whether each tracked closure is built from the flake's latest revision and
+   - **Ported.** `attic_push.py`: whether each tracked closure is built from the flake's latest revision and
      fully pushed to an Attic cache (upstream-signed paths left out), per-target Build and Push
      actions, `build_links`, and `drop_pushed` to keep a closure only in the cache.
    - `host_control.py`, where it concerns boot: boot entries, the default and one-shot next-boot

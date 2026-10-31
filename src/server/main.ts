@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { AgentPool } from "./agents/agent.ts";
+import { Cache } from "./cache.ts";
 import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
 import { load_password_hash } from "./auth.ts";
@@ -24,12 +25,13 @@ const password_hash = load_password_hash();
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-const config: Config = config_path ? load_config(config_path) : { deployments: [] };
+const config: Config = config_path ? load_config(config_path) : { deployments: [], caches: [] };
 const store = new Store(join(state_directory, "x-nix.sqlite"));
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
 const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
 const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
-const poller = new Poller(deployments);
+const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
+const poller = new Poller(deployments, null, caches);
 const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller });
 
 app.addHook("onClose", async () => {
@@ -38,7 +40,7 @@ app.addHook("onClose", async () => {
 });
 
 if (!config_path) app.log.warn("X_NIX_CONFIG is not set, so there are no deployments to watch");
-app.log.info(`Watching ${deployments.length} deployments`);
+app.log.info(`Watching ${deployments.length} deployments and ${caches.length} caches`);
 
 await app.listen({ host, port });
 poller.start();

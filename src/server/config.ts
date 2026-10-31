@@ -81,8 +81,39 @@ export interface DeploymentSettings {
   gc: GcSettings | null;
 }
 
+// A host that builds the fleet's closures, and the Attic cache they are pushed to.
+export interface CacheSettings {
+  id: string;
+  name: string;
+  // The host that evaluates, builds and pushes; the server's own host when null.
+  host: string | null;
+  flake: string;
+  // nixosConfigurations names, tracked by their system toplevel.
+  configurations: string[];
+  // Any other derivation, as a name and its flake attribute.
+  installables: Record<string, string>;
+  cache_url: string;
+  // Signing keys of upstream caches, whose paths Attic never stores.
+  upstream_keys: string[];
+  missing_limit: number;
+  pending_status: Status;
+  interval: number;
+  job_poll: number;
+  // The longest a check may run before it is killed.
+  timeout: number;
+  nix_bin: string;
+  nix_args: string[];
+  build_args: string[];
+  build_root_dir: string | null;
+  build_links: Record<string, string>;
+  push_command: string | null;
+  // Targets kept only in the cache once fully pushed.
+  drop_pushed: string[];
+}
+
 export interface Config {
   deployments: DeploymentSettings[];
+  caches: CacheSettings[];
 }
 
 export class ConfigError extends Error {
@@ -113,13 +144,52 @@ export function load_config(path: string): Config {
 export function parse_config(raw: unknown): Config {
   const deployments = (raw as { deployments?: unknown } | null)?.deployments ?? [];
   if (!Array.isArray(deployments)) throw new ConfigError("`deployments` must be a list");
+  const caches = (raw as { caches?: unknown } | null)?.caches ?? [];
+  if (!Array.isArray(caches)) throw new ConfigError("`caches` must be a list");
   const parsed = deployments.map((entry, index) => deployment_settings(entry, index));
+  const parsed_caches = caches.map((entry, index) => cache_settings(entry, index));
+  // Jobs and events are kept by id, so a cache may not share one with a deployment.
   const seen = new Set<string>();
-  for (const deployment of parsed) {
-    if (seen.has(deployment.id)) throw new ConfigError(`Two deployments are named '${deployment.id}'`);
-    seen.add(deployment.id);
+  for (const { id } of [...parsed, ...parsed_caches]) {
+    if (seen.has(id)) throw new ConfigError(`Two deployments or caches are named '${id}'`);
+    seen.add(id);
   }
-  return { deployments: parsed };
+  return { deployments: parsed, caches: parsed_caches };
+}
+
+export function cache_settings(entry: unknown, index = 0): CacheSettings {
+  if (typeof entry !== "object" || entry === null) throw new ConfigError(`Cache ${index + 1} must be an object`);
+  const values = entry as Record<string, unknown>;
+  const read = new Reader(values, `cache ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
+  const id = read.text("id");
+  if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Cache ${index + 1} needs an \`id\` of letters, digits, - and _`);
+  const cache_url = read.text("cache_url");
+  if (cache_url === null) throw new ConfigError(`Cache '${id}' needs a \`cache_url\``);
+  const configurations = read.list("configurations", []);
+  const installables = read.names("installables");
+  if (configurations.length + Object.keys(installables).length === 0) throw new ConfigError(`Cache '${id}' tracks nothing: name configurations or installables`);
+  return {
+    id,
+    name: read.text("name") ?? id,
+    host: read.text("host"),
+    flake: read.text("flake") ?? "/etc/nixos",
+    configurations,
+    installables,
+    cache_url,
+    upstream_keys: read.list("upstream_keys", ["cache.nixos.org-1"]),
+    missing_limit: read.limit("missing_limit", 50) ?? 50,
+    pending_status: read.status("pending_status", "warning"),
+    interval: read.duration("interval", "1h"),
+    job_poll: read.duration("job_poll", "30s"),
+    timeout: read.duration("timeout", "30m"),
+    nix_bin: read.text("nix_bin") ?? "nix",
+    nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
+    build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
+    build_root_dir: read.text("build_root_dir"),
+    build_links: read.names("build_links"),
+    push_command: read.text("push_command"),
+    drop_pushed: read.list("drop_pushed", []),
+  };
 }
 
 export function deployment_settings(entry: unknown, index = 0): DeploymentSettings {
@@ -221,6 +291,16 @@ class Reader {
     if (value === undefined || value === null) return fallback;
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new ConfigError(`\`${key}\` of ${this.owner} must be a list of text`);
     return value;
+  }
+
+  // An object of text values, such as names to flake attributes.
+  names(key: string): Record<string, string> {
+    const value = this.values[key];
+    if (value === undefined || value === null) return {};
+    if (typeof value !== "object" || Array.isArray(value) || !Object.values(value).every((item) => typeof item === "string")) {
+      throw new ConfigError(`\`${key}\` of ${this.owner} must map names to text`);
+    }
+    return value as Record<string, string>;
   }
 
   duration(key: string, fallback: string): number {
