@@ -23,7 +23,7 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
@@ -46,6 +46,21 @@ export interface Reading {
   reboot_required: boolean | null;
   flake_reachable: boolean | null;
   store: StoreReading | null;
+  boot: Boot | null;
+}
+
+export interface BootEntry {
+  id: string;
+  title: string;
+  default: boolean;
+  next: boolean;
+}
+
+export interface Boot {
+  loader: "systemd-boot" | "grub" | "efi" | "none";
+  entries: BootEntry[];
+  default: string | null;
+  next: string | null;
 }
 
 export interface Profile {
@@ -139,6 +154,7 @@ export interface Deployment {
   evaluating: boolean;
   running_job: Job | null;
   actions: ActionView[];
+  next_boot_refusal: string | null;
 }
 
 export type CacheActionId = "build" | "push";

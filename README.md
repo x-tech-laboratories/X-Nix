@@ -76,6 +76,7 @@ Hosts are named by agent. Only the server's own host has one so far, so a deploy
 | `commit_author`     | `X-Nix <x-nix@localhost>`         | The update commit's author.                                          |
 | `commit_message`    | `chore(flake): update inputs`     | The update commit's message.                                         |
 | `gc`                | the defaults below                | How the host's Nix store is watched, or `false` to leave it alone.   |
+| `boot`              | `true`                            | Read the host's boot entries, and let the Boot page set the next boot. |
 
 ### Store
 
@@ -99,6 +100,15 @@ status, apart from the deployment's, set by these keys of `gc`:
 | `max_generation_age` | none                        | Warn once the oldest generation kept is older than this.     |
 | `gc_bin`             | `nix-collect-garbage`       | The collection program.                                      |
 | `gc_args`            | `--delete-older-than 7d`    | Its arguments, which should match the timer's.               |
+
+### Boot
+
+Every cycle also reads the host's boot loader: systemd-boot through `bootctl list`, GRUB from its
+environment block and `grub.cfg`, or any other EFI loader through `efibootmgr`, with the default
+and the one-shot next entry. The Boot page sets the next boot with the loader's own one-shot tool
+(`bootctl set-oneshot`, `grub-reboot` or `efibootmgr --bootnext`), and can reboot into it at once.
+Reading `/boot` usually needs root, so the read tries `sudo -n` first and falls back to reading
+unprivileged.
 
 ## Caches
 
@@ -152,8 +162,10 @@ The service runs as the `x-nix` user, in the `systemd-journal` group so it can r
 collection from the journal. Update, switch, reboot and Collect Garbage run under `sudo -n` unless
 `require_sudo` is off, so grant that user NOPASSWD rules for exactly the commands its deployments
 run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh`,
-`/run/current-system/sw/bin/systemctl reboot` and
-`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`.
+`/run/current-system/sw/bin/systemctl reboot`,
+`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`, and for systemd-boot
+`/run/current-system/sw/bin/bootctl list --json=short` and
+`/run/current-system/sw/bin/bootctl set-oneshot *`.
 
 ## License
 

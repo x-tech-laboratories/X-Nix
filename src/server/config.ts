@@ -79,6 +79,8 @@ export interface DeploymentSettings {
   commit_message: string;
   // Null when the store is not watched.
   gc: GcSettings | null;
+  // Whether the host's boot entries are read, and its next boot may be picked.
+  boot: boolean;
 }
 
 // A host that builds the fleet's closures, and the Attic cache they are pushed to.
@@ -237,6 +239,7 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     gc: gc_settings(values.gc, read.owner),
+    boot: read.flag("boot", true),
   };
 }
 

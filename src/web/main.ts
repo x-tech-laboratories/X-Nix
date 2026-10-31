@@ -4,12 +4,12 @@ import { api, LoginNeeded } from "./api.ts";
 import { h } from "./dom.ts";
 import { current_route } from "./router.ts";
 import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
+import { boot_view, boots_view } from "./views/boot.ts";
 import { cache_view, caches_view } from "./views/cache.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
 import { store_view, stores_view } from "./views/store.ts";
-import { upcoming_sections, upcoming_view } from "./views/pages.ts";
 import type { View } from "./views/shared.ts";
 import "./halon-tokens.css";
 import "./halon.css";
@@ -34,7 +34,8 @@ function view_for(parts: string[]): View {
   if (section === "cache") return caches_view();
   if (section === "store" && id) return store_view(id);
   if (section === "store") return stores_view();
-  if (section !== undefined && section in upcoming_sections) return upcoming_view(section);
+  if (section === "boot" && id) return boot_view(id);
+  if (section === "boot") return boots_view();
   return overview_view();
 }
 

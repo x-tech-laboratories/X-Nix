@@ -40,15 +40,18 @@ only the job of watching X-Nix itself, as it does for X-Backups.
    - **Ported.** `attic_push.py`: whether each tracked closure is built from the flake's latest revision and
      fully pushed to an Attic cache (upstream-signed paths left out), per-target Build and Push
      actions, `build_links`, and `drop_pushed` to keep a closure only in the cache.
-   - `host_control.py`, where it concerns boot: boot entries, the default and one-shot next-boot
+   - **Ported.** `host_control.py`, where it concerns boot: boot entries, the default and one-shot next-boot
      entry, reboot.
    - **Ported.** The Fleet view's "NixOS deployments" tiles (`../X-Monitor/x_monitor/core/ui/views/fleet.py`):
      one per deployment with its generation and in-sync, drifting or failed state.
-   - The agent's NixOS module (`../X-Monitor/nix/agent-module.nix`): detached jobs such as
-     `nixos-rebuild switch` outliving the agent unit, secrets read at runtime rather than from the
-     store, `/run/wrappers` first on `PATH`.
-   - Bring the matching tests under `../X-Monitor/tests/plugins/` across as specifications
-     (`test_nixos_upgrade.py` is in `tests/deployment.test.ts` and `tests/commands.test.ts`).
+   - **Ported, for the server's own host.** The agent's NixOS module
+     (`../X-Monitor/nix/agent-module.nix`): detached jobs such as `nixos-rebuild switch` outliving
+     the agent unit, secrets read at runtime rather than from the store, `/run/wrappers` first on
+     `PATH`; `nix/module.nix` does each for `services.x-nix`.
+   - **Ported.** The matching tests under `../X-Monitor/tests/plugins/`, as specifications:
+     `test_nixos_upgrade.py` in `tests/deployment.test.ts` and `tests/commands.test.ts`,
+     `test_nix_gc.py` in `tests/garbage.test.ts`, `test_attic_push.py` in `tests/cache.test.ts`,
+     and the boot cases of `test_host_control.py` in `tests/boot.test.ts`.
    - Agents on other hosts, so `host`, `eval_agent`, `build_agent` and `switch_agent` can name
      them; only the server's own host has an agent so far.
 

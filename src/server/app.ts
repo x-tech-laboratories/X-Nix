@@ -61,6 +61,8 @@ export interface DeploymentView {
   evaluating: boolean;
   running_job: Job | null;
   actions: ActionView[];
+  // Why the next boot cannot be set now, or null when it can.
+  next_boot_refusal: string | null;
 }
 
 export interface CacheView {
@@ -120,6 +122,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
       refusal: deployment.action_refusal(id),
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
+    next_boot_refusal: deployment.next_boot_refusal(deployment.reading()?.boot?.entries[0]?.id ?? ""),
   };
 }
 
@@ -185,6 +188,15 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (!action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
     const outcome = await deployment.act(action);
     if (outcome.ok) poller.soon(deployment);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // Sets the entry the host boots into once, rebooting into it at once when asked.
+  app.post<{ Params: { id: string }; Body: { entry?: unknown; reboot?: unknown } }>("/api/deployments/:id/next-boot", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    if (typeof request.body?.entry !== "string") return reply.code(400).send({ error: "Name the boot entry as `entry`" });
+    const outcome = await deployment.set_next_boot(request.body.entry, request.body.reboot === true);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 

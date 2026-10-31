@@ -95,6 +95,8 @@ export class FakeAgent implements Agent {
   probe_result: RunResult = probe();
   // What the store's probe answers; nothing at all unless a test sets it.
   gc_probe_result: RunResult = result(0);
+  // What the boot entries' read answers; nothing at all unless a test sets it.
+  boot_probe_result: RunResult = result(0);
   // What any command other than the probe answers, such as a reboot.
   command_result: RunResult = result(0);
   start_error: AgentError | null = null;
@@ -105,6 +107,7 @@ export class FakeAgent implements Agent {
   async run(command: string): Promise<RunResult> {
     this.commands.push(command);
     if (command === probe_script()) return this.probe_result;
+    if (command.includes("bootctl list")) return this.boot_probe_result;
     return command.includes("journalctl") ? this.gc_probe_result : this.command_result;
   }
 

@@ -6,7 +6,7 @@ import { hash_password } from "../src/server/auth.ts";
 import { Cache } from "../src/server/cache.ts";
 import { cache_settings } from "../src/server/config.ts";
 import { Poller } from "../src/server/poller.ts";
-import { clock, make_deployment, type Harness } from "./fake_agent.ts";
+import { clock, make_deployment, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +126,23 @@ describe("an unknown path", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toEqual({ error: "Not found" });
+  });
+});
+
+describe("/api/deployments/:id/next-boot", () => {
+  it("sets the next boot to a known entry and refuses others", async () => {
+    const harness = make_deployment();
+    harness.agent.boot_probe_result = result(0, `loader=efi\n@@entries\nBootOrder: 0001\nBoot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n`);
+    await harness.deployment.cycle();
+    const { server, inject } = await start_app(harness);
+    const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { password } })).headers["set-cookie"]).split(";")[0];
+    const post = (payload: unknown) => server.inject({ method: "POST", url: "/api/deployments/host-deploy/next-boot", headers: { cookie }, payload: payload as object });
+
+    expect((await inject("GET", "/api/deployments/host-deploy")).json<DeploymentView>().next_boot_refusal).toBeNull();
+    expect((await post({ entry: "0003" })).statusCode).toBe(200);
+    expect(harness.agent.commands).toContain("sudo -n efibootmgr --bootnext 0003");
+    expect((await post({ entry: "9999" })).statusCode).toBe(409);
+    expect((await post({})).statusCode).toBe(400);
   });
 });
 
