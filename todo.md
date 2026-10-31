@@ -1,11 +1,11 @@
 # X-Nix
 
-A NixOS management portal that takes over the NixOS functions now in X-Monitor. X-Monitor keeps
+A web-based NixOS management portal that takes over the NixOS functions now in X-Monitor. X-Monitor keeps
 only the job of watching X-Nix itself, as it does for X-Backups.
 
 ## Stack
 
-- Electron and TypeScript.
+- A TypeScript web app.
 - Themed with Halon, as X-Backups is: a `halon-tokens.css` holding every color for the light and
   dark schemes, following `prefers-color-scheme`, and a `halon.css` with the component rules, so no
   other file states a literal color. Sources: `THEME-DESIGN-GUIDE.md` in `../../Coding/Halon`, and
