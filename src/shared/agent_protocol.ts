@@ -4,7 +4,8 @@
 // Every message is one JSON text frame with a `type`. A request from the server carries an `id` the agent answers with
 // one `reply` or `failed` of the same id. Either side sends `ping` while idle and drops a connection that has been silent
 // too long. An agent logs in with its host's key: it names the host in the upgrade, the server's first message is a
-// `challenge`, and the agent's hello carries its signature of that nonce (see agent_keys.ts).
+// `challenge`, and the agent's hello carries its signature of that nonce (see agent_keys.ts). After its hello, an agent
+// that deployed from Git on its own sends `pulls`, and the server answers with `pulls_received` naming those it kept.
 
 // ── Version ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,22 @@ export interface LongRunPoll {
   next_offset: number;
 }
 
+// A switch the agent ran on its own from Git while the server was unreachable, reported once the server is back.
+export interface PullReport {
+  run_id: string;
+  // The Git remote and branch the revision came from.
+  remote: string;
+  branch: string;
+  revision: string;
+  command: string;
+  started_epoch: number;
+  finished_epoch: number | null;
+  // Null when the run ended without writing one.
+  exit_code: number | null;
+  // The end of what the switch printed.
+  output: string;
+}
+
 // ── Server to agent ──────────────────────────────────────────────────────────
 
 // Each request the server makes and what its reply carries.
@@ -65,7 +82,9 @@ export type ServerMessage =
   | { type: "ping"; epoch_ms: number }
   | { type: "pong"; epoch_ms: number }
   // Sent first to an agent, which signs the nonce in its hello.
-  | { type: "challenge"; nonce: string };
+  | { type: "challenge"; nonce: string }
+  // The pull reports the server has kept, which the agent need not send again.
+  | { type: "pulls_received"; run_ids: string[] };
 
 // ── Agent to server ──────────────────────────────────────────────────────────
 
@@ -74,7 +93,8 @@ export type AgentMessage =
   | { type: "reply"; id: string; value: unknown }
   | { type: "failed"; id: string; error: string }
   | { type: "ping"; epoch_ms: number }
-  | { type: "pong"; epoch_ms: number };
+  | { type: "pong"; epoch_ms: number }
+  | { type: "pulls"; pulls: PullReport[] };
 
 // ── Checking ─────────────────────────────────────────────────────────────────
 
@@ -93,6 +113,7 @@ const server_fields: Record<ServerMessage["type"], Record<string, FieldKind>> = 
   ping: { epoch_ms: "number" },
   pong: { epoch_ms: "number" },
   challenge: { nonce: "string" },
+  pulls_received: { run_ids: "array" },
 };
 
 const agent_fields: Record<AgentMessage["type"], Record<string, FieldKind>> = {
@@ -101,6 +122,7 @@ const agent_fields: Record<AgentMessage["type"], Record<string, FieldKind>> = {
   failed: { ...id_fields, error: "string" },
   ping: { epoch_ms: "number" },
   pong: { epoch_ms: "number" },
+  pulls: { pulls: "array" },
 };
 
 function has_kind(value: unknown, kind: FieldKind): boolean {

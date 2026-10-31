@@ -1,6 +1,6 @@
 // The agent's connection to the server, copied from X-Backups' agent: dials out over a WebSocket naming its host, signs
 // the server's challenge with the host's key, hands the connection to a session, and dials again with a growing,
-// jittered wait whenever it drops.
+// jittered wait whenever it drops. With pull settings, it also deploys from Git on its own while the server is away.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { AgentKeyError, parse_private_key } from "../shared/agent_keys.ts";
 import { key_host_header } from "../shared/agent_protocol.ts";
 import { LongRuns, type LongRunOptions } from "./long_runs.ts";
+import { Puller, type PullSettings } from "./pull.ts";
 import { AgentSession } from "./session.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -28,6 +29,8 @@ export interface AgentConfig {
   backoff_longest_in_milliseconds?: number;
   long_runs?: LongRunOptions;
   log?: (line: string) => void;
+  // Deploys from Git on its own once the server has been unreachable a while; off when absent.
+  pull?: PullSettings;
 }
 
 export class AgentConfigError extends Error {
@@ -71,6 +74,8 @@ export function read_key_file(file: string): KeyObject {
 
 export interface RunningAgent {
   readonly runs: LongRuns;
+  // Pull mode, when its settings were given.
+  readonly puller: Puller | null;
   // Whether a session is open now.
   connected(): boolean;
   // Hangs up and stops dialling; long runs carry on.
@@ -97,6 +102,12 @@ export function start_agent(config: AgentConfig): RunningAgent {
   let stopping = false;
   let retry_timer: NodeJS.Timeout | undefined;
   let closed_resolve: (() => void) | null = null;
+  const puller = config.pull === undefined ? null : new Puller(config.pull, runs, config.state_directory, {
+    connected: () => session !== null,
+    report: () => void session?.report_pulls(),
+    log,
+  });
+  puller?.start();
 
   const dial_later = () => {
     if (stopping) return;
@@ -122,7 +133,9 @@ export function start_agent(config: AgentConfig): RunningAgent {
     current.addEventListener("open", () => {
       failures = 0;
       log(`Connected to ${url.origin}`);
-      session = new AgentSession(current, runs, { host: config.host, agent_version: config.agent_version, heartbeat_in_milliseconds: heartbeat, key });
+      session = new AgentSession(current, runs, {
+        host: config.host, agent_version: config.agent_version, heartbeat_in_milliseconds: heartbeat, key, pulls: puller ?? undefined,
+      });
     });
     current.addEventListener("message", (event) => {
       if (typeof event.data === "string") session?.receive(event.data);
@@ -142,9 +155,11 @@ export function start_agent(config: AgentConfig): RunningAgent {
 
   return {
     runs,
+    puller,
     connected: () => session !== null,
     stop: () => {
       stopping = true;
+      puller?.stop();
       clearTimeout(retry_timer);
       if (socket === null) return Promise.resolve();
       const closing = new Promise<void>((resolve) => (closed_resolve = resolve));

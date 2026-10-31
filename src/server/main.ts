@@ -11,9 +11,13 @@ import { build_app } from "./app.ts";
 import { load_password_hash } from "./auth.ts";
 import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
+import { parse_duration } from "./durations.ts";
+import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
+import { record_pulls } from "./pull_reports.ts";
 import { Store } from "./store.ts";
+import { load_webhook_secret, Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +28,9 @@ const state_directory = process.env.X_NIX_STATE_DIR ?? "state";
 const config_path = process.env.X_NIX_CONFIG;
 const server_name = process.env.X_NIX_SERVER_NAME || hostname();
 const password_hash = load_password_hash();
+// The push webhook is on only when its secret file is named.
+const webhook_secret_file = process.env.X_NIX_WEBHOOK_SECRET_FILE;
+const webhook_debounce = parse_duration(process.env.X_NIX_WEBHOOK_DEBOUNCE || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -43,15 +50,29 @@ accept_agent_keys(provisioner.agent_keys());
 const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const poller = new Poller(deployments, null, caches, [provisioner]);
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents });
+const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });
+const webhook = webhook_secret_file ? new Webhook({
+  secret: load_webhook_secret(webhook_secret_file), debounce_in_seconds: webhook_debounce, deployments: poller.deployments, store,
+  evaluate: (deployment) => void poller.refresh(deployment),
+}) : undefined;
+// Switches an agent ran on its own while the server was away join its deployments' job history once it reconnects.
+hub.on_pulls = (host, pulls) => {
+  const kept = record_pulls(store, poller.deployments.values(), host, pulls, Math.floor(Date.now() / 1000));
+  for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
+  return kept;
+};
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook });
 
 app.addHook("onClose", async () => {
   poller.stop();
+  fleet.stop_timer();
   store.close();
 });
 
+if (webhook !== undefined) app.log.info("The push webhook takes deliveries at /api/webhook");
 if (!config_path) app.log.warn("X_NIX_CONFIG is not set, so there are no deployments to watch");
 app.log.info(`Watching ${deployments.length} deployments and ${caches.length} caches`);
 
 await app.listen({ host, port });
 poller.start();
+fleet.start_timer();

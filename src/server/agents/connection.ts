@@ -4,8 +4,8 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import {
-  encode_message, parse_agent_message, type AgentMessage, type LongRun, type LongRunPoll, type RequestType, type Requests, type RunResult,
-  type ServerMessage,
+  encode_message, parse_agent_message, type AgentMessage, type LongRun, type LongRunPoll, type PullReport, type RequestType, type Requests,
+  type RunResult, type ServerMessage,
 } from "../../shared/agent_protocol.ts";
 import { AgentError, type Agent } from "./agent.ts";
 
@@ -53,6 +53,8 @@ export class AgentConnection implements Agent {
   private last_heard = Date.now();
   private readonly heartbeat: NodeJS.Timeout;
   private closed_reason: string | null = null;
+  // Keeps the switches the agent ran on its own, answering with the run ids it kept.
+  on_pulls: ((pulls: PullReport[]) => string[]) | null = null;
 
   constructor(socket: ServerSocket, host: string, hello: Hello, options: ConnectionOptions) {
     this.socket = socket;
@@ -102,6 +104,11 @@ export class AgentConnection implements Agent {
     if (message === null) return;
     if (message.type === "ping") {
       this.send({ type: "pong", epoch_ms: message.epoch_ms });
+      return;
+    }
+    if (message.type === "pulls") {
+      const kept = this.on_pulls?.(message.pulls) ?? [];
+      if (kept.length > 0) this.send({ type: "pulls_received", run_ids: kept });
       return;
     }
     if (message.type !== "reply" && message.type !== "failed") return;

@@ -1,12 +1,12 @@
-// One connection to the server: says hello with its signature of the server's challenge, and answers each request.
-// Closing it leaves long runs going.
+// One connection to the server: says hello with its signature of the server's challenge, reports the switches pull mode
+// ran while the server was away, and answers each request. Closing it leaves long runs going.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { KeyObject } from "node:crypto";
 
 import { sign_challenge } from "../shared/agent_keys.ts";
-import { encode_message, parse_server_message, protocol_version, type AgentMessage, type RequestMessage } from "../shared/agent_protocol.ts";
+import { encode_message, parse_server_message, protocol_version, type AgentMessage, type PullReport, type RequestMessage } from "../shared/agent_protocol.ts";
 import { run_command } from "./commands.ts";
 import type { LongRuns } from "./long_runs.ts";
 
@@ -19,6 +19,8 @@ export interface SessionOptions {
   heartbeat_in_milliseconds: number;
   // The host's private key, which signs the server's challenge.
   key: KeyObject;
+  // The switches pull mode ran on its own, reported until the server says it has them.
+  pulls?: { pending(): Promise<PullReport[]>; acknowledge(run_ids: string[]): void };
 }
 
 // The smallest message a socket can send, so a test can stand in for one.
@@ -67,10 +69,21 @@ export class AgentSession {
           type: "hello", protocol: protocol_version, host: this.options.host, agent_version: this.options.agent_version, runs: this.runs.list(),
           signature: sign_challenge(this.options.key, this.options.host, message.nonce),
         });
+        void this.report_pulls();
+        return;
+      case "pulls_received":
+        this.options.pulls?.acknowledge(message.run_ids.filter((run_id) => typeof run_id === "string"));
         return;
       default:
         void this.answer(message);
     }
+  }
+
+  // Sends the server every switch pull mode ran that it has not yet received.
+  async report_pulls(): Promise<void> {
+    if (!this.greeted || this.options.pulls === undefined) return;
+    const pulls = await this.options.pulls.pending();
+    if (pulls.length > 0) this.send({ type: "pulls", pulls });
   }
 
   close(): void {

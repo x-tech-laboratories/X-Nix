@@ -13,14 +13,16 @@ import { register_auth } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
-import type { DeploymentSettings, TimeOfDay } from "./config.ts";
+import { fleet_settings, type DeploymentSettings, type TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
+import { Fleet, type FleetRequest, type FleetRun } from "./fleet.ts";
 import type { Poller } from "./poller.ts";
 import { build_link, targets } from "./nixos/attic.ts";
 import { collect_command } from "./nixos/garbage.ts";
 import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import type { BuildRecord, EventRow, Job, JobKind, Store } from "./store.ts";
+import { register_webhook_route, type Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +41,10 @@ export interface app_options {
   provisioner?: Provisioner;
   // The agents build products are downloaded through; none can be without it.
   agents?: AgentPool;
+  // Runs actions on many deployments at once; one with the default settings when not given.
+  fleet?: Fleet;
+  // Takes pushes on /api/webhook; the route answers 404 without it.
+  webhook?: Webhook;
 }
 
 export interface ProvisioningView {
@@ -84,6 +90,14 @@ export interface DeploymentView {
   host: string | null;
   flake: string;
   configuration: string | null;
+  tags: string[];
+  // The commit or tag evaluation, build and switch use, or null for the branch head.
+  pin: string | null;
+  // The pin the settings name, which the page's pin replaces until reset.
+  configured_pin: string | null;
+  pin_overridden: boolean;
+  // Whether a fresh evaluation is running or due before the drift can be trusted.
+  sync_pending: boolean;
   // The hosts other than the deployment's own that its jobs run on.
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
@@ -99,6 +113,14 @@ export interface DeploymentView {
   actions: ActionView[];
   // Why the next boot cannot be set now, or null when it can.
   next_boot_refusal: string | null;
+}
+
+export interface FleetView {
+  parallel: number;
+  stages: string[];
+  sync_timeout: number;
+  tags: string[];
+  runs: FleetRun[];
 }
 
 export interface CacheView {
@@ -146,6 +168,11 @@ function deployment_view(deployment: Deployment): DeploymentView {
     host: settings.host,
     flake: settings.flake,
     configuration: settings.configuration,
+    tags: settings.tags,
+    pin: deployment.pin(),
+    configured_pin: settings.pin,
+    pin_overridden: deployment.pin_overridden(),
+    sync_pending: deployment.sync_pending(),
     agents: { eval: deployment.agent_for("eval"), build: deployment.agent_for("build"), switch: deployment.agent_for("switch") },
     schedule: { update: clock(settings.update_at), build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
@@ -199,8 +226,10 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const started_epoch = Math.floor(Date.now() / 1000);
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
+  const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
   register_auth(app, options.password_hash);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
+  if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
 
   const find = (id: string, reply: FastifyReply): Deployment | null => {
     const deployment = poller.deployments.get(id) ?? null;
@@ -249,9 +278,45 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 
+  // Fixes the deployment at a commit or tag, follows the branch head with null, or goes back to the settings' pin with reset.
+  app.post<{ Params: { id: string }; Body: { pin?: unknown; reset?: unknown } }>("/api/deployments/:id/pin", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    const reset = request.body?.reset === true;
+    const pin = request.body?.pin;
+    if (!reset && pin !== null && typeof pin !== "string") return reply.code(400).send({ error: "Give the pin as `pin`, null to follow the branch head, or `reset`" });
+    const outcome = await deployment.set_pin(typeof pin === "string" && pin.trim() !== "" ? pin.trim() : null, reset);
+    if (outcome.ok) void poller.refresh(deployment);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
   app.get<{ Params: { id: string } }>("/api/deployments/:id/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
     const deployment = find(request.params.id, reply);
     return deployment === null ? reply : store.events(deployment.id);
+  });
+
+  // ── Fleet ────────────────────────────────────────────────────────────────
+
+  app.get("/api/fleet", async (): Promise<FleetView> => ({
+    parallel: fleet.settings.parallel, stages: fleet.settings.stages, sync_timeout: fleet.settings.sync_timeout, tags: fleet.tags(), runs: fleet.runs(),
+  }));
+
+  // The ids a selector such as "web-* @canary" picks.
+  app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request) => fleet.select(request.query.selector ?? "").map((deployment) => deployment.id));
+
+  app.post<{ Body: FleetRequest }>("/api/fleet/runs", async (request, reply) => {
+    const outcome = await fleet.start(request.body ?? {});
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/fleet/runs/:id", async (request, reply) => {
+    const run = fleet.run(Number(request.params.id));
+    return run ?? reply.code(404).send({ error: "No such fleet run" });
+  });
+
+  app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/stop", async (request, reply) => {
+    const outcome = await fleet.stop(Number(request.params.id));
+    return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
   });
 
   // ── Caches ───────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { EventEmitter } from "node:events";
 import type { IncomingHttpHeaders } from "node:http";
 
 import { parse_public_key, verify_challenge } from "../../shared/agent_keys.ts";
-import { encode_message, key_host_header, parse_agent_message, protocol_version, type LongRun } from "../../shared/agent_protocol.ts";
+import { encode_message, key_host_header, parse_agent_message, protocol_version, type LongRun, type PullReport } from "../../shared/agent_protocol.ts";
 import type { AgentPool } from "./agent.ts";
 import { AgentConnection, type ConnectionOptions, type ServerSocket } from "./connection.ts";
 
@@ -61,6 +61,8 @@ export class AgentHub extends EventEmitter<HubEvents> {
   private readonly connections = new Map<string, AgentConnection>();
   // Each host's declared public key, with the line it was read from.
   private agent_keys = new Map<string, { line: string; key: KeyObject }>();
+  // Keeps the switches a host's agent ran on its own while the server was away, answering with the run ids it kept.
+  on_pulls: ((host: string, pulls: PullReport[]) => string[]) | null = null;
 
   constructor(pool: AgentPool, options: HubOptions = {}) {
     super();
@@ -114,6 +116,7 @@ export class AgentHub extends EventEmitter<HubEvents> {
       }
       this.connections.get(host)?.close(close_codes.replaced, "A newer connection from the same host replaced this one.");
       connection = new AgentConnection(socket, host, hello, this.connection_options);
+      connection.on_pulls = (pulls) => this.on_pulls?.(host, pulls) ?? [];
       this.connections.set(host, connection);
       this.pool.add(host, connection);
       this.emit("connect", status_of(connection));

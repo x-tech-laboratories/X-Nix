@@ -29,6 +29,96 @@ export function github_repository(flake: string): GithubRepository | null {
   return { ssh_url: `git@github.com:${parts[0]}/${parts[1]}.git`, branch: ref };
 }
 
+// ── Pins ─────────────────────────────────────────────────────────────────────
+
+// A pin is a full git commit hash or a tag name.
+export function is_pin(pin: string): boolean {
+  return /^[A-Za-z0-9_][A-Za-z0-9._/-]{0,127}$/.test(pin) && !pin.includes("..") && !pin.endsWith("/");
+}
+
+function is_commit(pin: string): boolean {
+  return /^[0-9a-f]{40}$/.test(pin);
+}
+
+// The forge flake types whose path may carry a ref after the owner and repository.
+const forge_schemes = ["github:", "gitlab:", "sourcehut:"];
+
+// The flake reference fixed at a commit or tag, or null for a flake that cannot be pinned, such as a path: or a tarball.
+export function pinned_flake(flake: string, pin: string): string | null {
+  if (!is_pin(pin)) return null;
+  const [base, query = ""] = flake.split("?", 2);
+  const params = new URLSearchParams(query);
+  params.delete("ref");
+  params.delete("rev");
+  const forge = forge_schemes.find((scheme) => base.startsWith(scheme));
+  if (forge !== undefined) {
+    const parts = base.slice(forge.length).split("/");
+    if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+    params.set(is_commit(pin) ? "rev" : "ref", pin);
+    return `${forge}${parts[0]}/${parts[1]}?${params.toString()}`;
+  }
+  let git_base: string | null = null;
+  if (base.startsWith("git+")) git_base = base;
+  else if (base.startsWith("git://")) git_base = `git+${base}`;
+  else if (base.startsWith("/")) git_base = `git+file://${base}`;
+  else if (base.startsWith("file://")) git_base = `git+${base}`;
+  if (git_base === null) return null;
+  if (is_commit(pin)) {
+    // A commit off the default branch is only fetched when every ref is.
+    params.set("rev", pin);
+    if (!params.has("allRefs")) params.set("allRefs", "1");
+  } else {
+    params.set("ref", pin.startsWith("refs/") ? pin : `refs/tags/${pin}`);
+  }
+  return `${git_base}?${params.toString()}`;
+}
+
+// ── Repositories ─────────────────────────────────────────────────────────────
+
+const forge_hosts: Record<string, string> = { "github:": "github.com", "gitlab:": "gitlab.com", "sourcehut:": "git.sr.ht" };
+
+// A repository URL as host and path, lowercased and without scheme, user, port or .git, so the forms a forge sends compare equal.
+export function normalize_repository(url: string): string | null {
+  let text = url.trim().replace(/^git\+/, "");
+  // An scp-like address such as git@github.com:owner/repo.git.
+  const scp = text.includes("://") ? null : /^(?:[^@/]+@)?([^:/]+):(.+)$/.exec(text);
+  if (scp !== null) text = `ssh://${scp[1]}/${scp[2]}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol === "file:" || parsed.hostname === "") return null;
+  const path = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
+  if (path === "") return null;
+  return `${parsed.hostname}/${path}`.toLowerCase();
+}
+
+export interface FlakeRepository {
+  // The repository as normalize_repository gives it.
+  repository: string;
+  // The branch the flake follows, or null for the repository's default branch.
+  branch: string | null;
+}
+
+// The remote repository and branch a flake follows, or null for a local flake or one that names no repository.
+export function repository_of(flake: string): FlakeRepository | null {
+  const [base, query = ""] = flake.split("?", 2);
+  const params = new URLSearchParams(query);
+  const branch_of = (ref: string | null) => (ref === null || ref === "" || is_commit(ref) || ref.startsWith("refs/tags/") ? null : ref.replace(/^refs\/heads\//, ""));
+  const forge = forge_schemes.find((scheme) => base.startsWith(scheme));
+  if (forge !== undefined) {
+    const parts = base.slice(forge.length).split("/");
+    if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+    const host = params.get("host") ?? forge_hosts[forge];
+    return { repository: `${host}/${parts[0]}/${parts[1]}`.toLowerCase(), branch: branch_of(params.get("ref") ?? (parts.slice(2).join("/") || null)) };
+  }
+  if (!base.startsWith("git+") || base.startsWith("git+file:")) return null;
+  const repository = normalize_repository(base);
+  return repository === null ? null : { repository, branch: branch_of(params.get("ref")) };
+}
+
 // A flake revision cut to twelve characters, keeping the -dirty mark of a checkout with uncommitted changes.
 export function short_revision(revision: string | null | undefined): string {
   if (!revision) return "—";

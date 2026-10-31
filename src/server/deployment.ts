@@ -8,7 +8,8 @@
 // lasting `auto_switch_after` starts a switch once per target closure, and `update_at` and `build_at` start a daily job.
 // Unless `gc` is false, every cycle also reads the host's Nix store and its garbage collection, judged apart from the
 // deployment's own status, and Collect Garbage runs the same collection the timer does. Unless `boot` is false, every
-// cycle also reads the boot loader's entries, and the next boot can be set to any of them once.
+// cycle also reads the boot loader's entries, and the next boot can be set to any of them once. A pin, from the settings
+// or set on the page, fixes evaluation, build and switch at one commit or tag instead of the branch head.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ import {
   update_command,
 } from "./nixos/commands.ts";
 import { boot_script, next_boot_command, parse_boot, type Boot } from "./nixos/boot.ts";
-import { parse_metadata, short_revision } from "./nixos/flake.ts";
+import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
 import {
   assess_store, collect_command, finished_collection, fold_collection, gc_probe_script, observed_collection, parse_gc_probe, unread_store,
   type Collection, type StoreReading,
@@ -58,6 +59,8 @@ export interface Evaluation {
   scheduled: Partial<Record<ScheduledKind, number>>;
   // The last garbage collection seen, kept after the journal has rotated past it.
   last_collection: Collection | null;
+  // The pin set on the page, null to follow the branch head, or absent to use the settings' pin.
+  pin_override?: string | null;
 }
 
 export interface Message {
@@ -181,7 +184,62 @@ export class Deployment {
     return null;
   }
 
+  // ── Pin ──────────────────────────────────────────────────────────────────
+
+  // The commit or tag the deployment is fixed at, or null when it follows the branch head.
+  pin(): string | null {
+    const override = this.evaluation().pin_override;
+    return override === undefined ? this.settings.pin : override;
+  }
+
+  // Whether the pin was set on the page rather than taken from the settings.
+  pin_overridden(): boolean {
+    return this.evaluation().pin_override !== undefined;
+  }
+
+  // The settings with the flake reference fixed at the pin, which evaluation, build and switch use.
+  effective_settings(): DeploymentSettings {
+    const pin = this.pin();
+    const flake = pin === null ? null : pinned_flake(this.settings.flake, pin);
+    return flake === null ? this.settings : { ...this.settings, flake };
+  }
+
+  // Why this pin cannot be set, or null when it can.
+  pin_refusal(pin: string | null): string | null {
+    if (pin === null) return null;
+    if (!is_pin(pin)) return "A pin must be a full commit hash or a tag name";
+    if (pinned_flake(this.settings.flake, pin) === null) return `Cannot pin ${this.settings.flake}: only a git or forge flake can be pinned`;
+    return null;
+  }
+
+  // Sets the pin, or with reset goes back to the settings' pin, then evaluates afresh on the next cycle.
+  set_pin(pin: string | null, reset = false): Promise<ActionOutcome> {
+    return this.serial(async () => {
+      const refusal = reset ? null : this.pin_refusal(pin);
+      if (refusal !== null) return { ok: false, message: refusal, job_id: null };
+      const evaluation = this.evaluation();
+      if (reset) delete evaluation.pin_override;
+      else evaluation.pin_override = pin;
+      this.store.save_evaluation(this.id, evaluation);
+      this.force_eval = true;
+      const now_pinned = this.pin();
+      const message = now_pinned === null ? "Following the branch head" : `Pinned at ${now_pinned}`;
+      this.store.add_event(this.id, this.now(), "info", reset ? `${message}, as the settings say` : message);
+      return { ok: true, message, job_id: null };
+    });
+  }
+
   // ── Cycle ────────────────────────────────────────────────────────────────
+
+  // Asks for an evaluation on the next cycle, even one that follows an evaluation running now, as after a push.
+  request_evaluation(): void {
+    this.force_eval = true;
+  }
+
+  // Whether the deployment waits on a fresh evaluation before its drift can be trusted.
+  sync_pending(): boolean {
+    return this.running_evaluation() !== null || this.due_for_evaluation();
+  }
 
   // Runs one cycle; asked for by a person, it evaluates unless an evaluation is already running.
   cycle(options: { force_eval?: boolean } = {}): Promise<void> {
@@ -292,7 +350,7 @@ export class Deployment {
         messages.push({ level: "info", text: "System matches the flake" });
       } else {
         raise(this.settings.drift_status);
-        messages.push({ level: level_of_status[this.settings.drift_status], text: `System is out of date: ${this.settings.flake} evaluates to ${target}, running ${fields.current}` });
+        messages.push({ level: level_of_status[this.settings.drift_status], text: `System is out of date: ${this.effective_settings().flake} evaluates to ${target}, running ${fields.current}` });
         if (evaluation.drift_target !== target) {
           evaluation.drift_target = target;
           evaluation.drift_since_epoch = now;
@@ -376,7 +434,7 @@ export class Deployment {
   // Starts the evaluation, answering with a failed evaluation if it could not start.
   private async launch_evaluation(): Promise<Evaluation | null> {
     this.force_eval = false;
-    const launched = await this.launch("eval", eval_command(this.settings, this.attribute()), "schedule", false);
+    const launched = await this.launch("eval", eval_command(this.effective_settings(), this.attribute()), "schedule", false);
     if (launched.job_id !== null) return null;
     const failure: RunResult = { exit_code: launched.unreachable ? -1 : 1, stdout: "", stderr: `Could not start the evaluation: ${launched.error}` };
     return this.fold_evaluation(failure, failure);
@@ -492,15 +550,16 @@ export class Deployment {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
-  act(action: ActionId): Promise<ActionOutcome> {
+  // Runs an action, naming in the job what started it, such as a person or a fleet run.
+  act(action: ActionId, trigger = "manual"): Promise<ActionOutcome> {
     return this.serial(async () => {
       const refusal = this.action_refusal(action);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      if (action === "reboot") return this.reboot();
+      if (action === "reboot") return this.reboot(trigger);
       const command = this.command_for(action);
-      const launched = await this.launch(action, command, "manual", true);
+      const launched = await this.launch(action, command, trigger, true);
       if (launched.job_id === null) {
-        const job_id = this.record_failed_launch(action, command, "manual", launched.error);
+        const job_id = this.record_failed_launch(action, command, trigger, launched.error);
         return { ok: false, message: `Could not start the ${job_noun(action)}: ${launched.error}`, job_id };
       }
       return { ok: true, message: `${capitalise(job_noun(action))} started`, job_id: launched.job_id };
@@ -508,11 +567,11 @@ export class Deployment {
   }
 
   // The reboot is for the probed host itself, and runs as a command rather than a job that would die with it.
-  private async reboot(): Promise<ActionOutcome> {
+  private async reboot(trigger: string): Promise<ActionOutcome> {
     const command = reboot_command(this.settings);
     const result = await this.agents.get(this.settings.host).run(command, reboot_timeout_in_seconds);
     const job_id = this.store.create_job({
-      deployment_id: this.id, kind: "reboot", command, agent: this.settings.host, run_id: null, trigger: "manual", started_epoch: this.now(),
+      deployment_id: this.id, kind: "reboot", command, agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
     });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     const ok = result.exit_code === 0;
@@ -562,14 +621,14 @@ export class Deployment {
   private command_for(kind: "update" | "build" | "switch" | "collect"): string {
     if (kind === "update") return update_command(this.settings);
     if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
-    if (kind === "build") return build_command(this.settings, this.attribute());
+    if (kind === "build") return build_command(this.effective_settings(), this.attribute());
     return this.switch_command_for(this.cached_target());
   }
 
   // The switch: a rebuild from the flake, or with switch_from_cache the activation of this evaluated store path.
   private switch_command_for(target: string | null): string {
-    if (!this.settings.switch_from_cache || target === null) return switch_command(this.settings);
-    return switch_from_cache_command(this.settings, target);
+    if (!this.settings.switch_from_cache || target === null) return switch_command(this.effective_settings());
+    return switch_from_cache_command(this.effective_settings(), target);
   }
 
   // The store path a switch from the cache activates: the last evaluation's, unless that evaluation failed.

@@ -1,5 +1,5 @@
 // Keeps what X-Nix learns in one SQLite file: each deployment's evaluation and last reading, each cache's last reading,
-// the jobs with their output and the events of both, and every finished build with its products. Jobs and events name their deployment or cache in
+// the jobs with their output and the events of both, every finished build with its products, and the fleet runs. Jobs and events name their deployment or cache in
 // `deployment_id`, as ids are unique across the two.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -140,6 +140,11 @@ const schema = `
     cache_id TEXT PRIMARY KEY,
     reading TEXT
   );
+  CREATE TABLE IF NOT EXISTS fleet_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    state TEXT NOT NULL,
+    run TEXT NOT NULL
+  );
 `;
 
 const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, output_offset, trigger, started_epoch, finished_epoch";
@@ -252,6 +257,12 @@ export class Store {
     return (row as unknown as JobWithOutput | undefined) ?? null;
   }
 
+  // The deployment's job for a long run, such as a switch an agent ran on its own and reported later.
+  job_for_run(deployment_id: string, run_id: string): Job | null {
+    const row = this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE deployment_id = ? AND run_id = ? ORDER BY id DESC LIMIT 1`).get(deployment_id, run_id);
+    return (row as unknown as Job | undefined) ?? null;
+  }
+
   // The deployment's running job of these kinds, newest first.
   running_job(deployment_id: string, kinds: JobKind[]): Job | null {
     const row = this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE state = 'running' AND deployment_id = ?
@@ -333,6 +344,33 @@ export class Store {
   // Every deployment or cache with a build, and the targets each built.
   build_targets(): { owner_id: string; target: string }[] {
     return this.database.prepare("SELECT DISTINCT owner_id, target FROM builds ORDER BY owner_id, target").all() as unknown as { owner_id: string; target: string }[];
+  }
+
+  // ── Fleet runs ───────────────────────────────────────────────────────────
+
+  // Keeps a new fleet run, answering with its id; the run is stored whole as JSON beside its state.
+  create_fleet_run(state: string, run: unknown): number {
+    const result = this.database.prepare("INSERT INTO fleet_runs (state, run) VALUES (?, '{}')").run(state);
+    const id = Number(result.lastInsertRowid);
+    this.save_fleet_run(id, state, { ...(run as object), id });
+    return id;
+  }
+
+  save_fleet_run(id: number, state: string, run: unknown): void {
+    this.database.prepare("UPDATE fleet_runs SET state = ?, run = ? WHERE id = ?").run(state, JSON.stringify(run), id);
+  }
+
+  fleet_run<Shape>(id: number): Shape | null {
+    const row = this.database.prepare("SELECT run FROM fleet_runs WHERE id = ?").get(id) as { run: string } | undefined;
+    return row === undefined ? null : (JSON.parse(row.run) as Shape);
+  }
+
+  // The newest fleet runs first, or only those in one state.
+  fleet_runs<Shape>(options: { state?: string; limit?: number } = {}): Shape[] {
+    const where = options.state === undefined ? "" : "WHERE state = ?";
+    const values = options.state === undefined ? [] : [options.state];
+    const rows = this.database.prepare(`SELECT run FROM fleet_runs ${where} ORDER BY id DESC LIMIT ${Math.trunc(options.limit ?? 50)}`).all(...values) as { run: string }[];
+    return rows.map((row) => JSON.parse(row.run) as Shape);
   }
 
   // ── Events ───────────────────────────────────────────────────────────────

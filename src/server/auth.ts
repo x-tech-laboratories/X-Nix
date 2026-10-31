@@ -1,5 +1,5 @@
 // Logging in: one password, whose hash the server is given, opens a session that every API route but the health check,
-// the login itself and the agents' socket needs, since the actions rebuild and reboot machines.
+// the login itself, the agents' socket and the push webhook needs, since the actions rebuild and reboot machines.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -19,8 +19,8 @@ const session_lifetime_in_milliseconds = 12 * 60 * 60 * 1000;
 const failures_allowed = 5;
 const lockout_in_milliseconds = 5 * 60 * 1000;
 
-// An agent proves its host's key over its own socket rather than with a session.
-const open_routes = new Set(["/api/health", "/api/login", "/api/agent"]);
+// An agent proves its host's key over its own socket, and a webhook its shared secret, rather than with a session.
+const open_routes = new Set(["/api/health", "/api/login", "/api/agent", "/api/webhook"]);
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
 

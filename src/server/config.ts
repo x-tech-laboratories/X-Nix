@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 
 import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
 import { parse_duration } from "./durations.ts";
+import { is_pin, pinned_flake } from "./nixos/flake.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,20 @@ export interface DeploymentSettings {
   gc: GcSettings | null;
   // Whether the host's boot entries are read, and its next boot may be picked.
   boot: boolean;
+  // Names a fleet selector picks the deployment by, as @tag.
+  tags: string[];
+  // The commit or tag evaluation, build and switch use instead of the branch head; null follows the head.
+  pin: string | null;
+}
+
+// How fleet runs act on many deployments at once.
+export interface FleetSettings {
+  // How many deployments a run acts on at once.
+  parallel: number;
+  // The selectors a staged rollout goes through in order, such as "@canary".
+  stages: string[];
+  // How long a staged switch may take to read as in sync before the rollout stops.
+  sync_timeout: number;
 }
 
 // A host that builds the fleet's closures, and the Attic cache they are pushed to.
@@ -152,6 +167,7 @@ export interface Config {
   provisioning: ProvisioningSettings;
   // Each other host's agent key, as its OpenSSH public key line.
   agents: Map<string, string>;
+  fleet: FleetSettings;
 }
 
 export class ConfigError extends Error {
@@ -195,6 +211,7 @@ export function parse_config(raw: unknown): Config {
   return {
     deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
     agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
+    fleet: fleet_settings((raw as { fleet?: unknown } | null)?.fleet),
   };
 }
 
@@ -218,6 +235,14 @@ export function provisioning_settings(entry: unknown): ProvisioningSettings {
     media_root_dir: read.text("media_root_dir"),
     job_poll: read.duration("job_poll", "30s"),
   };
+}
+
+export function fleet_settings(entry: unknown): FleetSettings {
+  if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) throw new ConfigError("`fleet` must be an object");
+  const read = new Reader((entry ?? {}) as Record<string, unknown>, "the fleet");
+  const parallel = read.limit("parallel", 4) ?? 4;
+  if (!Number.isInteger(parallel) || parallel < 1) throw new ConfigError("`parallel` of the fleet must be a whole number of at least 1");
+  return { parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m") };
 }
 
 function agent_keys(raw: unknown): Map<string, string> {
@@ -295,11 +320,18 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
   const cache_url = read.text("cache_url");
   const switch_from_cache = read.flag("switch_from_cache", false);
   if (switch_from_cache && cache_url === null) throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which needs a \`cache_url\` to fetch from`);
+  const flake = read.text("flake") ?? "/etc/nixos";
+  const tags = read.list("tags", []);
+  const bad_tag = tags.find((tag) => !/^[A-Za-z0-9_.-]+$/.test(tag));
+  if (bad_tag !== undefined) throw new ConfigError(`Tag ${JSON.stringify(bad_tag)} of ${read.owner} must be letters, digits, ., - and _`);
+  const pin = read.text("pin");
+  if (pin !== null && !is_pin(pin)) throw new ConfigError(`\`pin\` of ${read.owner} must be a commit hash or a tag name`);
+  if (pin !== null && pinned_flake(flake, pin) === null) throw new ConfigError(`\`pin\` of ${read.owner} needs a git or forge flake, not ${flake}`);
   return {
     id,
     name: read.text("name") ?? id,
     host: read.text("host"),
-    flake: read.text("flake") ?? "/etc/nixos",
+    flake,
     configuration: read.text("configuration"),
     interval: read.duration("interval", "5m"),
     eval_agent: read.text("eval_agent"),
@@ -334,6 +366,8 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     gc: gc_settings(values.gc, read.owner),
     boot: read.flag("boot", true),
+    tags,
+    pin,
   };
 }
 
