@@ -77,6 +77,8 @@ export interface DeploymentView {
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
   auto_switch: boolean;
+  // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
+  switch_from_cache: boolean;
   // How the store is watched, or null when it is not.
   gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
@@ -131,6 +133,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     agents: { eval: deployment.agent_for("eval"), build: deployment.agent_for("build"), switch: deployment.agent_for("switch") },
     schedule: { update: clock(settings.update_at), build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
+    switch_from_cache: settings.switch_from_cache,
     gc: settings.gc === null ? null : {
       unit: settings.gc.unit, timer: settings.gc.timer, store: settings.gc.store, max_age: settings.gc.max_age,
       warning: settings.gc.warning, threshold: settings.gc.threshold, command: collect_command(settings.gc, settings.require_sudo),
@@ -141,7 +144,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     running_job: deployment.running_job(),
     actions: action_ids.map((id) => ({
       id,
-      label: action_labels[id],
+      label: id === "switch" && settings.switch_from_cache ? "Switch from cache" : action_labels[id],
       refusal: deployment.action_refusal(id),
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),

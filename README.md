@@ -35,6 +35,12 @@ The config file lists `deployments`, each a NixOS host and the flake that descri
 and compares the two store paths. Update, build, switch, garbage collection and evaluation run as
 long runs that survive a restart of X-Nix; each lands in the job history with its output.
 
+With `switch_from_cache`, Switch never evaluates or builds on the host: it takes the store path of the latest
+successful evaluation, which may run on `eval_agent`, fetches it with `nix copy --from <cache_url>`, sets it as the
+system profile's next generation and runs its `switch-to-configuration switch`. The closure must already be in the
+cache, built and pushed by a cache's Build or Build all, and signed by a key the host trusts; `build_host`,
+`target_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
+
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
 whose agent is not connected reads as unreachable.
@@ -66,6 +72,7 @@ whose agent is not connected reads as unreachable.
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
 | `switch_agent`      | the host                          | The host that runs update and switch.                                |
+| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
@@ -233,7 +240,9 @@ collection from the journal. Update, switch, reboot and Collect Garbage run unde
 `require_sudo` is off, so grant that user, or `x-nix-agent` on a host with an agent, NOPASSWD rules for exactly the commands its deployments
 run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh`,
 `/run/current-system/sw/bin/systemctl reboot`,
-`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`, and for systemd-boot
+`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`, with `switch_from_cache`
+`/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set /nix/store/*` and
+`/nix/store/*/bin/switch-to-configuration switch`, and for systemd-boot
 `/run/current-system/sw/bin/bootctl list --json=short` and
 `/run/current-system/sw/bin/bootctl set-oneshot *`.
 

@@ -17,6 +17,15 @@
       "update_at": "02:00",
       "auto_switch": true,
       "auto_switch_after": "30m"
+    },
+    {
+      "id": "pi",
+      "host": "pi",
+      "flake": "github:example/nixos-config",
+      "configuration": "pi",
+      "eval_agent": "server",
+      "cache_url": "https://attic.example/fleet",
+      "switch_from_cache": true
     }
   ],
   "caches": [

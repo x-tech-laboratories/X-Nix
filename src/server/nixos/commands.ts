@@ -1,4 +1,4 @@
-// The shell commands a deployment's jobs run: evaluation, flake update, build, switch and reboot.
+// The shell commands a deployment's jobs run: evaluation, flake update, build, switch, switch from cache and reboot.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -179,6 +179,31 @@ export function switch_command(settings: DeploymentSettings): string {
   if (settings.post_switch === null) return rebuild;
   // The job's exit status stays the switch's own, whatever the follow-up returns.
   return `${rebuild}; rc=$?; ${settings.post_switch}; (exit $rc)`;
+}
+
+// ── Switch from cache ────────────────────────────────────────────────────────
+
+// The profile whose newest generation the host boots and runs.
+const system_profile = "/nix/var/nix/profiles/system";
+
+// Whether a value is a top-level store path, the only kind put into a command line here.
+export function is_store_path(value: string): boolean {
+  return /^\/nix\/store\/[0-9a-z]{32}-[A-Za-z0-9+._?=-]+$/.test(value);
+}
+
+// Fetches the evaluated closure from the cache and activates it, so the host neither evaluates nor builds.
+export function switch_from_cache_command(settings: DeploymentSettings, store_path: string): string {
+  if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
+  const path = shell_quote(store_path);
+  // The copy runs as the agent's user, as the daemon takes signed paths from anyone, so only activation needs sudo.
+  const steps = [
+    `${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`,
+    `${sudo(settings)}nix-env -p ${system_profile} --set ${path}`,
+    `${sudo(settings)}${store_path}/bin/switch-to-configuration switch`,
+  ].join(" && ");
+  const switching = settings.switch_wrapper.length === 0 ? steps : `${settings.switch_wrapper.map(shell_quote).join(" ")} sh -c ${shell_quote(steps)}`;
+  if (settings.post_switch === null) return switching;
+  return `${switching}; rc=$?; ${settings.post_switch}; (exit $rc)`;
 }
 
 // ── Reboot ───────────────────────────────────────────────────────────────────

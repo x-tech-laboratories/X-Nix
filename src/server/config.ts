@@ -68,6 +68,8 @@ export interface DeploymentSettings {
   build_root_dir: string | null;
   cache_url: string | null;
   switch_agent: string | null;
+  // Switch by fetching the evaluated closure from cache_url and activating it, rather than rebuilding on the host.
+  switch_from_cache: boolean;
   target_host: string | null;
   auto_switch: boolean;
   auto_switch_after: number;
@@ -267,6 +269,9 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
   if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Deployment ${index + 1} needs an \`id\` of letters, digits, - and _`);
   const switch_agent = read.text("switch_agent");
   const eval_interval = read.duration("eval_interval", "1h");
+  const cache_url = read.text("cache_url");
+  const switch_from_cache = read.flag("switch_from_cache", false);
+  if (switch_from_cache && cache_url === null) throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which needs a \`cache_url\` to fetch from`);
   return {
     id,
     name: read.text("name") ?? id,
@@ -291,8 +296,9 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     build_agent: read.text("build_agent") ?? switch_agent,
     build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
     build_root_dir: read.text("build_root_dir"),
-    cache_url: read.text("cache_url"),
+    cache_url,
     switch_agent,
+    switch_from_cache,
     target_host: read.text("target_host"),
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),

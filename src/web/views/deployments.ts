@@ -124,6 +124,7 @@ function details(deployment: Deployment): HTMLElement {
     if (at !== null) rows.push([`Daily ${kind}`, h("span", {}, `at ${at}, last slot `, when(evaluation.scheduled[kind]))]);
   }
   if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
+  if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
   if (evaluation.eval_error) rows.push(["Evaluation error", h("pre", { class: "output" }, evaluation.eval_error)]);
   if (evaluation.metadata_error) rows.push(["Metadata error", h("pre", { class: "output" }, evaluation.metadata_error)]);
   return facts(rows, "rows");

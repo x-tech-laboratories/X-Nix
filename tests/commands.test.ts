@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { deployment_settings } from "../src/server/config.ts";
-import { build_command, eval_command, split_eval_output, switch_command, update_command } from "../src/server/nixos/commands.ts";
+import { ConfigError, deployment_settings } from "../src/server/config.ts";
+import { build_command, eval_command, split_eval_output, switch_command, switch_from_cache_command, update_command } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
 import { current_closure } from "./fake_agent.ts";
@@ -103,6 +103,34 @@ describe("the switch", () => {
     const command = switch_command(settings({ rebuild_bin: "false", require_sudo: false, post_switch: "true" }));
 
     expect(run_shell(command).status).toBe(1);
+  });
+});
+
+describe("the switch from the cache", () => {
+  const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
+
+  it("fetches the closure, sets the system profile and activates it", () => {
+    expect(switch_from_cache_command(settings(from_cache), current_closure)).toBe([
+      `nix --extra-experimental-features 'nix-command flakes' copy --from https://cache.example/fleet ${current_closure}`,
+      `sudo -n nix-env -p /nix/var/nix/profiles/system --set ${current_closure}`,
+      `sudo -n ${current_closure}/bin/switch-to-configuration switch`,
+    ].join(" && "));
+  });
+
+  it("runs inside the wrapper and keeps its exit status after post_switch", () => {
+    const wrapped = switch_from_cache_command(settings({ ...from_cache, switch_wrapper: ["systemd-inhibit", "--what=shutdown"] }), current_closure);
+    expect(wrapped.startsWith("systemd-inhibit --what=shutdown sh -c 'nix ")).toBe(true);
+
+    const failing = switch_from_cache_command(settings({ ...from_cache, nix_bin: "false", require_sudo: false, post_switch: "true" }), current_closure);
+    expect(run_shell(failing).status).toBe(1);
+  });
+
+  it("refuses anything but a store path", () => {
+    expect(() => switch_from_cache_command(settings(from_cache), "/nix/store/x; rm -rf /")).toThrow("not a store path");
+  });
+
+  it("needs a cache_url", () => {
+    expect(() => settings({ switch_from_cache: true })).toThrow(ConfigError);
   });
 });
 

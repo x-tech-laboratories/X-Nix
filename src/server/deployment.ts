@@ -18,7 +18,8 @@ import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { level_of_status, worse, type DeploymentSettings, type GcSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import {
-  build_command, can_update, eval_command, reboot_command, split_eval_output, switch_command, timed_out_exit_code, update_command,
+  build_command, can_update, eval_command, is_store_path, reboot_command, split_eval_output, switch_command, switch_from_cache_command, timed_out_exit_code,
+  update_command,
 } from "./nixos/commands.ts";
 import { boot_script, next_boot_command, parse_boot, type Boot } from "./nixos/boot.ts";
 import { parse_metadata, short_revision } from "./nixos/flake.ts";
@@ -172,6 +173,9 @@ export class Deployment {
       return `Cannot update ${this.settings.flake}: only a local checkout, or a github: flake with a push_ssh_key, has a lock file X-Nix can write`;
     }
     if (action === "collect" && this.settings.gc === null) return "The store is not watched for this deployment; its gc is off";
+    if (action === "switch" && this.settings.switch_from_cache && this.cached_target() === null) {
+      return "Switching from the cache needs the store path of a successful evaluation; evaluate first";
+    }
     if (this.running_job() !== null) return "A job is already running for this deployment";
     return null;
   }
@@ -436,7 +440,8 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
-    const launched = await this.launch("switch", switch_command(this.settings), "automatic", false);
+    const command = this.switch_command_for(target);
+    const launched = await this.launch("switch", command, "automatic", false);
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
       this.store.add_event(this.id, this.now(), "warning", `Could not start the automatic switch: ${launched.error}`);
@@ -445,7 +450,7 @@ export class Deployment {
     const evaluation = this.evaluation();
     evaluation.auto_switch_target = target;
     this.store.save_evaluation(this.id, evaluation);
-    if (launched.job_id === null) this.record_failed_launch("switch", switch_command(this.settings), "automatic", launched.error);
+    if (launched.job_id === null) this.record_failed_launch("switch", command, "automatic", launched.error);
     else this.store.add_event(this.id, this.now(), "info", "Automatic switch started");
   }
 
@@ -557,7 +562,19 @@ export class Deployment {
     if (kind === "update") return update_command(this.settings);
     if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
     if (kind === "build") return build_command(this.settings, this.attribute());
-    return switch_command(this.settings);
+    return this.switch_command_for(this.cached_target());
+  }
+
+  // The switch: a rebuild from the flake, or with switch_from_cache the activation of this evaluated store path.
+  private switch_command_for(target: string | null): string {
+    if (!this.settings.switch_from_cache || target === null) return switch_command(this.settings);
+    return switch_from_cache_command(this.settings, target);
+  }
+
+  // The store path a switch from the cache activates: the last evaluation's, unless that evaluation failed.
+  cached_target(): string | null {
+    const evaluation = this.evaluation();
+    return evaluation.eval_error === null && evaluation.target !== null && is_store_path(evaluation.target) ? evaluation.target : null;
   }
 
   // ── Jobs ─────────────────────────────────────────────────────────────────

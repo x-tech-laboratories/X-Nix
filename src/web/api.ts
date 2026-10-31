@@ -148,6 +148,7 @@ export interface Deployment {
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
   auto_switch: boolean;
+  switch_from_cache: boolean;
   gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
   evaluation: Evaluation;

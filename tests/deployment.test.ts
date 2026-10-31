@@ -457,6 +457,44 @@ describe("job polling", () => {
   });
 });
 
+// ── Switch from cache ────────────────────────────────────────────────────────
+
+describe("switch from cache", () => {
+  const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
+
+  it("waits for a successful evaluation", async () => {
+    const harness = make_deployment(from_cache);
+    expect(harness.deployment.action_refusal("switch")).toContain("successful evaluation");
+
+    await collect(harness, { evaluation: result(1, "", "error: infinite recursion") });
+
+    expect((await harness.deployment.act("switch")).ok).toBe(false);
+  });
+
+  it("activates the evaluated store path instead of rebuilding", async () => {
+    const harness = make_deployment(from_cache);
+    await collect(harness);
+
+    expect((await harness.deployment.act("switch")).ok).toBe(true);
+
+    const command = harness.deployment.running_job()!.command;
+    expect(command).toContain(`copy --from https://cache.example/fleet ${target_closure}`);
+    expect(command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
+    expect(command).not.toContain("nixos-rebuild");
+  });
+
+  it("is used by the automatic switch too", async () => {
+    const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
+    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    await collect(harness);
+
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+  });
+});
+
 // ── Automatic switch ─────────────────────────────────────────────────────────
 
 describe("automatic switch", () => {
