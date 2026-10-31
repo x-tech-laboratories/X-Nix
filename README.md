@@ -143,6 +143,48 @@ the job checks that target again once it ends. Cache ids share one space with de
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
 
+## Provisioning
+
+The Provision page installs NixOS on a reachable Linux host over SSH with
+[nixos-anywhere](https://github.com/nix-community/nixos-anywhere): it kexecs the target into an
+installer, partitions its disks with the configuration's disko layout, installs the flake's
+`nixosConfigurations` attribute and reboots, or stops after partitioning. The page names the new
+host, the target's SSH address, user and port, the flake and attribute, and the host that runs
+nixos-anywhere, and it starts only once the target's address is typed to confirm its disks are
+wiped. The install is a long run that survives a restart of X-Nix and lands in the job history.
+
+A full install also generates the new host's `hardware-configuration.nix` with
+`nixos-generate-config` on the target, shown with the install or written to a path on the host
+that runs nixos-anywhere, and makes the new host's agent key. The private half is piped to the
+install and placed on the new system at `agent_key_path` through `--extra-files`; X-Nix keeps only
+the public line. Once the install succeeds X-Nix accepts that key, so the agent logs in on first
+boot, provided the configuration already enables `services.x-nix-agent` with that `keyFile` (the
+page shows the lines). The page then shows what to add to the config to declare the key and watch
+the host as a deployment; X-Nix never writes the config file itself. A key the config declares for
+the same host wins, and a made key can be forgotten from the page.
+
+The page also builds install media for a deployment or any flake and attribute: an installer ISO,
+the netboot (iPXE) files or a kexec tarball. It builds the configuration's own
+`system.build.isoImage`, `netbootRamdisk` or `kexecTarball` when it has one, and otherwise the
+configuration extended with nixpkgs' installer module. Media is built on the server's own host,
+linked under `media_root_dir` so it stays in the store until removed from the page, and each file
+downloads from inside the built store path only.
+
+These keys of `provisioning` in the config file set it up:
+
+| Setting               | Default                   | Meaning                                                              |
+| --------------------- | ------------------------- | -------------------------------------------------------------------- |
+| `ssh_key`             | none                      | The private key nixos-anywhere logs in to targets with, as a path on the host that runs it; installs are refused without it. |
+| `install_agent`       | the server's own host     | The host that runs nixos-anywhere unless an install names another.   |
+| `nixos_anywhere_bin`  | `nixos-anywhere`          | The nixos-anywhere program.                                          |
+| `nixos_anywhere_args` | none                      | Extra arguments for nixos-anywhere, such as `["--build-on", "remote"]`. |
+| `agent_key_path`      | `/etc/x-nix-agent/key`    | Where the new host's agent key is placed on its disk.                |
+| `agent_url`           | none                      | The server's agent endpoint, for the snippets the page shows.        |
+| `nix_bin`             | `nix`                     | The nix program media builds run.                                    |
+| `nix_args`            | flakes enabled            | Arguments before every nix command.                                  |
+| `media_root_dir`      | `<X_NIX_STATE_DIR>/media` | Where each built medium is linked.                                   |
+| `job_poll`            | `30s`                     | How often a running install or media build is read.                  |
+
 ## Agents
 
 Every host other than the server's own runs `x-nix-agent`, which dials out to the server's
@@ -164,7 +206,8 @@ connected.
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
-and whose `agents` takes each host's key line. `nix build .#agent` builds the agent, and
+whose `provisioning` takes the Provisioning settings, and whose `agents` takes each host's key line.
+Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
 `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`:
 
 ```nix

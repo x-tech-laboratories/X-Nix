@@ -22,7 +22,7 @@ let
   config_file = json.generate "x-nix.json" {
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-    inherit (cfg) agents;
+    inherit (cfg) agents provisioning;
   };
 in
 {
@@ -107,6 +107,16 @@ in
       '';
     };
 
+    provisioning = mkOption {
+      type = json.type;
+      default = { };
+      example = {
+        ssh_key = "/var/lib/x-nix/install_key";
+        agent_url = "wss://nix.example.org/api/agent";
+      };
+      description = "How the Provision page installs new hosts and builds install media, with the settings README.md lists.";
+    };
+
     path = mkOption {
       type = types.listOf (types.either types.package types.str);
       default = [ ];
@@ -137,6 +147,9 @@ in
         "/run/wrappers"
         "/run/current-system/sw"
         pkgs.git
+        # Installs new hosts from the Provision page, logging in to them over SSH.
+        pkgs.nixos-anywhere
+        pkgs.openssh
       ]
       ++ cfg.path;
 

@@ -30,5 +30,9 @@
       "drop_pushed": ["server"],
       "push_command": "attic push fleet"
     }
-  ]
+  ],
+  "provisioning": {
+    "ssh_key": "/var/lib/x-nix/install_key",
+    "agent_url": "wss://nix.example.org/api/agent"
+  }
 }

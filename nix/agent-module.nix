@@ -86,6 +86,9 @@ in
         "/run/wrappers"
         "/run/current-system/sw"
         pkgs.git
+        # Installs new hosts from the Provision page, logging in to them over SSH.
+        pkgs.nixos-anywhere
+        pkgs.openssh
       ]
       ++ cfg.path;
 
