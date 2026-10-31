@@ -105,9 +105,13 @@ export class FakeAgent implements Agent {
   poll_error: AgentError | null = null;
   readonly commands: string[] = [];
   readonly runs: FakeRun[] = [];
+  // Answers for commands holding some text, looked at before anything else.
+  readonly answers: [needle: string, answer: RunResult][] = [];
 
   async run(command: string): Promise<RunResult> {
     this.commands.push(command);
+    const answer = this.answers.find(([needle]) => command.includes(needle));
+    if (answer !== undefined) return answer[1];
     if (command === probe_script()) return this.probe_result;
     if (command.includes("bootctl list")) return this.boot_probe_result;
     return command.includes("journalctl") ? this.gc_probe_result : this.command_result;
@@ -154,12 +158,14 @@ export interface Harness {
   agents: AgentPool;
 }
 
-export function make_deployment(values: Record<string, unknown> = {}, existing: { store?: Store; agent?: FakeAgent } = {}): Harness {
+export function make_deployment(
+  values: Record<string, unknown> = {}, existing: { store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null> } = {},
+): Harness {
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...values });
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check });
   return { deployment, agent, store, agents };
 }
 

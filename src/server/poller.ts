@@ -13,6 +13,8 @@ export interface Watched {
   readonly settings: { interval: number; job_poll: number };
   cycle(options?: { force_eval?: boolean }): Promise<void>;
   busy(): boolean;
+  // How soon a busy one is polled again, when sooner than its job_poll.
+  poll_interval?(): number;
 }
 
 // ── Poller ───────────────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ export class Poller {
     } catch (error) {
       this.log?.error({ err: error, id: watched.id }, "Cycle failed");
     }
-    this.schedule(watched, watched.busy() ? watched.settings.job_poll : watched.settings.interval);
+    this.schedule(watched, watched.busy() ? (watched.poll_interval?.() ?? watched.settings.job_poll) : watched.settings.interval);
   }
 
   private schedule(watched: Watched, delay_in_seconds: number): void {

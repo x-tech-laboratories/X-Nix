@@ -10,7 +10,9 @@ import { DatabaseSync } from "node:sqlite";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media" | "build-all";
+export type JobKind =
+  | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
+  | "build-all" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 
@@ -27,6 +29,8 @@ export interface Job {
   error: string | null;
   // The last line it printed, shown while it runs.
   progress: string | null;
+  // A build's live progress as JSON, read from nix's structured log; null for any other job.
+  live: string | null;
   // How many bytes of the run's output have been copied into the job.
   output_offset: number;
   // What started it: a person, a schedule, or an automatic switch.
@@ -97,6 +101,7 @@ const schema = `
     exit_code INTEGER,
     error TEXT,
     progress TEXT,
+    live TEXT,
     output_offset INTEGER NOT NULL DEFAULT 0,
     output TEXT NOT NULL DEFAULT '',
     trigger TEXT NOT NULL,
@@ -147,7 +152,7 @@ const schema = `
   );
 `;
 
-const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, output_offset, trigger, started_epoch, finished_epoch";
+const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, live, output_offset, trigger, started_epoch, finished_epoch";
 
 // The agent key of a host X-Nix installed, accepted beside the keys the config declares.
 export interface ProvisionedAgent {
@@ -174,6 +179,9 @@ export class Store {
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     this.database.exec(schema);
+    // A database made before builds kept their live progress gains the column.
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "live")) this.database.exec("ALTER TABLE jobs ADD COLUMN live TEXT");
   }
 
   close(): void {
@@ -245,6 +253,10 @@ export class Store {
 
   set_progress(job_id: number, progress: string): void {
     this.database.prepare("UPDATE jobs SET progress = ? WHERE id = ?").run(progress.slice(0, 200), job_id);
+  }
+
+  set_live(job_id: number, live: unknown): void {
+    this.database.prepare("UPDATE jobs SET live = ? WHERE id = ?").run(JSON.stringify(live), job_id);
   }
 
   finish_job(job_id: number, state: Exclude<JobState, "running">, exit_code: number | null, error: string | null, finished_epoch: number): void {

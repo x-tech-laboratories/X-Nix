@@ -12,16 +12,21 @@ export interface Followed {
   error: string;
 }
 
+// Turns a piece of a run's output into what the job keeps; ended is set once with nothing more to come.
+export type Translate = (job: Job, chunk: string, ended: boolean) => string;
+
 // Copies the run's new output into the job and finishes the job once the run has ended; `describe` names a failing exit
-// code its owner knows better, such as a timeout.
-export async function follow(store: Store, agents: AgentPool, job: Job, now: () => number, describe: (exit_code: number) => string | null = () => null): Promise<Followed> {
+// code its owner knows better, such as a timeout, and `translate` rewrites output such as nix's structured log.
+export async function follow(
+  store: Store, agents: AgentPool, job: Job, now: () => number, describe: (exit_code: number) => string | null = () => null, translate: Translate | null = null,
+): Promise<Followed> {
   const agent = agents.get(job.agent);
   let offset = job.output_offset;
   let poll;
   try {
     do {
       poll = await agent.poll(job.run_id!, offset);
-      store.append_output(job.id, poll.new_output, poll.next_offset);
+      store.append_output(job.id, translate === null ? poll.new_output : translate(job, poll.new_output, false), poll.next_offset);
       offset = poll.next_offset;
     } while (offset < poll.size && poll.new_output !== "");
   } catch (error) {
@@ -30,6 +35,7 @@ export async function follow(store: Store, agents: AgentPool, job: Job, now: () 
     poll = { alive: false, exit_code: null };
   }
   if (poll.alive) return { outcome: "running", error: "" };
+  if (translate !== null) store.append_output(job.id, translate(job, "", true));
 
   let error: string | null = null;
   if (poll.exit_code === null) error = "The run ended without writing an exit code";

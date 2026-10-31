@@ -180,6 +180,8 @@ in
         pkgs.openssh
         # Build all evaluates every target of a cache with it.
         pkgs.nix-eval-jobs
+        # Compares the derivations of two closures whose packages are the same, for the diff shown before a switch.
+        pkgs.nix-diff
       ]
       ++ cfg.path;
 

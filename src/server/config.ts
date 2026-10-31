@@ -78,6 +78,19 @@ export interface DeploymentSettings {
   build_at: TimeOfDay | null;
   switch_wrapper: string[];
   post_switch: string | null;
+  // Commands run on the host before a switch changes anything; the first to fail refuses the switch.
+  pre_switch_checks: string[];
+  // Whether a switch X-Nix cannot confirm reaching the host after within confirm_timeout is rolled back.
+  magic_rollback: boolean;
+  activation_timeout: number;
+  confirm_timeout: number;
+  // Commands run on the host and URLs fetched from X-Nix after a switch, until they pass or health_timeout passes.
+  health_commands: string[];
+  health_urls: string[];
+  health_period: number;
+  health_timeout: number;
+  // Whether Build reads nix's structured log, so its job shows what is building and downloading.
+  build_progress: boolean;
   push_ssh_key: string | null;
   commit_author: string;
   commit_message: string;
@@ -361,6 +374,15 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     build_at: read.time_of_day("build_at"),
     switch_wrapper: read.list("switch_wrapper", []),
     post_switch: read.text("post_switch"),
+    pre_switch_checks: read.list("pre_switch_checks", []),
+    magic_rollback: read.flag("magic_rollback", false),
+    activation_timeout: read.duration("activation_timeout", "4m"),
+    confirm_timeout: read.duration("confirm_timeout", "30s"),
+    health_commands: read.list("health_commands", []),
+    health_urls: read.urls("health_urls"),
+    health_period: Math.max(1, read.duration("health_period", "5s")),
+    health_timeout: read.duration("health_timeout", "2m"),
+    build_progress: read.flag("build_progress", true),
     push_ssh_key: read.text("push_ssh_key"),
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
@@ -422,6 +444,21 @@ class Reader {
     if (value === undefined || value === null) return fallback;
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new ConfigError(`\`${key}\` of ${this.owner} must be a list of text`);
     return value;
+  }
+
+  // A list of http or https URLs.
+  urls(key: string): string[] {
+    const values = this.list(key, []);
+    for (const value of values) {
+      let protocol = "";
+      try {
+        protocol = new URL(value).protocol;
+      } catch {
+        // Left empty, so the check below names the value.
+      }
+      if (protocol !== "http:" && protocol !== "https:") throw new ConfigError(`\`${key}\` of ${this.owner} must list http or https URLs, not ${JSON.stringify(value)}`);
+    }
+    return values;
   }
 
   // An object of text values, such as names to flake attributes.

@@ -39,7 +39,7 @@ function refresh_args(settings: DeploymentSettings): string[] {
   return local_path(settings.flake) === null ? ["--refresh"] : [];
 }
 
-function sudo(settings: DeploymentSettings): string {
+export function sudo(settings: DeploymentSettings): string {
   return settings.require_sudo ? "sudo -n " : "";
 }
 
@@ -144,10 +144,13 @@ function github_update_command(settings: DeploymentSettings): string {
 
 // ── Build ────────────────────────────────────────────────────────────────────
 
+// Makes nix print its activities as JSON lines, which the job turns back into log lines and counts of builds.
+export const progress_args = ["--log-format", "internal-json", "-v"];
+
 // Realises the host's closure without activating it, so a later switch substitutes instead of building, printing its store
 // path for the build history.
 export function build_command(settings: DeploymentSettings, attribute: string | null): string {
-  const args = [...settings.build_args, ...refresh_args(settings)].map(shell_quote).join(" ");
+  const args = [...(settings.build_progress ? progress_args : []), ...settings.build_args, ...refresh_args(settings)].map(shell_quote).join(" ");
   const target = installable(settings, attribute);
   let build: string;
   if (settings.build_root_dir === null) {
@@ -167,7 +170,12 @@ export function build_command(settings: DeploymentSettings, attribute: string | 
 
 // ── Switch ───────────────────────────────────────────────────────────────────
 
-export function switch_command(settings: DeploymentSettings): string {
+// How nixos-rebuild applies the new system: now and at boot, only at boot, only now, or only saying what it would do.
+export type SwitchMode = "switch" | "boot" | "test" | "dry-activate";
+
+export const switch_modes: SwitchMode[] = ["switch", "boot", "test", "dry-activate"];
+
+export function switch_command(settings: DeploymentSettings, mode: SwitchMode = "switch"): string {
   const flake_reference = settings.configuration ? `${settings.flake}#${settings.configuration}` : settings.flake;
   const args = [
     ...(settings.build_host ? ["--build-host", settings.build_host] : []),
@@ -176,7 +184,7 @@ export function switch_command(settings: DeploymentSettings): string {
     ...refresh_args(settings),
   ].map(shell_quote).join(" ");
   const wrapper = settings.switch_wrapper.map((word) => `${shell_quote(word)} `).join("");
-  const rebuild = `${wrapper}${sudo(settings)}${settings.rebuild_bin} switch --flake ${shell_quote(flake_reference)} ${args}`.trim();
+  const rebuild = `${wrapper}${sudo(settings)}${settings.rebuild_bin} ${mode} --flake ${shell_quote(flake_reference)} ${args}`.trim();
   if (settings.post_switch === null) return rebuild;
   // The job's exit status stays the switch's own, whatever the follow-up returns.
   return `${rebuild}; rc=$?; ${settings.post_switch}; (exit $rc)`;

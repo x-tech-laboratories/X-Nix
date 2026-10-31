@@ -113,6 +113,17 @@ export interface DeploymentView {
   actions: ActionView[];
   // Why the next boot cannot be set now, or null when it can.
   next_boot_refusal: string | null;
+  // What guards a switch.
+  safety: {
+    pre_switch_checks: string[];
+    magic_rollback: boolean;
+    activation_timeout: number;
+    confirm_timeout: number;
+    health_commands: string[];
+    health_urls: string[];
+    health_period: number;
+    health_timeout: number;
+  };
 }
 
 export interface FleetView {
@@ -144,11 +155,15 @@ export interface CacheView {
 
 const action_labels: Record<ActionId, string> = {
   update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
+  boot: "Rebuild for next boot", test: "Rebuild and test", "dry-activate": "Dry activate",
 };
 
 const confirmations: Partial<Record<ActionId, (name: string) => string>> = {
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
   collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
+  switch: (name) => `Switch ${name} to the flake's system now, and boot it from now on?`,
+  boot: (name) => `Make the flake's system the one ${name} boots next, without activating it now?`,
+  test: (name) => `Activate the flake's system on ${name} now, without making it the one it boots?`,
 };
 
 const web_build_directory = fileURLToPath(new URL("../../dist", import.meta.url));
@@ -192,6 +207,11 @@ function deployment_view(deployment: Deployment): DeploymentView {
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
     next_boot_refusal: deployment.next_boot_refusal(deployment.reading()?.boot?.entries[0]?.id ?? ""),
+    safety: {
+      pre_switch_checks: settings.pre_switch_checks, magic_rollback: settings.magic_rollback, activation_timeout: settings.activation_timeout,
+      confirm_timeout: settings.confirm_timeout, health_commands: settings.health_commands, health_urls: settings.health_urls,
+      health_period: settings.health_period, health_timeout: settings.health_timeout,
+    },
   };
 }
 
@@ -288,6 +308,42 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const outcome = await deployment.set_pin(typeof pin === "string" && pin.trim() !== "" ? pin.trim() : null, reset);
     if (outcome.ok) void poller.refresh(deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // The packages a switch would add, remove and change, compared on the host unless the last diff compared the same closures.
+  app.post<{ Params: { id: string }; Body: { force?: unknown } | undefined }>("/api/deployments/:id/diff", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    return deployment.diff(request.body?.force === true);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/deployments/:id/generations", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    const answer = await deployment.generations();
+    return answer.error === null ? answer : reply.code(502).send(answer);
+  });
+
+  // Activates an earlier generation of the system profile, with an optional reason kept in the history.
+  app.post<{ Params: { id: string }; Body: { generation?: unknown; reason?: unknown } | undefined }>("/api/deployments/:id/rollback", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    const generation = request.body?.generation;
+    if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) return reply.code(400).send({ error: "Name the generation as a whole `generation` number" });
+    const given = typeof request.body?.reason === "string" ? request.body.reason.trim().slice(0, 200) : "";
+    const outcome = await deployment.roll_back(generation, given || "asked for from the page");
+    if (outcome.ok) poller.soon(deployment);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // A closure's dependency graph: the running system's, the flake's, or a generation's.
+  app.get<{ Params: { id: string }; Querystring: { which?: string; generation?: string } }>("/api/deployments/:id/closure", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    const { which, generation } = request.query;
+    if (generation !== undefined && !/^\d+$/.test(generation)) return reply.code(400).send({ error: "`generation` must be a generation number" });
+    const answer = await deployment.closure(generation === undefined ? { which: which === "target" ? "target" : "current" } : { generation: Number(generation) });
+    return answer.error === null ? answer : reply.code(502).send(answer);
   });
 
   app.get<{ Params: { id: string } }>("/api/deployments/:id/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
