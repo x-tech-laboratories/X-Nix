@@ -13,9 +13,11 @@
       in
       {
         packages.default = pkgs.callPackage ./nix/package.nix { };
+        packages.agent = pkgs.callPackage ./nix/agent-package.nix { };
         devShells.default = import ./shell.nix { inherit pkgs; };
       }
     ) // {
       nixosModules.default = import ./nix/module.nix self;
+      nixosModules.agent = import ./nix/agent-module.nix self;
     };
 }

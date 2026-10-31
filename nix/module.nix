@@ -22,6 +22,7 @@ let
   config_file = json.generate "x-nix.json" {
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
+    inherit (cfg) agents;
   };
 in
 {
@@ -92,6 +93,18 @@ in
         }
       '';
       description = "The Attic caches to watch, by id, each with the settings README.md lists; ids are shared with deployments.";
+    };
+
+    agents = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      example = {
+        odin = "ssh-ed25519 AAAA... x-nix-agent-odin";
+      };
+      description = ''
+        Each other host's agent key, as the OpenSSH public key line of the key its
+        `services.x-nix-agent.keyFile` holds. Only a host named here can dial in on `/api/agent`.
+      '';
     };
 
     path = mkOption {

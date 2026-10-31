@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastify_static from "@fastify/static";
 
+import type { AgentHub } from "./agents/hub.ts";
+import { register_agent_route } from "./agents/route.ts";
 import { register_auth } from "./auth.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
@@ -26,6 +28,8 @@ export interface app_options {
   password_hash: string;
   store: Store;
   poller: Poller;
+  // The other hosts' agents; none dial in without it.
+  hub?: AgentHub;
 }
 
 export interface HealthAnswer {
@@ -155,6 +159,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
   register_auth(app, options.password_hash);
+  if (options.hub !== undefined) await register_agent_route(app, options.hub);
 
   const find = (id: string, reply: FastifyReply): Deployment | null => {
     const deployment = poller.deployments.get(id) ?? null;
@@ -163,6 +168,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   };
 
   app.get("/api/health", async (): Promise<HealthAnswer> => ({ name: "X-Nix", version, server_name, started_epoch }));
+
+  // Each host with a declared agent key, and whether its agent is connected.
+  app.get("/api/agents", async () => options.hub?.statuses() ?? []);
 
   // ── Deployments ──────────────────────────────────────────────────────────
 

@@ -201,6 +201,12 @@ export interface EventRow {
   message: string;
 }
 
+// A host with a declared agent key, and its agent when connected.
+export interface AgentEntry {
+  host: string;
+  status: { host: string; agent_version: string; connected_epoch: number } | null;
+}
+
 export interface ActionOutcome {
   ok: boolean;
   message: string;

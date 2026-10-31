@@ -35,8 +35,9 @@ The config file lists `deployments`, each a NixOS host and the flake that descri
 and compares the two store paths. Update, build, switch, garbage collection and evaluation run as
 long runs that survive a restart of X-Nix; each lands in the job history with its output.
 
-Hosts are named by agent. Only the server's own host has one so far, so a deployment, `eval_agent`,
-`build_agent` or `switch_agent` naming another host reads as unreachable.
+Hosts are named by agent: the server's own host is served by the server itself, and any other host
+by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
+whose agent is not connected reads as unreachable.
 
 | Setting             | Default                           | Meaning                                                              |
 | ------------------- | --------------------------------- | -------------------------------------------------------------------- |
@@ -142,10 +143,29 @@ the job checks that target again once it ends. Cache ids share one space with de
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
 
+## Agents
+
+Every host other than the server's own runs `x-nix-agent`, which dials out to the server's
+`/api/agent` over a WebSocket, so nothing listens on the host. It logs in with the host's own
+ed25519 key: the server sends a nonce, the agent signs it, and the server checks the signature
+against the public key line the config file declares for that host under `agents`:
+
+```json
+{ "agents": { "odin": "ssh-ed25519 AAAA... x-nix-agent-odin" } }
+```
+
+Make each key with `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>` and keep the private half
+only on its host. The agent runs commands and long runs for the server as the `x-nix-agent` user;
+long runs outlive the agent and are followed again once it reconnects. The protocol is X-Backups'
+agent protocol without its streams. The Overview lists each declared host and whether its agent is
+connected.
+
 ## Package
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
-`services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id:
+`services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
+and whose `agents` takes each host's key line. `nix build .#agent` builds the agent, and
+`nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`:
 
 ```nix
 services.x-nix = {
@@ -156,11 +176,18 @@ services.x-nix = {
     configuration = "workstation";
   };
 };
+
+# On every other host:
+services.x-nix-agent = {
+  enable = true;
+  url = "wss://nix.example.org/api/agent";
+  keyFile = config.sops.secrets.x_nix_agent_key.path;
+};
 ```
 
 The service runs as the `x-nix` user, in the `systemd-journal` group so it can read the last
 collection from the journal. Update, switch, reboot and Collect Garbage run under `sudo -n` unless
-`require_sudo` is off, so grant that user NOPASSWD rules for exactly the commands its deployments
+`require_sudo` is off, so grant that user, or `x-nix-agent` on a host with an agent, NOPASSWD rules for exactly the commands its deployments
 run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh`,
 `/run/current-system/sw/bin/systemctl reboot`,
 `/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`, and for systemd-boot

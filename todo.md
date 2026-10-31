@@ -52,8 +52,11 @@ only the job of watching X-Nix itself, as it does for X-Backups.
      `test_nixos_upgrade.py` in `tests/deployment.test.ts` and `tests/commands.test.ts`,
      `test_nix_gc.py` in `tests/garbage.test.ts`, `test_attic_push.py` in `tests/cache.test.ts`,
      and the boot cases of `test_host_control.py` in `tests/boot.test.ts`.
-   - Agents on other hosts, so `host`, `eval_agent`, `build_agent` and `switch_agent` can name
-     them; only the server's own host has an agent so far.
+   - **Ported.** Agents on other hosts, so `host`, `eval_agent`, `build_agent` and `switch_agent` can
+     name them: X-Backups' agent with key login only, as `x-nix-agent` and
+     `nixosModules.agent`.
+   - Run `x-nix-agent` on every other host, make each its deployment on Heimdall's X-Nix, then
+     remove the ported functions from X-Monitor.
 
 2. [ ] **Assess existing NixOS tooling.** Survey web and desktop software for NixOS deployment,
    installation and orchestration, and list the features worth integrating, each with where it

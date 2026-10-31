@@ -4,6 +4,7 @@
 
 import { readFileSync } from "node:fs";
 
+import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
 import { parse_duration } from "./durations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -116,6 +117,8 @@ export interface CacheSettings {
 export interface Config {
   deployments: DeploymentSettings[];
   caches: CacheSettings[];
+  // Each other host's agent key, as its OpenSSH public key line.
+  agents: Map<string, string>;
 }
 
 export class ConfigError extends Error {
@@ -156,7 +159,24 @@ export function parse_config(raw: unknown): Config {
     if (seen.has(id)) throw new ConfigError(`Two deployments or caches are named '${id}'`);
     seen.add(id);
   }
-  return { deployments: parsed, caches: parsed_caches };
+  return { deployments: parsed, caches: parsed_caches, agents: agent_keys((raw as { agents?: unknown } | null)?.agents) };
+}
+
+function agent_keys(raw: unknown): Map<string, string> {
+  if (raw === undefined || raw === null) return new Map();
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("`agents` must map each host to its agent's public key line");
+  const keys = new Map<string, string>();
+  for (const [host, line] of Object.entries(raw)) {
+    if (typeof line !== "string") throw new ConfigError(`The agent key of '${host}' must be its OpenSSH public key line`);
+    try {
+      parse_public_key(line);
+    } catch (error) {
+      if (error instanceof AgentKeyError) throw new ConfigError(`The agent key of '${host}' ${error.message}`);
+      throw error;
+    }
+    keys.set(host, line);
+  }
+  return keys;
 }
 
 export function cache_settings(entry: unknown, index = 0): CacheSettings {

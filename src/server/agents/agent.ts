@@ -69,6 +69,10 @@ export class AgentPool {
     this.agents.set(host, agent);
   }
 
+  remove(host: string): void {
+    if (host !== this.own_host) this.agents.delete(host);
+  }
+
   // The agent for a host, or the server's own when no host is named.
   get(host: string | null): Agent {
     const name = host ?? this.own_host;
