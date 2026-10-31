@@ -421,6 +421,8 @@ body.logged-out main { margin-left: var(--space-2); }
 .badge.tone-none { background-color: var(--surface-secondary); color: var(--text-secondary); }
 .products { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
 .chips { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
+.chips.inline-chips { margin-top: 0; gap: var(--space-2); }
+.stage-list { min-width: 260px; min-height: calc(3 * var(--control-height)); }
 .verdicts { display: flex; gap: var(--space-5); flex-wrap: wrap; font-size: var(--text-caption); margin-top: var(--space-4); align-items: center; }
 
 /* ── Overview ─────────────────────────────────────────────────────────────── */

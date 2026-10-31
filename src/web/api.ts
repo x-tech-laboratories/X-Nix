@@ -145,6 +145,11 @@ export interface Deployment {
   host: string | null;
   flake: string;
   configuration: string | null;
+  tags: string[];
+  pin: string | null;
+  configured_pin: string | null;
+  pin_overridden: boolean;
+  sync_pending: boolean;
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
   auto_switch: boolean;
@@ -156,6 +161,51 @@ export interface Deployment {
   running_job: Job | null;
   actions: ActionView[];
   next_boot_refusal: string | null;
+}
+
+export type FleetActionId = "update" | "build" | "switch" | "reboot";
+export type FleetHostState = "queued" | "running" | "verifying" | "succeeded" | "failed" | "skipped";
+export type FleetRunState = "running" | "succeeded" | "failed" | "stopped";
+
+export interface FleetHost {
+  deployment_id: string;
+  name: string;
+  stage: number;
+  state: FleetHostState;
+  job_id: number | null;
+  message: string | null;
+  started_epoch: number | null;
+  finished_epoch: number | null;
+}
+
+export interface FleetRun {
+  id: number;
+  action: FleetActionId;
+  selector: string;
+  staged: boolean;
+  stages: string[];
+  parallel: number;
+  state: FleetRunState;
+  current_stage: number;
+  stop_requested: boolean;
+  started_epoch: number;
+  finished_epoch: number | null;
+  message: string | null;
+  hosts: FleetHost[];
+}
+
+export interface Fleet {
+  parallel: number;
+  stages: string[];
+  sync_timeout: number;
+  tags: string[];
+  runs: FleetRun[];
+}
+
+export interface FleetOutcome {
+  ok: boolean;
+  message: string;
+  run: FleetRun | null;
 }
 
 export type CacheActionId = "build" | "push";

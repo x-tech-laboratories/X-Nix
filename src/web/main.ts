@@ -8,6 +8,7 @@ import { boot_view, boots_view } from "./views/boot.ts";
 import { builds_view } from "./views/builds.ts";
 import { cache_view, caches_view } from "./views/cache.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
+import { fleet_run_view, fleet_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
 import { provision_view } from "./views/provision.ts";
@@ -30,6 +31,8 @@ function view_for(parts: string[]): View {
   const [section, id] = parts;
   if (section === "deployments" && id) return deployment_view(id);
   if (section === "deployments") return deployments_view();
+  if (section === "fleet" && id && /^\d+$/.test(id)) return fleet_run_view(Number(id));
+  if (section === "fleet") return fleet_view();
   if (section === "jobs" && id && /^\d+$/.test(id)) return job_view(Number(id));
   if (section === "jobs") return jobs_view();
   if (section === "builds") return builds_view();

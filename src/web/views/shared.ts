@@ -1,6 +1,6 @@
 // What every view hands the router, and what several views show the same way.
 
-import { api, type ActionOutcome, type ActionView, type Deployment, type EventRow, type Job, type Message } from "../api.ts";
+import { api, type ActionOutcome, type ActionView, type Deployment, type EventRow, type FleetHostState, type FleetRunState, type Job, type Message } from "../api.ts";
 import { age, h, stamp, type Child } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, data_table, empty, job_badge, level_badge, status_badge, toast } from "../ui.ts";
@@ -39,6 +39,59 @@ export function deployment_card(deployment: Deployment): HTMLElement {
       h("dt", {}, "Reboot"), h("dd", {}, reading?.reboot_required === true ? "Needed" : reading?.reboot_required === false ? "Not needed" : "—"),
       job && [h("dt", {}, "Running"), h("dd", {}, `${job.kind}${job.progress ? `: ${job.progress}` : ""}`)],
     ));
+}
+
+// ── Fleet ────────────────────────────────────────────────────────────────────
+
+// What the deployment waits on before it runs what its flake describes: a rebuild for drift, a sync for a fresh evaluation.
+export function waiting_on(deployment: Deployment): HTMLElement {
+  const reading = deployment.reading;
+  const badges: HTMLElement[] = [];
+  if (reading === null) return h("span", { class: "badge tone-none" }, "Not read yet");
+  if (reading.status === "unavailable" && reading.current === null) badges.push(h("span", { class: "badge tone-warn" }, "Unreachable"));
+  if (deployment.evaluation.eval_error !== null) badges.push(h("span", { class: "badge tone-bad" }, "Evaluation failed"));
+  if (reading.up_to_date === false) badges.push(h("span", { class: "badge tone-warn", title: "The flake evaluates to another closure; a switch brings the host there" }, "Rebuild"));
+  if (deployment.sync_pending) badges.push(h("span", { class: "badge tone-info", title: "A fresh evaluation is running or due" }, "Sync"));
+  if (badges.length === 0 && reading.up_to_date === true) badges.push(h("span", { class: "badge tone-good" }, "Nothing"));
+  if (badges.length === 0) badges.push(h("span", { class: "badge tone-none" }, "Not evaluated yet"));
+  return h("span", { class: "chips inline-chips" }, ...badges);
+}
+
+export function tag_chips(tags: string[]): HTMLElement | string {
+  return tags.length === 0 ? "" : h("span", { class: "chips inline-chips" }, ...tags.map((tag) => h("span", { class: "badge tone-none" }, `@${tag}`)));
+}
+
+// Every deployment's last update, NixOS version and what it waits on, with a checkbox each when a selection is given.
+export function fleet_status_table(deployments: Deployment[], selection: { selected: Set<string>; changed: () => void } | null = null): HTMLElement {
+  const pick = (deployment: Deployment) => h("input", {
+    type: "checkbox", checked: selection!.selected.has(deployment.id), "aria-label": `Select ${deployment.name}`,
+    onchange: (event: Event) => {
+      if ((event.target as HTMLInputElement).checked) selection!.selected.add(deployment.id);
+      else selection!.selected.delete(deployment.id);
+      selection!.changed();
+    },
+  });
+  return data_table<Deployment>([
+    ...(selection === null ? [] : [{ label: "Pick", cell: pick }]),
+    { label: "Deployment", cell: (deployment) => h("a", { href: link(["deployments", deployment.id]) }, deployment.name) },
+    { label: "Tags", cell: (deployment) => tag_chips(deployment.tags) },
+    { label: "NixOS", cell: (deployment) => deployment.reading?.version ?? "—" },
+    { label: "Updated", cell: (deployment) => (deployment.reading?.switched_epoch ? h("span", { title: stamp(deployment.reading.switched_epoch) }, age(deployment.reading.switched_epoch)) : "—") },
+    { label: "Pin", cell: (deployment) => (deployment.pin === null ? h("span", { class: "muted" }, "head") : h("code", {}, short_revision(deployment.pin))) },
+    { label: "Waiting on", cell: waiting_on },
+    { label: "Running", cell: (deployment) => (deployment.running_job === null ? "" : h("a", { href: link(["jobs", String(deployment.running_job.id)]) }, deployment.running_job.kind)) },
+  ], deployments, "Fleet status");
+}
+
+const fleet_host_tones: Record<FleetHostState, string> = { queued: "none", running: "info", verifying: "info", succeeded: "good", failed: "bad", skipped: "none" };
+const fleet_run_tones: Record<FleetRunState, string> = { running: "info", succeeded: "good", failed: "bad", stopped: "warn" };
+
+export function fleet_host_badge(state: FleetHostState): HTMLElement {
+  return h("span", { class: `badge tone-${fleet_host_tones[state]}` }, state);
+}
+
+export function fleet_run_badge(state: FleetRunState): HTMLElement {
+  return h("span", { class: `badge tone-${fleet_run_tones[state]}` }, state);
 }
 
 // ── Parts ────────────────────────────────────────────────────────────────────

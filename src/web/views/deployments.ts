@@ -1,11 +1,11 @@
-// The Deployments pages: every deployment as a card, and one deployment with its drift, actions, jobs and events.
+// The Deployments pages: every deployment as a card, and one deployment with its drift, actions, pin, jobs and events.
 
-import { api, type Deployment, type EventRow, type Job } from "../api.ts";
+import { api, type ActionOutcome, type Deployment, type EventRow, type Job } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { crumbs, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import {
-  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile,
+  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tag_chips, tile,
   type View,
 } from "./shared.ts";
 
@@ -40,7 +40,7 @@ export function deployment_view(id: string): View {
   const badge = h("span");
   const buttons = h("div", { class: "head-actions" });
 
-  const refresh = (quiet: boolean) => load(body, async () => {
+  const refresh = (quiet: boolean): Promise<boolean> => load(body, async () => {
     const [deployment, jobs, events] = await Promise.all([
       api<Deployment>(`/api/deployments/${encodeURIComponent(id)}`),
       api<Job[]>(`/api/jobs?deployment=${encodeURIComponent(id)}&limit=10`),
@@ -57,6 +57,7 @@ export function deployment_view(id: string): View {
       tiles(deployment),
       section("Findings", messages_list(deployment.reading?.messages ?? [])),
       section("Details", details(deployment)),
+      section("Pin", pin_form(deployment, () => refresh(true))),
       section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
       section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
     ];
@@ -94,8 +95,36 @@ function tiles(deployment: Deployment): HTMLElement {
     tile("Generation", String(reading?.generation ?? "—")),
     tile("Last switch", reading?.switched_epoch ? age(reading.switched_epoch) : "—"),
     tile("Revision", short_revision(evaluation.flake_revision)),
+    tile("Pin", deployment.pin === null ? "Head" : short_revision(deployment.pin), deployment.pin === null ? null : "tile-info"),
     tile("Oldest input", evaluation.inputs_last_modified_epoch ? age(evaluation.inputs_last_modified_epoch) : "—"),
   );
+}
+
+// The commit or tag the deployment is fixed at, and a form that pins it, follows the head, or goes back to the settings.
+function pin_form(deployment: Deployment, done: () => Promise<unknown>): HTMLElement {
+  const input = h("input", { type: "text", class: "filter", placeholder: "commit hash or tag", "aria-label": "Pin", value: deployment.pin ?? "" });
+  const send = async (body: { pin?: string | null; reset?: boolean }) => {
+    try {
+      toast((await api<ActionOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/pin`, "POST", body)).message, "good");
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
+    await done();
+  };
+  const where = deployment.pin_overridden ? "set here" : "from the settings";
+  return h("div", { class: "stack" },
+    h("p", {}, deployment.pin === null
+      ? `Following the branch head of ${deployment.flake} (${where}).`
+      : h("span", {}, "Evaluating, building and switching ", h("code", {}, deployment.pin), ` of ${deployment.flake} (${where}).`)),
+    h("form", { class: "toolbar", onsubmit: (event: Event) => {
+      event.preventDefault();
+      void send({ pin: input.value.trim() === "" ? null : input.value.trim() });
+    } },
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "Commit or tag"), input),
+      h("button", { type: "submit", class: "accent solid" }, "Pin"),
+      h("button", { type: "button", disabled: deployment.pin === null, onclick: () => void send({ pin: null }) }, "Follow the branch head"),
+      deployment.pin_overridden && h("button", { type: "button", onclick: () => void send({ reset: true }) },
+        deployment.configured_pin === null ? "Use the settings (head)" : `Use the settings (${deployment.configured_pin})`)));
 }
 
 function details(deployment: Deployment): HTMLElement {
@@ -107,6 +136,7 @@ function details(deployment: Deployment): HTMLElement {
     ["Host", deployment.host ?? "this server"],
     ["Flake", code(deployment.flake)],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
+    ["Tags", deployment.tags.length === 0 ? "—" : tag_chips(deployment.tags)],
     ["NixOS version", reading?.version ?? "—"],
     ["Running closure", code(reading?.current), "path"],
     ["Flake closure", code(evaluation.target), "path"],

@@ -1,17 +1,19 @@
-// The Overview: one tile per NixOS deployment with its generation and whether it is in sync, the agents on the other
-// hosts, and the server itself.
+// The Overview: one tile per NixOS deployment with its generation and whether it is in sync, the fleet's status as one
+// table, the agents on the other hosts, and the server itself.
 
 import { api, type AgentEntry, type Deployment, type Health } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { data_table, empty, facts, load, section } from "../ui.ts";
-import { deployment_card, refresh_interval_in_milliseconds, type View } from "./shared.ts";
+import { deployment_card, fleet_status_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
 
 export function overview_view(): View {
   const deployments = h("div");
+  const fleet = h("div");
   const server = h("div");
   const agents = h("div");
   const refresh = (quiet: boolean) => load(deployments, async () => {
     const list = await api<Deployment[]>("/api/deployments");
+    fleet.replaceChildren(list.length === 0 ? empty("No deployments yet.") : fleet_status_table(list));
     if (list.length === 0) return empty("No deployments yet.", "Name each NixOS host and its flake under deployments in the config file.");
     return h("div", { class: "grid" }, ...list.map(deployment_card));
   }, { quiet });
@@ -46,6 +48,7 @@ export function overview_view(): View {
       h("h1", {}, "Overview"),
       h("p", { class: "muted" }, "X-Nix watches and deploys NixOS machines from their flake."),
       section("NixOS deployments", deployments),
+      section("Fleet status", fleet),
       section("Agents", agents),
       section("Server", server),
     ),
