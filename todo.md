@@ -81,12 +81,3 @@ collection, boot entries and agents, so those are left out.
      unit per secret that later units can wait on (Colmena's `deployment.keys`, morph's secrets).
    - An inventory of machines and the roles or services each takes, kept in one file the page
      edits (Clan's `inventory.json`).
-
-8. [ ] **Features from general fleet managers.**
-   - Per-host basics beside the NixOS view: services with start and stop, the journal, and a
-     terminal (Cockpit).
-   - A hardware and software inventory per host (Uyuni, Landscape).
-   - Scheduled chains of actions, such as update, build, switch then reboot as one scheduled
-     run that stops at the first failure (Uyuni's action chains; Semaphore and AWX schedules).
-   - Track which hosts lack a security fix, by matching each generation's packages against
-     known vulnerabilities (Landscape and Uyuni's patch views; `vulnix` for Nix).
