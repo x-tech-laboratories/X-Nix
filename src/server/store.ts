@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 
@@ -86,9 +86,23 @@ const schema = `
     cache_id TEXT PRIMARY KEY,
     reading TEXT
   );
+  CREATE TABLE IF NOT EXISTS provisioned_agents (
+    host TEXT PRIMARY KEY,
+    public_line TEXT NOT NULL,
+    job_id INTEGER NOT NULL,
+    added_epoch INTEGER NOT NULL
+  );
 `;
 
 const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, output_offset, trigger, started_epoch, finished_epoch";
+
+// The agent key of a host X-Nix installed, accepted beside the keys the config declares.
+export interface ProvisionedAgent {
+  host: string;
+  public_line: string;
+  job_id: number;
+  added_epoch: number;
+}
 
 export interface JobFilter {
   deployment_id?: string;
@@ -186,6 +200,13 @@ export class Store {
     return (row as unknown as Job | undefined) ?? null;
   }
 
+  // Every running job of these kinds, oldest first, whoever it belongs to.
+  running_jobs(kinds: JobKind[]): Job[] {
+    const rows = this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE state = 'running'
+      AND kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY id`).all(...kinds);
+    return rows as unknown as Job[];
+  }
+
   jobs(filter: JobFilter = {}): Job[] {
     const conditions: string[] = [];
     const values: string[] = [];
@@ -200,6 +221,23 @@ export class Store {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.database.prepare(`SELECT ${job_columns} FROM jobs ${where} ORDER BY id DESC LIMIT ${Math.trunc(filter.limit ?? 100)}`).all(...values);
     return rows as unknown as Job[];
+  }
+
+  // ── Provisioned agents ───────────────────────────────────────────────────
+
+  provisioned_agents(): ProvisionedAgent[] {
+    return this.database.prepare("SELECT host, public_line, job_id, added_epoch FROM provisioned_agents ORDER BY host").all() as unknown as ProvisionedAgent[];
+  }
+
+  // Keeps a host's new agent key, replacing the key of an earlier install of the same host.
+  save_provisioned_agent(agent: ProvisionedAgent): void {
+    this.database.prepare(`INSERT INTO provisioned_agents (host, public_line, job_id, added_epoch) VALUES (?, ?, ?, ?)
+      ON CONFLICT (host) DO UPDATE SET public_line = excluded.public_line, job_id = excluded.job_id, added_epoch = excluded.added_epoch`)
+      .run(agent.host, agent.public_line, agent.job_id, agent.added_epoch);
+  }
+
+  forget_provisioned_agent(host: string): boolean {
+    return this.database.prepare("DELETE FROM provisioned_agents WHERE host = ?").run(host).changes > 0;
   }
 
   // ── Events ───────────────────────────────────────────────────────────────

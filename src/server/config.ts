@@ -114,9 +114,29 @@ export interface CacheSettings {
   drop_pushed: string[];
 }
 
+// How new hosts are installed with nixos-anywhere, and where install media is built.
+export interface ProvisioningSettings {
+  // The private key nixos-anywhere logs in to targets with, as a path on the host that runs it.
+  ssh_key: string | null;
+  // The host that runs nixos-anywhere unless an install names another; the server's own host when null.
+  install_agent: string | null;
+  nixos_anywhere_bin: string;
+  nixos_anywhere_args: string[];
+  // Where a new host's agent key is placed on its disk.
+  agent_key_path: string;
+  // The server's agent endpoint, as a new host's agent dials it, for the snippets the page shows.
+  agent_url: string | null;
+  nix_bin: string;
+  nix_args: string[];
+  // Where each built install medium is linked, so it stays rooted until it is removed; under the state folder when null.
+  media_root_dir: string | null;
+  job_poll: number;
+}
+
 export interface Config {
   deployments: DeploymentSettings[];
   caches: CacheSettings[];
+  provisioning: ProvisioningSettings;
   // Each other host's agent key, as its OpenSSH public key line.
   agents: Map<string, string>;
 }
@@ -159,7 +179,32 @@ export function parse_config(raw: unknown): Config {
     if (seen.has(id)) throw new ConfigError(`Two deployments or caches are named '${id}'`);
     seen.add(id);
   }
-  return { deployments: parsed, caches: parsed_caches, agents: agent_keys((raw as { agents?: unknown } | null)?.agents) };
+  return {
+    deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
+    agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
+  };
+}
+
+export function provisioning_settings(entry: unknown): ProvisioningSettings {
+  if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) throw new ConfigError("`provisioning` must be an object");
+  const read = new Reader((entry ?? {}) as Record<string, unknown>, "provisioning");
+  const agent_key_path = read.text("agent_key_path") ?? "/etc/x-nix-agent/key";
+  // The key's folders are made on the new host's disk, so the path must be plain and absolute.
+  if (!/^(\/[A-Za-z0-9._-]+){2,}$/.test(agent_key_path) || agent_key_path.split("/").includes("..")) {
+    throw new ConfigError("`agent_key_path` of provisioning must be an absolute path below a folder, such as /etc/x-nix-agent/key");
+  }
+  return {
+    ssh_key: read.text("ssh_key"),
+    install_agent: read.text("install_agent"),
+    nixos_anywhere_bin: read.text("nixos_anywhere_bin") ?? "nixos-anywhere",
+    nixos_anywhere_args: read.list("nixos_anywhere_args", []),
+    agent_key_path,
+    agent_url: read.text("agent_url"),
+    nix_bin: read.text("nix_bin") ?? "nix",
+    nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
+    media_root_dir: read.text("media_root_dir"),
+    job_poll: read.duration("job_poll", "30s"),
+  };
 }
 
 function agent_keys(raw: unknown): Map<string, string> {

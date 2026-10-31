@@ -20,8 +20,8 @@ export class LocalAgent implements Agent {
     return run_command(command, { timeout_in_seconds });
   }
 
-  async start(run_id: string, command: string): Promise<LongRun> {
-    return as_agent_error(() => this.long_runs.start(run_id, command, null));
+  async start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
+    return as_agent_error(() => this.long_runs.start(run_id, command, stdin));
   }
 
   async poll(run_id: string, offset: number): Promise<LongRunPoll> {

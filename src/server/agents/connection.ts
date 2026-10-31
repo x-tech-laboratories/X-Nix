@@ -77,8 +77,8 @@ export class AgentConnection implements Agent {
     }
   }
 
-  start(run_id: string, command: string): Promise<LongRun> {
-    return this.request("start", { run_id, command, stdin: null });
+  start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
+    return this.request("start", { run_id, command, stdin });
   }
 
   poll(run_id: string, offset: number): Promise<LongRunPoll> {

@@ -1,7 +1,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { AgentPool } from "./agents/agent.ts";
 import { Cache } from "./cache.ts";
@@ -9,9 +9,10 @@ import { AgentHub } from "./agents/hub.ts";
 import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
 import { load_password_hash } from "./auth.ts";
-import { load_config, type Config } from "./config.ts";
+import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { Poller } from "./poller.ts";
+import { Provisioner } from "./provisioning.ts";
 import { Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -26,17 +27,23 @@ const password_hash = load_password_hash();
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-const config: Config = config_path ? load_config(config_path) : { deployments: [], caches: [], agents: new Map() };
+const config: Config = config_path ? load_config(config_path) : parse_config({});
 const store = new Store(join(state_directory, "x-nix.sqlite"));
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
 const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
 // Every other host's agent dials in, and joins the pool once it proves its declared key.
 const hub = new AgentHub(agents);
-hub.set_agent_keys(config.agents);
+// Hosts X-Nix installed are accepted with the keys it made for them, unless the config declares the host's key itself.
+const accept_agent_keys = (provisioned: Map<string, string>) => hub.set_agent_keys(new Map([...provisioned, ...config.agents]));
+const provisioner = new Provisioner(config.provisioning, {
+  store, agents, default_media_root_dir: resolve(state_directory, "media"),
+  declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys,
+});
+accept_agent_keys(provisioner.agent_keys());
 const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
-const poller = new Poller(deployments, null, caches);
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub });
+const poller = new Poller(deployments, null, caches, [provisioner]);
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner });
 
 app.addHook("onClose", async () => {
   poller.stop();

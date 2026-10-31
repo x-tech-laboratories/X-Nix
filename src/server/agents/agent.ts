@@ -22,8 +22,9 @@ export class AgentError extends Error {
 export interface Agent {
   // Runs a command to its end; it never rejects, answering a failure to reach the host with exit code -1.
   run(command: string, timeout_in_seconds: number): Promise<RunResult>;
-  // Starts a long run, which outlives the connection, the agent and the server; rejects with an AgentError.
-  start(run_id: string, command: string): Promise<LongRun>;
+  // Starts a long run, which outlives the connection, the agent and the server; its stdin is piped in and never written
+  // down by the agent. Rejects with an AgentError.
+  start(run_id: string, command: string, stdin?: string | null): Promise<LongRun>;
   // What a long run has written past an offset in bytes, and whether it has ended; rejects with an AgentError.
   poll(run_id: string, offset: number): Promise<LongRunPoll>;
   // Removes an ended long run's output from the host.

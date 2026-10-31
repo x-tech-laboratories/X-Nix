@@ -86,6 +86,8 @@ export function eval_output(evaluation: RunResult, flake_metadata: RunResult): s
 interface FakeRun {
   run_id: string;
   command: string;
+  // What the run was handed on stdin.
+  stdin: string | null;
   output: string;
   exit_code: number | null;
   alive: boolean;
@@ -111,9 +113,9 @@ export class FakeAgent implements Agent {
     return command.includes("journalctl") ? this.gc_probe_result : this.command_result;
   }
 
-  async start(run_id: string, command: string): Promise<LongRun> {
+  async start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
     if (this.start_error !== null) throw this.start_error;
-    this.runs.push({ run_id, command, output: "", exit_code: null, alive: true });
+    this.runs.push({ run_id, command, stdin, output: "", exit_code: null, alive: true });
     return { run_id, pid: 4242, started_epoch: clock.now, state: "running", exit_code: null };
   }
 

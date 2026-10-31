@@ -1,6 +1,6 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
@@ -15,6 +15,8 @@ import { action_ids, type ActionId, type Deployment, type Evaluation, type Readi
 import type { Poller } from "./poller.ts";
 import { build_link, targets } from "./nixos/attic.ts";
 import { collect_command } from "./nixos/garbage.ts";
+import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
+import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import type { EventRow, Job, JobKind, Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -30,6 +32,23 @@ export interface app_options {
   poller: Poller;
   // The other hosts' agents; none dial in without it.
   hub?: AgentHub;
+  // Installs new hosts and builds install media; the Provision page's routes are missing without it.
+  provisioner?: Provisioner;
+}
+
+export interface ProvisioningView {
+  own_host: string;
+  // Why no install can start, or null when one can.
+  install_refusal: string | null;
+  install_agent: string | null;
+  ssh_key: string | null;
+  agent_key_path: string;
+  media_root_dir: string;
+  // What the new host's configuration needs for its agent, with its name left as a placeholder.
+  agent_snippet: string;
+  installs: InstallView[];
+  media: MediaView[];
+  provisioned_agents: ProvisionedAgentView[];
 }
 
 export interface HealthAnswer {
@@ -250,6 +269,80 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const cache = find_cache(request.params.id, reply);
     return cache === null ? reply : store.events(cache.id);
   });
+
+  // ── Provisioning ─────────────────────────────────────────────────────────
+
+  const provisioner = options.provisioner;
+  if (provisioner !== undefined) {
+    app.get("/api/provisioning", async (): Promise<ProvisioningView> => ({
+      own_host: provisioner.own_host,
+      install_refusal: provisioner.install_refusal(),
+      install_agent: provisioner.settings.install_agent,
+      ssh_key: provisioner.settings.ssh_key,
+      agent_key_path: provisioner.settings.agent_key_path,
+      media_root_dir: provisioner.media_root_dir,
+      agent_snippet: agent_snippet("<host>", provisioner.settings.agent_key_path, provisioner.settings.agent_url ?? "wss://x-nix.example/api/agent"),
+      installs: provisioner.installs(),
+      media: provisioner.media(),
+      provisioned_agents: provisioner.provisioned_agents(),
+    }));
+
+    // Starts an install once the person has typed the target's address to confirm its disks are wiped.
+    app.post<{ Body: Record<string, unknown> }>("/api/provisioning/install", async (request, reply) => {
+      const parsed = parse_install_request(request.body);
+      if (typeof parsed === "string") return reply.code(400).send({ error: parsed });
+      if (request.body?.confirm !== parsed.address) return reply.code(400).send({ error: `Type the target's address, ${parsed.address}, to confirm its disks are wiped` });
+      const outcome = await provisioner.install(parsed);
+      if (outcome.ok) poller.soon(provisioner);
+      return reply.code(outcome.ok ? 200 : 409).send(outcome);
+    });
+
+    // Builds install media for a deployment's flake and configuration, or for any flake and configuration named.
+    app.post<{ Body: { deployment?: unknown; flake?: unknown; configuration?: unknown; format?: unknown } }>("/api/provisioning/media", async (request, reply) => {
+      const body = request.body ?? {};
+      const format = body.format as MediaFormat;
+      if (!media_formats.includes(format)) return reply.code(400).send({ error: `Pick a format: ${media_formats.join(", ")}` });
+      let owner: string;
+      let flake: unknown = body.flake;
+      let configuration: unknown = body.configuration;
+      if (typeof body.deployment === "string" && body.deployment !== "") {
+        const deployment = poller.deployments.get(body.deployment);
+        if (deployment === undefined) return reply.code(404).send({ error: `No deployment named '${body.deployment}'` });
+        owner = deployment.id;
+        flake = deployment.settings.flake;
+        configuration = configuration || deployment.settings.configuration;
+      } else {
+        owner = typeof configuration === "string" ? configuration.trim() : "";
+      }
+      for (const [name, value] of [["flake", flake], ["configuration", configuration]] as const) {
+        if (typeof value !== "string" || value.trim() === "" || /[\n\r\0]/.test(value)) return reply.code(400).send({ error: `Name the ${name} to build from` });
+      }
+      const outcome = await provisioner.build_media({ owner, flake: (flake as string).trim(), configuration: (configuration as string).trim(), format });
+      if (outcome.ok) poller.soon(provisioner);
+      return reply.code(outcome.ok ? 200 : 409).send(outcome);
+    });
+
+    // Sends one file of a built medium, only ever from inside its store path.
+    app.get<{ Params: { id: string }; Querystring: { path?: string } }>("/api/provisioning/media/:id/download", async (request, reply) => {
+      const found = provisioner.media_download(Number(request.params.id), request.query.path ?? "");
+      if ("error" in found) return reply.code(404).send({ error: found.error });
+      reply.header("content-type", "application/octet-stream");
+      reply.header("content-length", statSync(found.file).size);
+      reply.header("content-disposition", `attachment; filename="${found.name.replace(/[^A-Za-z0-9._+-]/g, "_")}"`);
+      return reply.send(createReadStream(found.file));
+    });
+
+    app.post<{ Params: { id: string } }>("/api/provisioning/media/:id/remove", async (request, reply) => {
+      const outcome = provisioner.remove_media(Number(request.params.id));
+      return reply.code(outcome.ok ? 200 : 409).send(outcome);
+    });
+
+    // Stops accepting the agent key X-Nix made for an installed host.
+    app.post<{ Params: { host: string } }>("/api/provisioning/agents/:host/forget", async (request, reply) => {
+      if (!provisioner.forget_agent(request.params.host)) return reply.code(404).send({ error: `No key was made for '${request.params.host}'` });
+      return { ok: true, message: `Stopped accepting ${request.params.host}'s agent key`, job_id: null };
+    });
+  }
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 

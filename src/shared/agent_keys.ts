@@ -6,7 +6,7 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { createHash, createPrivateKey, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -105,6 +105,46 @@ export function parse_private_key(text: string): KeyObject {
   // A seed that does not give the stored public key would sign with a key the server does not know.
   if (createPublicKey(private_key).export({ format: "jwk" }).x !== x) throw new AgentKeyError("is damaged: its seed does not match its public key.");
   return private_key;
+}
+
+// ── New keys ─────────────────────────────────────────────────────────────────
+
+// A new ed25519 key in the files ssh-keygen would write: the unencrypted openssh-key-v1 private key and its public line.
+export function generate_agent_key(comment: string): { private_text: string; public_line: string } {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const jwk = privateKey.export({ format: "jwk" });
+  const public_bytes = Buffer.from(jwk.x!, "base64url");
+  const seed = Buffer.from(jwk.d!, "base64url");
+  const public_blob = Buffer.concat([wire_text(ed25519_name), wire_bytes(public_bytes)]);
+
+  // Both check numbers are the same random number, which tells a reader the section decrypted correctly.
+  const check = randomBytes(4);
+  const section_parts = [check, check, wire_text(ed25519_name), wire_bytes(public_bytes), wire_bytes(Buffer.concat([seed, public_bytes])), wire_text(comment)];
+  let section = Buffer.concat(section_parts);
+  // The section is padded with the bytes 1, 2, 3 and on to a multiple of eight.
+  const padding = (8 - (section.length % 8)) % 8;
+  section = Buffer.concat([section, Buffer.from(Array.from({ length: padding }, (_, index) => index + 1))]);
+
+  const data = Buffer.concat([
+    Buffer.from(format_magic, "latin1"), wire_text("none"), wire_text("none"), wire_bytes(Buffer.alloc(0)), wire_number(1), wire_bytes(public_blob), wire_bytes(section),
+  ]);
+  const body = data.toString("base64").match(/.{1,70}/g)!.join("\n");
+  const private_text = `-----BEGIN ${armor_label}-----\n${body}\n-----END ${armor_label}-----\n`;
+  return { private_text, public_line: `${ed25519_name} ${public_blob.toString("base64")} ${comment}` };
+}
+
+function wire_number(value: number): Buffer {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32BE(value);
+  return buffer;
+}
+
+function wire_bytes(value: Buffer): Buffer {
+  return Buffer.concat([wire_number(value.length), value]);
+}
+
+function wire_text(value: string): Buffer {
+  return wire_bytes(Buffer.from(value, "latin1"));
 }
 
 // ── Reader ───────────────────────────────────────────────────────────────────
