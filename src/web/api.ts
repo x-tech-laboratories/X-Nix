@@ -23,7 +23,7 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
@@ -205,6 +205,63 @@ export interface EventRow {
 export interface AgentEntry {
   host: string;
   status: { host: string; agent_version: string; connected_epoch: number } | null;
+}
+
+export type MediaFormat = "iso" | "netboot" | "kexec";
+
+// What an install job installs, as its command records it.
+export interface InstallRecord {
+  host: string;
+  address: string;
+  user: string;
+  port: number;
+  flake: string;
+  configuration: string;
+  agent: string | null;
+  stop_after_partitioning: boolean;
+  generate_hardware_config: boolean;
+  hardware_config_path: string | null;
+  public_line: string | null;
+  agent_key_path: string;
+}
+
+export interface InstallView {
+  job: Job;
+  record: InstallRecord | null;
+  hardware_config: string | null;
+  key_accepted: boolean;
+  snippets: { config_json: string; module_nix: string; host_nix: string } | null;
+}
+
+export interface MediaView {
+  job: Job;
+  format: MediaFormat | null;
+  flake: string | null;
+  configuration: string | null;
+  store_path: string | null;
+  files: { path: string; size: number }[] | null;
+}
+
+export interface ProvisionedAgent {
+  host: string;
+  public_line: string;
+  job_id: number;
+  added_epoch: number;
+  fingerprint: string;
+  overridden: boolean;
+}
+
+export interface Provisioning {
+  own_host: string;
+  install_refusal: string | null;
+  install_agent: string | null;
+  ssh_key: string | null;
+  agent_key_path: string;
+  media_root_dir: string;
+  agent_snippet: string;
+  installs: InstallView[];
+  media: MediaView[];
+  provisioned_agents: ProvisionedAgent[];
 }
 
 export interface ActionOutcome {

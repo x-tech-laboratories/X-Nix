@@ -94,10 +94,19 @@ export function short_revision(revision: string | null): string {
 // The jobs a cache runs, whose owner is a cache rather than a deployment.
 const cache_job_kinds = new Set<Job["kind"]>(["check", "build-target", "push"]);
 
+// The jobs the Provision page starts, whose owner is a host being installed or a configuration's media.
+const provision_job_kinds = new Set<Job["kind"]>(["install", "media"]);
+
+// The page a job's owner is shown on.
+export function job_owner_link(job: Job): string {
+  if (provision_job_kinds.has(job.kind)) return link(["provision"]);
+  return link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]);
+}
+
 export function jobs_table(jobs: Job[], show_deployment: boolean): HTMLElement {
   return data_table<Job>([
     { label: "Job", cell: (job) => h("a", { href: link(["jobs", String(job.id)]) }, `${job.kind} #${job.id}`) },
-    ...(show_deployment ? [{ label: "For", cell: (job: Job) => h("a", { href: link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]) }, job.deployment_id) }] : []),
+    ...(show_deployment ? [{ label: "For", cell: (job: Job) => h("a", { href: job_owner_link(job) }, job.deployment_id) }] : []),
     { label: "State", cell: (job) => job_badge(job.state) },
     { label: "Started", cell: (job) => h("span", { title: stamp(job.started_epoch) }, age(job.started_epoch)) },
     { label: "By", cell: (job) => job.trigger },

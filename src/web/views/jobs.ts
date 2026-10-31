@@ -4,7 +4,7 @@ import { api, type Job, type JobWithOutput } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { crumbs, empty, facts, job_badge, load, section } from "../ui.ts";
-import { jobs_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
+import { job_owner_link, jobs_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ export function jobs_view(): View {
     title: "Jobs",
     root: h("div", { class: "page" },
       h("h1", {}, "Jobs"),
-      h("p", { class: "muted" }, "Every update, build, switch, reboot, collection, cache build and push, newest first. ",
+      h("p", { class: "muted" }, "Every update, build, switch, reboot, collection, cache build and push, install and media build, newest first. ",
         h("a", { href: link(["jobs"], { evaluations: show_evaluations ? null : "1" }) }, show_evaluations ? "Hide evaluations and checks" : "Show evaluations and checks")),
       section("History", list),
     ),
@@ -42,7 +42,7 @@ export function job_view(id: number): View {
     if (job.state !== "running") clearInterval(timer);
     return [
       facts([
-        ["Deployment", h("a", { href: link(["deployments", job.deployment_id]) }, job.deployment_id)],
+        ["For", h("a", { href: job_owner_link(job) }, job.deployment_id)],
         ["State", job_badge(job.state)],
         ["Started", h("span", { title: stamp(job.started_epoch) }, age(job.started_epoch))],
         ["Finished", job.finished_epoch ? h("span", { title: stamp(job.finished_epoch) }, age(job.finished_epoch)) : "—"],
