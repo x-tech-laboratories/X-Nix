@@ -55,8 +55,10 @@ only the job of watching X-Nix itself, as it does for X-Backups.
    - **Ported.** Agents on other hosts, so `host`, `eval_agent`, `build_agent` and `switch_agent` can
      name them: X-Backups' agent with key login only, as `x-nix-agent` and
      `nixosModules.agent`.
-   - Run `x-nix-agent` on every other host, make each its deployment on Heimdall's X-Nix, then
-     remove the ported functions from X-Monitor.
+   - **Done.** `x-nix-agent` runs on every other host, each is a deployment on Heimdall's X-Nix,
+     and X-Nix updates the flake, builds, pushes to Attic and switches the whole fleet.
+   - Reduce X-Monitor's NixOS plugins to read-only checks: no actions, jobs, schedules, builds,
+     pushes or switches.
 
 2. [ ] **Assess existing NixOS tooling.** Survey web and desktop software for NixOS deployment,
    installation and orchestration, and list the features worth integrating, each with where it
