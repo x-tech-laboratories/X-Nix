@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>X-Nix</title>
+  </head>
+  <body>
+    <a class="skip" href="#main" id="skip">Skip to content</a>
+    <header class="topbar">
+      <button id="menu" class="icon menu-button" aria-label="Open the menu" aria-expanded="false" aria-controls="sidebar">☰</button>
+      <a href="#/" class="brand">X-Nix</a>
+      <button id="theme" class="icon" aria-label="Theme"></button>
+    </header>
+    <div class="layout">
+      <nav id="sidebar" class="sidebar" aria-label="Main">
+        <a href="#/" data-section="">Overview</a>
+        <a href="#/deployments" data-section="deployments">Deployments</a>
+        <a href="#/jobs" data-section="jobs">Jobs</a>
+        <a href="#/store" data-section="store">Store</a>
+        <a href="#/cache" data-section="cache">Cache</a>
+        <a href="#/boot" data-section="boot">Boot</a>
+      </nav>
+      <div id="scrim" class="scrim" hidden></div>
+      <main id="main" tabindex="-1"></main>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

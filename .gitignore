@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*
+password.hash
+state/
+
+# Claude Code
+.claude/
+
+# Nix
+result
+result-*
+.direnv/
