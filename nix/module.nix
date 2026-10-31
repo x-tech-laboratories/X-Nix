@@ -22,7 +22,7 @@ let
   config_file = json.generate "x-nix.json" {
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-    inherit (cfg) agents provisioning;
+    inherit (cfg) agents provisioning fleet;
   };
 in
 {
@@ -117,6 +117,34 @@ in
       description = "How the Provision page installs new hosts and builds install media, with the settings README.md lists.";
     };
 
+    fleet = mkOption {
+      type = json.type;
+      default = { };
+      example = {
+        parallel = 2;
+        stages = [
+          "@canary"
+          "@web"
+        ];
+      };
+      description = "How fleet runs act on many deployments at once: `parallel`, `stages` and `sync_timeout`, as README.md lists.";
+    };
+
+    webhookSecretFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        A file holding the shared secret forges sign pushes to `/api/webhook` with, or send as a bearer
+        token; read at runtime, never copied to the store. The webhook is off when null.
+      '';
+    };
+
+    webhookDebounce = mkOption {
+      type = types.str;
+      default = "10s";
+      description = "How long after the last push to a deployment its evaluation starts.";
+    };
+
     path = mkOption {
       type = types.listOf (types.either types.package types.str);
       default = [ ];
@@ -162,8 +190,12 @@ in
         X_NIX_CONFIG = toString config_file;
         X_NIX_PASSWORD_HASH_FILE = "${credentials_directory}/password-hash";
         X_NIX_STATE_DIR = "/var/lib/x-nix";
+        X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
       }
-      // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; };
+      // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
+      // lib.optionalAttrs (cfg.webhookSecretFile != null) {
+        X_NIX_WEBHOOK_SECRET_FILE = "${credentials_directory}/webhook-secret";
+      };
 
       # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
       serviceConfig = {
@@ -172,7 +204,10 @@ in
         Group = "x-nix";
         StateDirectory = "x-nix";
         StateDirectoryMode = "0700";
-        LoadCredential = [ "password-hash:${cfg.passwordHashFile}" ];
+        LoadCredential = [
+          "password-hash:${cfg.passwordHashFile}"
+        ]
+        ++ lib.optional (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}";
         Restart = "on-failure";
         RestartSec = "5s";
         # A restart stops only the server, so a running switch carries on and is followed again from its output.

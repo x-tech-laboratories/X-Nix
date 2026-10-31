@@ -26,6 +26,8 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 | `X_NIX_CONFIG`      | none          | The config file naming the deployments.  |
 | `X_NIX_STATE_DIR`   | `state`       | Where the database and job output live.  |
 | `X_NIX_SERVER_NAME` | the hostname  | What the page calls the server's machine. |
+| `X_NIX_WEBHOOK_SECRET_FILE` | none  | The push webhook's shared secret; the webhook is off without it. |
+| `X_NIX_WEBHOOK_DEBOUNCE` | `10s`    | How long after the last push to a deployment its evaluation starts. |
 
 ## Deployments
 
@@ -85,6 +87,17 @@ whose agent is not connected reads as unreachable.
 | `commit_message`    | `chore(flake): update inputs`     | The update commit's message.                                         |
 | `gc`                | the defaults below                | How the host's Nix store is watched, or `false` to leave it alone.   |
 | `boot`              | `true`                            | Read the host's boot entries, and let the Boot page set the next boot. |
+| `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
+| `pin`               | none                              | A commit hash or tag that evaluation, build and switch use instead of the branch head. |
+
+### Pins
+
+A pin fixes a deployment at one commit or tag, so a rollback names a fixed version: X-Nix evaluates,
+builds and switches `github:owner/repo?rev=<commit>` (or `?ref=<tag>`), and for a git flake
+`git+https://…?rev=<commit>&allRefs=1` (or `?ref=refs/tags/<tag>`); a plain checkout such as
+`/etc/nixos` is read as `git+file://`. A `path:` or tarball flake cannot be pinned. The deployment's
+page shows the pin and sets another, follows the branch head again, or goes back to the settings'
+`pin`. Update Flake still updates the branch, and a pinned deployment ignores pushes.
 
 ### Store
 
@@ -117,6 +130,44 @@ and the one-shot next entry. The Boot page sets the next boot with the loader's 
 (`bootctl set-oneshot`, `grub-reboot` or `efibootmgr --bootnext`), and can reboot into it at once.
 Reading `/boot` usually needs root, so the read tries `sudo -n` first and falls back to reading
 unprivileged.
+
+## Fleet
+
+The Fleet page runs Update, Build, Switch or Reboot across many deployments at once. Pick them by
+checkbox, or with a selector of space-separated terms, each a glob on the id or name (`web-*`) or a
+tag (`@canary`); any term matching picks the deployment. No more than `parallel` run at once. Each
+host's part is an ordinary job whose trigger names the fleet run, and the run itself is kept in the
+database and advanced every few seconds, so it carries on after a restart of X-Nix.
+
+A staged rollout goes through its stages in order, each a selector, with hosts no stage names in a
+last stage; with no stages it goes one host at a time. A staged switch waits for each host to read
+as in sync against an evaluation made after the switch before the next host starts, and the first
+failure, drift or `sync_timeout` stops the rollout. The Overview's fleet status table shows each
+host's NixOS version, when it last switched, its pin, and whether it waits on a rebuild (drift) or a
+sync (an evaluation running or due). The config file's `fleet` object sets:
+
+| Setting        | Default | Meaning                                                          |
+| -------------- | ------- | ---------------------------------------------------------------- |
+| `parallel`     | `4`     | How many deployments a run acts on at once; the page may lower it. |
+| `stages`       | none    | The stage selectors a staged rollout goes through, such as `["@canary", "@web"]`. |
+| `sync_timeout` | `30m`   | How long a staged switch may take to read as in sync.           |
+
+## Push webhook
+
+With `X_NIX_WEBHOOK_SECRET_FILE` set, `POST /api/webhook` takes push deliveries without a login and
+evaluates every deployment whose flake follows the pushed repository and branch at once, instead of
+waiting for `eval_interval`. A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or
+`git+ssh://` one, follows its repository; a flake naming no branch follows the default branch, and a
+pinned one follows nothing. Pushes to one deployment within `X_NIX_WEBHOOK_DEBOUNCE` start one
+evaluation, and an address sending ten unsigned deliveries is turned away for five minutes.
+
+- **GitHub**: Settings → Webhooks → Add webhook, payload URL `https://nix.example.org/api/webhook`,
+  content type `application/json`, the secret file's contents as the secret, just the push event.
+  X-Nix checks `X-Hub-Signature-256`.
+- **Forgejo or Gitea**: Settings → Webhooks → Add webhook → Forgejo (or Gitea), the same URL,
+  `POST` with `application/json`, the secret as the secret, push events. Forgejo's "Authorization
+  header" may instead hold `Bearer <secret>`.
+- **GitLab**: the secret token goes in `X-Gitlab-Token`.
 
 ## Caches
 
@@ -238,13 +289,36 @@ long runs outlive the agent and are followed again once it reconnects. The proto
 agent protocol without its streams. The Overview lists each declared host and whether its agent is
 connected.
 
+### Pull mode
+
+An agent given `X_NIX_AGENT_PULL_FILE`, a JSON file of the settings below, deploys from Git on its own
+once the server has been unreachable for `after`: every `interval` it asks its remotes in order for
+the head of their branch with `git ls-remote`, and when it has moved, runs
+`nixos-rebuild switch --flake 'git+<url>?ref=refs/heads/<branch>&rev=<revision>#<configuration>'` as a
+long run, logging what it does. The first revision it sees is only noted, so turning pull mode on
+never switches by itself. Once the server is back, the agent reports each switch, which joins the
+job history of every deployment on that host with the trigger `agent pull`.
+
+| Setting         | Default         | Meaning                                                        |
+| --------------- | --------------- | -------------------------------------------------------------- |
+| `remotes`       | required        | `{ "url", "branch" }` objects (branch `main` by default), or bare URLs, asked in order; https://, ssh://, git:// or file://. |
+| `after`         | `15m`           | How long the server must be unreachable before the agent deploys. |
+| `interval`      | `5m`            | How often the remotes are asked; at least 30 seconds.          |
+| `configuration` | the agent's host | The `nixosConfigurations` attribute.                          |
+| `rebuild_bin`   | `nixos-rebuild` | The nixos-rebuild program.                                     |
+| `rebuild_args`  | none            | Arguments after the switch.                                    |
+| `require_sudo`  | `true`          | Run the switch under `sudo -n`.                                |
+| `git_bin`       | `git`           | The git program.                                               |
+
 ## Package
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
-whose `provisioning` takes the Provisioning settings, and whose `agents` takes each host's key line.
-Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
-`nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`:
+whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, and whose
+`fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook. Both modules put
+nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
+`nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`, and pull mode under `pull`
+with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs` and `requireSudo`:
 
 ```nix
 services.x-nix = {
@@ -261,6 +335,13 @@ services.x-nix-agent = {
   enable = true;
   url = "wss://nix.example.org/api/agent";
   keyFile = config.sops.secrets.x_nix_agent_key.path;
+  pull = {
+    enable = true;
+    remotes = [
+      { url = "https://github.com/example/nixos-config"; }
+      { url = "https://git.example.org/example/nixos-config"; }
+    ];
+  };
 };
 ```
 
@@ -273,7 +354,8 @@ run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --
 `/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set /nix/store/*` and
 `/nix/store/*/bin/switch-to-configuration switch`, and for systemd-boot
 `/run/current-system/sw/bin/bootctl list --json=short` and
-`/run/current-system/sw/bin/bootctl set-oneshot *`.
+`/run/current-system/sw/bin/bootctl set-oneshot *`, and for pull mode
+`/run/current-system/sw/bin/nixos-rebuild switch --flake git+*`.
 
 ## License
 

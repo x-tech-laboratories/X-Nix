@@ -7,7 +7,8 @@
       "configuration": "workstation",
       "max_input_age": "14d",
       "build_at": "03:00",
-      "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 }
+      "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 },
+      "tags": ["desktop"]
     },
     {
       "id": "server",
@@ -16,7 +17,9 @@
       "push_ssh_key": "/var/lib/x-nix/deploy_key",
       "update_at": "02:00",
       "auto_switch": true,
-      "auto_switch_after": "30m"
+      "auto_switch_after": "30m",
+      "tags": ["canary", "servers"],
+      "pin": "v2026.10"
     },
     {
       "id": "pi",
@@ -28,6 +31,11 @@
       "switch_from_cache": true
     }
   ],
+  "fleet": {
+    "parallel": 2,
+    "stages": ["@canary", "@servers"],
+    "sync_timeout": "30m"
+  },
   "caches": [
     {
       "id": "fleet-cache",

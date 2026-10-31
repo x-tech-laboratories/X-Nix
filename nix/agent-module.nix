@@ -16,6 +16,19 @@ let
     ;
 
   state_directory = "/var/lib/x-nix-agent";
+
+  json = pkgs.formats.json { };
+
+  pull_file = json.generate "x-nix-agent-pull.json" {
+    inherit (cfg.pull)
+      remotes
+      after
+      interval
+      configuration
+      ;
+    rebuild_args = cfg.pull.rebuildArgs;
+    require_sudo = cfg.pull.requireSudo;
+  };
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
 in
@@ -62,9 +75,76 @@ in
       default = [ ];
       description = "Extra entries on the PATH of the commands the agent runs, such as a wrapper named by rebuild_bin.";
     };
+
+    pull = {
+      enable = mkEnableOption ''
+        pull mode: once the server has been unreachable for `after`, the agent asks `remotes` every
+        `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own,
+        reporting each switch to the server once it is back
+      '';
+
+      remotes = mkOption {
+        type = types.listOf (
+          types.submodule {
+            options = {
+              url = mkOption {
+                type = types.strMatching "(git\\+)?(https?|ssh|git|file)://.+";
+                example = "https://github.com/example/nixos-config";
+                description = "The flake's Git remote.";
+              };
+              branch = mkOption {
+                type = types.str;
+                default = "main";
+                description = "The branch to follow.";
+              };
+            };
+          }
+        );
+        default = [ ];
+        description = "The remotes asked in order, typically mirrors of one repository, so no single remote is a point of failure.";
+      };
+
+      after = mkOption {
+        type = types.str;
+        default = "15m";
+        description = "How long the server must have been unreachable before the agent deploys on its own.";
+      };
+
+      interval = mkOption {
+        type = types.str;
+        default = "5m";
+        description = "How often the remotes are asked while the server is unreachable.";
+      };
+
+      configuration = mkOption {
+        type = types.str;
+        default = cfg.host;
+        defaultText = literalExpression "config.services.x-nix-agent.host";
+        description = "The nixosConfigurations attribute to switch to.";
+      };
+
+      rebuildArgs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Arguments after the switch.";
+      };
+
+      requireSudo = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Run the switch under `sudo -n`.";
+      };
+    };
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = !cfg.pull.enable || cfg.pull.remotes != [ ];
+        message = "services.x-nix-agent.pull needs at least one remote.";
+      }
+    ];
+
     users.users.x-nix-agent = {
       isSystemUser = true;
       group = "x-nix-agent";
@@ -102,7 +182,8 @@ in
         HOME = state_directory;
         # Node keeps its own CA list, so the system bundle, which holds security.pki.certificates, is added to it.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
-      };
+      }
+      // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; };
 
       # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
       serviceConfig = {
