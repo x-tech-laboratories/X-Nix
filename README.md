@@ -8,6 +8,7 @@ the Nix store, the Attic cache and boot entries.
 ```sh
 nix develop           # or nix-shell
 npm install
+npm run hash-password # writes the login's hash, which the dev server reads
 npm run dev:server    # the API on http://127.0.0.1:7720
 npm run dev:web       # the page, reaching the API through Vite's proxy
 ```
@@ -21,6 +22,7 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 | ------------------- | ------------- | ---------------------------------------- |
 | `HOST`              | `127.0.0.1`   | The address the server listens on.       |
 | `PORT`              | `7720`        | The port the server listens on.          |
+| `X_NIX_PASSWORD_HASH_FILE` | required | The login password's hash, from `npm run hash-password`. |
 | `X_NIX_CONFIG`      | none          | The config file naming the deployments.  |
 | `X_NIX_STATE_DIR`   | `state`       | Where the database and job output live.  |
 | `X_NIX_SERVER_NAME` | the hostname  | What the page calls the server's machine. |
@@ -76,7 +78,24 @@ Hosts are named by agent. Only the server's own host has one so far, so a deploy
 
 ## Package
 
-`nix build` builds the `x-nix` program from the flake.
+`nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
+`services.x-nix`, whose `deployments` attribute set takes the settings above by id:
+
+```nix
+services.x-nix = {
+  enable = true;
+  passwordHashFile = config.sops.secrets.x_nix_password_hash.path;
+  deployments.workstation = {
+    flake = "github:example/nixos-config";
+    configuration = "workstation";
+  };
+};
+```
+
+The service runs as the `x-nix` user. Update, switch and reboot run under `sudo -n` unless
+`require_sudo` is off, so grant that user NOPASSWD rules for exactly the commands its deployments
+run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh` and
+`/run/current-system/sw/bin/systemctl reboot`.
 
 ## License
 

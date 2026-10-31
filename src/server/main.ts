@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AgentPool } from "./agents/agent.ts";
 import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
+import { load_password_hash } from "./auth.ts";
 import { load_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { Poller } from "./poller.ts";
@@ -19,6 +20,7 @@ const is_production = process.env.NODE_ENV === "production";
 const state_directory = process.env.X_NIX_STATE_DIR ?? "state";
 const config_path = process.env.X_NIX_CONFIG;
 const server_name = process.env.X_NIX_SERVER_NAME || hostname();
+const password_hash = load_password_hash();
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -28,7 +30,7 @@ const store = new Store(join(state_directory, "x-nix.sqlite"));
 const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
 const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
 const poller = new Poller(deployments);
-const app = await build_app({ serve_web: is_production, logger: true, server_name, store, poller });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller });
 
 app.addHook("onClose", async () => {
   poller.stop();

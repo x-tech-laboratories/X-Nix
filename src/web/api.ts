@@ -1,5 +1,8 @@
 // Calls the server's JSON API and names the shapes it answers with.
 
+// The session has lapsed or never began, so the page asks for the password.
+export class LoginNeeded extends Error {}
+
 export class ApiError extends Error {
   status: number | null;
 
@@ -115,8 +118,13 @@ export interface ActionOutcome {
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-export async function api<Answer>(path: string, method: "GET" | "POST" = "GET"): Promise<Answer> {
-  const response = await fetch(path, { method, headers: { accept: "application/json" } });
+export async function api<Answer>(path: string, method: "GET" | "POST" = "GET", body: unknown = undefined): Promise<Answer> {
+  const init: RequestInit = body === undefined
+    ? { method, headers: { accept: "application/json" } }
+    : { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) };
+  const response = await fetch(path, init);
+  if (response.status === 401 && path !== "/api/login") throw new LoginNeeded("Log in first.");
+  if (response.status === 204) return undefined as Answer;
   const answer = await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(answer?.message ?? answer?.error ?? `${response.status} ${response.statusText}`, response.status);
   return answer as Answer;

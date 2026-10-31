@@ -1,5 +1,7 @@
-// The page: the shell around every view (header, sidebar, theme) and the router between views.
+// The page: the login, the shell around every view (header, sidebar, theme) and the router between views.
 
+import { api, LoginNeeded } from "./api.ts";
+import { h } from "./dom.ts";
 import { current_route } from "./router.ts";
 import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
@@ -49,7 +51,58 @@ function show(): void {
   window.scrollTo(0, 0);
 }
 
-window.addEventListener("hashchange", show);
+window.addEventListener("hashchange", () => {
+  if (!document.body.classList.contains("logged-out")) show();
+});
+
+// A session can lapse while any view is fetching, so a LoginNeeded from anywhere brings the login back.
+window.addEventListener("unhandledrejection", (event) => {
+  if (event.reason instanceof LoginNeeded) {
+    event.preventDefault();
+    show_login();
+  }
+});
+
+// ── Login ────────────────────────────────────────────────────────────────────
+
+function show_login(): void {
+  current?.dispose?.();
+  current = null;
+  document.body.classList.add("logged-out");
+  document.title = "Log in · X-Nix";
+  const password = h("input", { type: "password", name: "password", autocomplete: "current-password", required: true, "aria-label": "Password" });
+  const message = h("p", { class: "tone-bad", role: "alert" });
+  const submit = h("button", { type: "submit", class: "accent solid" }, "Log in");
+  const form = h("form", { class: "login", onsubmit: async (event: Event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    message.textContent = "";
+    try {
+      await api("/api/login", "POST", { password: password.value });
+      start();
+    } catch (error) {
+      message.textContent = error instanceof Error ? error.message : String(error);
+      password.select();
+      submit.disabled = false;
+    }
+  } },
+    h("h1", {}, "X-Nix"),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Password"), password),
+    submit, message);
+  main.replaceChildren(form);
+  password.focus();
+}
+
+function start(): void {
+  document.body.classList.remove("logged-out");
+  first_view = true;
+  show();
+}
+
+document.querySelector("#logout")!.addEventListener("click", async () => {
+  await api("/api/logout", "POST").catch(() => {});
+  show_login();
+});
 
 // ── Menu ─────────────────────────────────────────────────────────────────────
 
@@ -92,4 +145,8 @@ apply();
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-show();
+// The first request tells whether a session is still open.
+void api("/api/me").then(start, (error) => {
+  if (error instanceof LoginNeeded) show_login();
+  else start();
+});

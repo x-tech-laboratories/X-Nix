@@ -1,6 +1,6 @@
 // The building blocks every view shares: panels, facts, badges, tables, toasts, dialogs, and the loading states.
 
-import type { EventLevel, JobState, Status } from "./api.ts";
+import { LoginNeeded, type EventLevel, type JobState, type Status } from "./api.ts";
 import { h, nodes, type Child } from "./dom.ts";
 
 // ── Layout ───────────────────────────────────────────────────────────────────
@@ -42,6 +42,8 @@ export async function load(target: HTMLElement, work: () => Promise<Child>, opti
     target.replaceChildren(...nodes(await work()));
     return true;
   } catch (error) {
+    // A login is the page's to ask for.
+    if (error instanceof LoginNeeded) throw error;
     // A quiet refresh keeps what is already shown.
     if (!options.quiet) target.replaceChildren(failure(error, () => void load(target, work)));
     return false;

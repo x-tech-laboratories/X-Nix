@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastify_static from "@fastify/static";
 
+import { register_auth } from "./auth.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Poller } from "./poller.ts";
@@ -18,6 +19,8 @@ export interface app_options {
   logger: boolean;
   // What the page calls this machine; the system's hostname unless set.
   server_name?: string;
+  // The hash of the one password that logs in.
+  password_hash: string;
   store: Store;
   poller: Poller;
 }
@@ -93,11 +96,13 @@ function deployment_view(deployment: Deployment): DeploymentView {
 // ── App ──────────────────────────────────────────────────────────────────────
 
 export async function build_app(options: app_options): Promise<FastifyInstance> {
-  const app = fastify({ logger: options.logger });
+  // A reverse proxy on this machine passes on the visitor's address and whether they came over https.
+  const app = fastify({ logger: options.logger, trustProxy: ["127.0.0.1", "::1"] });
   const version = (JSON.parse(readFileSync(package_file, "utf8")) as { version: string }).version;
   const started_epoch = Math.floor(Date.now() / 1000);
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
+  register_auth(app, options.password_hash);
 
   const find = (id: string, reply: FastifyReply): Deployment | null => {
     const deployment = poller.deployments.get(id) ?? null;
