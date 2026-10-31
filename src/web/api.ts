@@ -215,6 +215,32 @@ export interface Cache {
   targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
 }
 
+export interface BuildProduct {
+  type: string;
+  subtype: string;
+  path: string;
+  name: string;
+  size_bytes: number | null;
+}
+
+export interface BuildRecord {
+  id: number;
+  job_id: number;
+  owner_id: string;
+  target: string;
+  agent: string | null;
+  store_path: string | null;
+  succeeded: boolean;
+  started_epoch: number;
+  finished_epoch: number;
+  products: BuildProduct[];
+}
+
+export interface BuildsAnswer {
+  builds: BuildRecord[];
+  targets: { owner_id: string; target: string }[];
+}
+
 export interface EventRow {
   id: number;
   epoch: number;

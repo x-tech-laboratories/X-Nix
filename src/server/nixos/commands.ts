@@ -144,17 +144,18 @@ function github_update_command(settings: DeploymentSettings): string {
 
 // ── Build ────────────────────────────────────────────────────────────────────
 
-// Realises the host's closure without activating it, so a later switch substitutes instead of building.
+// Realises the host's closure without activating it, so a later switch substitutes instead of building, printing its store
+// path for the build history.
 export function build_command(settings: DeploymentSettings, attribute: string | null): string {
   const args = [...settings.build_args, ...refresh_args(settings)].map(shell_quote).join(" ");
   const target = installable(settings, attribute);
   let build: string;
   if (settings.build_root_dir === null) {
-    build = words(nix(settings), "build --no-link", args, target);
+    build = words(nix(settings), "build --no-link --print-out-paths", args, target);
   } else {
     // One link per deployment, so each build replaces the garbage-collector root the last one held.
     const link = shell_quote(`${settings.build_root_dir.replace(/\/+$/, "")}/${settings.id}`);
-    build = `mkdir -p ${shell_quote(settings.build_root_dir)} && ` + words(nix(settings), `build --out-link ${link}`, args, target);
+    build = `mkdir -p ${shell_quote(settings.build_root_dir)} && ` + words(nix(settings), `build --out-link ${link} --print-out-paths`, args, target);
   }
   if (settings.cache_url === null) return build;
   // A closure missing here but already in the cache is not downloaded just to be rooted; any failure falls to the build.

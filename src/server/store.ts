@@ -1,5 +1,5 @@
 // Keeps what X-Nix learns in one SQLite file: each deployment's evaluation and last reading, each cache's last reading,
-// and the jobs with their output and the events of both. Jobs and events name their deployment or cache in
+// the jobs with their output and the events of both, and every finished build with its products. Jobs and events name their deployment or cache in
 // `deployment_id`, as ids are unique across the two.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -37,6 +37,37 @@ export interface Job {
 
 export interface JobWithOutput extends Job {
   output: string;
+}
+
+// A file a build made, from its Hydra build products.
+export interface BuildProduct {
+  type: string;
+  subtype: string;
+  path: string;
+  name: string;
+  // Null unless it was a regular file inside the build's store path, which alone may be downloaded.
+  size_bytes: number | null;
+}
+
+// One target a build job built, or tried to.
+export interface BuildRecord {
+  id: number;
+  job_id: number;
+  // The deployment or cache the job ran for.
+  owner_id: string;
+  target: string;
+  agent: string | null;
+  store_path: string | null;
+  succeeded: boolean;
+  started_epoch: number;
+  finished_epoch: number;
+  products: BuildProduct[];
+}
+
+export interface BuildFilter {
+  owner_id?: string;
+  target?: string;
+  limit?: number;
 }
 
 export interface EventRow {
@@ -92,6 +123,19 @@ const schema = `
     job_id INTEGER NOT NULL,
     added_epoch INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS builds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    owner_id TEXT NOT NULL,
+    target TEXT NOT NULL,
+    agent TEXT,
+    store_path TEXT,
+    succeeded INTEGER NOT NULL,
+    started_epoch INTEGER NOT NULL,
+    finished_epoch INTEGER NOT NULL,
+    products TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE INDEX IF NOT EXISTS builds_by_owner ON builds (owner_id, target, id);
   CREATE TABLE IF NOT EXISTS cache_server_state (
     cache_id TEXT PRIMARY KEY,
     reading TEXT
@@ -255,6 +299,42 @@ export class Store {
     return this.database.prepare("DELETE FROM provisioned_agents WHERE host = ?").run(host).changes > 0;
   }
 
+  // ── Builds ───────────────────────────────────────────────────────────────
+
+  add_build(build: Omit<BuildRecord, "id">): number {
+    const result = this.database.prepare(`INSERT INTO builds (job_id, owner_id, target, agent, store_path, succeeded, started_epoch, finished_epoch, products)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(build.job_id, build.owner_id, build.target, build.agent, build.store_path, build.succeeded ? 1 : 0,
+      build.started_epoch, build.finished_epoch, JSON.stringify(build.products));
+    return Number(result.lastInsertRowid);
+  }
+
+  build(build_id: number): BuildRecord | null {
+    const row = this.database.prepare("SELECT * FROM builds WHERE id = ?").get(build_id);
+    return row === undefined ? null : build_of(row as Record<string, unknown>);
+  }
+
+  // The builds newest first, of one deployment or cache and one target when named.
+  builds(filter: BuildFilter = {}): BuildRecord[] {
+    const conditions: string[] = [];
+    const values: string[] = [];
+    if (filter.owner_id !== undefined) {
+      conditions.push("owner_id = ?");
+      values.push(filter.owner_id);
+    }
+    if (filter.target !== undefined) {
+      conditions.push("target = ?");
+      values.push(filter.target);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.database.prepare(`SELECT * FROM builds ${where} ORDER BY id DESC LIMIT ${Math.trunc(filter.limit ?? 100)}`).all(...values);
+    return rows.map((row) => build_of(row as Record<string, unknown>));
+  }
+
+  // Every deployment or cache with a build, and the targets each built.
+  build_targets(): { owner_id: string; target: string }[] {
+    return this.database.prepare("SELECT DISTINCT owner_id, target FROM builds ORDER BY owner_id, target").all() as unknown as { owner_id: string; target: string }[];
+  }
+
   // ── Events ───────────────────────────────────────────────────────────────
 
   add_event(deployment_id: string, epoch: number, level: EventLevel, message: string): void {
@@ -265,4 +345,11 @@ export class Store {
     return this.database.prepare("SELECT id, deployment_id, epoch, level, message FROM events WHERE deployment_id = ? ORDER BY id DESC LIMIT ?")
       .all(deployment_id, Math.trunc(limit)) as unknown as EventRow[];
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// A build as stored, with its flag and products decoded.
+function build_of(row: Record<string, unknown>): BuildRecord {
+  return { ...(row as unknown as BuildRecord), succeeded: row.succeeded === 1, products: JSON.parse(String(row.products)) as BuildProduct[] };
 }

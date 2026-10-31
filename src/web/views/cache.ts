@@ -84,7 +84,7 @@ export function cache_view(id: string): View {
         { label: "Store path", cell: (item) => h("code", {}, item.store_path) },
       ], missing, "Paths not in the cache")),
       section("Details", details(cache)),
-      section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
+      section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false), h("a", { href: link(["builds"], { owner: cache.id }) }, "Build history")),
       section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
     ];
   }, { quiet });

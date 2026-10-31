@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastify_static from "@fastify/static";
 
+import type { AgentPool } from "./agents/agent.ts";
 import type { AgentHub } from "./agents/hub.ts";
 import { register_agent_route } from "./agents/route.ts";
 import { register_auth } from "./auth.ts";
+import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
@@ -18,7 +20,7 @@ import { build_link, targets } from "./nixos/attic.ts";
 import { collect_command } from "./nixos/garbage.ts";
 import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
-import type { EventRow, Job, JobKind, Store } from "./store.ts";
+import type { BuildRecord, EventRow, Job, JobKind, Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,8 @@ export interface app_options {
   hub?: AgentHub;
   // Installs new hosts and builds install media; the Provision page's routes are missing without it.
   provisioner?: Provisioner;
+  // The agents build products are downloaded through; none can be without it.
+  agents?: AgentPool;
 }
 
 export interface ProvisioningView {
@@ -50,6 +54,12 @@ export interface ProvisioningView {
   installs: InstallView[];
   media: MediaView[];
   provisioned_agents: ProvisionedAgentView[];
+}
+
+export interface BuildsAnswer {
+  builds: BuildRecord[];
+  // Every deployment or cache with a build, and the targets each built, for the page's filters.
+  targets: { owner_id: string; target: string }[];
 }
 
 export interface HealthAnswer {
@@ -377,6 +387,36 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (request, reply) => {
     const job = store.job(Number(request.params.id));
     return job ?? reply.code(404).send({ error: "No such job" });
+  });
+
+  // ── Builds ───────────────────────────────────────────────────────────────
+
+  app.get<{ Querystring: { owner?: string; target?: string; limit?: string } }>("/api/builds", async (request): Promise<BuildsAnswer> => ({
+    builds: store.builds({
+      owner_id: request.query.owner || undefined,
+      target: request.query.target || undefined,
+      limit: Math.min(500, Math.max(1, Number(request.query.limit) || 100)),
+    }),
+    targets: store.build_targets(),
+  }));
+
+  // Sends a build product that is a regular file inside its build's store path, read through the agent that built it.
+  app.get<{ Params: { id: string; index: string } }>("/api/builds/:id/products/:index", async (request, reply) => {
+    const build = store.build(Number(request.params.id));
+    if (build === null) return reply.code(404).send({ error: "No such build" });
+    const product = build.products[Number(request.params.index)];
+    const refusal = download_refusal(build, product);
+    if (refusal !== null) return reply.code(404).send({ error: refusal });
+    if (options.agents === undefined) return reply.code(503).send({ error: "No agents to read the product through" });
+    const agent = options.agents.get(build.agent);
+    const located = await locate_product(agent, build, product);
+    if ("error" in located) return reply.code(410).send({ error: `Cannot send ${product.name}: ${located.error}` });
+    const file_name = product.name.replace(/[^\w.+-]/g, "_") || "product";
+    return reply
+      .header("content-type", "application/octet-stream")
+      .header("content-length", String(located.size))
+      .header("content-disposition", `attachment; filename="${file_name}"`)
+      .send(product_stream(agent, located.path, located.size));
   });
 
   // ── Page ─────────────────────────────────────────────────────────────────

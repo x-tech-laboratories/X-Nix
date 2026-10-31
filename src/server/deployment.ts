@@ -15,6 +15,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
+import { built_store_path, record_builds } from "./builds.ts";
 import { level_of_status, worse, type DeploymentSettings, type GcSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import {
@@ -632,6 +633,10 @@ export class Deployment {
     } else {
       // Whatever the job changed, the next cycle evaluates afresh.
       this.force_eval = true;
+    }
+    if (job.kind === "build") {
+      const target = this.attribute() ?? this.id;
+      await record_builds(this.store, this.agents, finished, [{ target, store_path: built_store_path(finished.output), succeeded }], this.now());
     }
     const noun = capitalise(job_noun(job.kind));
     if (succeeded) this.store.add_event(this.id, this.now(), "info", `${noun} finished`);

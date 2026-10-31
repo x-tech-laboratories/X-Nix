@@ -11,6 +11,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool } from "./agents/agent.ts";
+import { record_builds } from "./builds.ts";
 import { probe_cache_server, type CacheServerReading, type Fetcher } from "./cache_server.ts";
 import { level_of_status, type CacheSettings, type Status } from "./config.ts";
 import type { Message } from "./deployment.ts";
@@ -187,6 +188,10 @@ export class Cache {
     }
 
     if (job.kind === "build-all") return this.finish_build_all(finished, report);
+    if (job.kind === "build-target") {
+      const attempted = [...report.targets].map(([built_name, facts]) => ({ target: built_name, store_path: facts.target ?? null, succeeded: finished.state === "succeeded" }));
+      await record_builds(this.store, this.agents, finished, attempted, this.now());
+    }
 
     // A build or push names its target in its report; with no report it changed nothing that can be read.
     const [name] = report.targets.keys();
@@ -200,8 +205,8 @@ export class Cache {
     this.save_rows(rows, previous.revision, []);
   }
 
-  // Updates every row Build all reported on, and keeps how each target's build ended.
-  private finish_build_all(job: JobWithOutput, report: Report): void {
+  // Updates every row Build all reported on, keeps how each target's build ended, and records each in the build history.
+  private async finish_build_all(job: JobWithOutput, report: Report): Promise<void> {
     const results = targets(this.settings).map(([name]) => {
       const facts = report.targets.get(name);
       const seconds = facts?.build_seconds === undefined ? null : Number(facts.build_seconds);
@@ -215,6 +220,10 @@ export class Cache {
       ? target_row(this.settings, name, report.targets.get(name))
       : previous?.rows.find((row) => row.name === name) ?? target_row(this.settings, name, undefined));
     this.save_rows(rows, previous?.revision ?? null, [], { job_id: job.id, finished_epoch: this.now(), results });
+    const attempted = results.filter((result) => result.result !== "not_reported").map((result) => ({
+      target: result.name, store_path: report.targets.get(result.name)?.target ?? null, succeeded: result.result === "ok",
+    }));
+    await record_builds(this.store, this.agents, job, attempted, this.now());
   }
 
   // Saves a whole set of rows with their counts and worst-of status, keeping the last Build all unless given a new one.

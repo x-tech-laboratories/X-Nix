@@ -43,7 +43,7 @@ accept_agent_keys(provisioner.agent_keys());
 const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const poller = new Poller(deployments, null, caches, [provisioner]);
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents });
 
 app.addHook("onClose", async () => {
   poller.stop();

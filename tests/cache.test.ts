@@ -318,6 +318,7 @@ describe("build all", () => {
     expect(rows(harness).Alpha.pushed).toBe("All 1");
     expect(rows(harness).Beta.status).toBe("failed");
     expect(harness.store.events("fleet").map((event) => event.message)).toContain("Build all failed: 1 of 3 targets built; Exited with status 1");
+    expect(harness.store.builds({ owner_id: "fleet" }).map((build) => [build.target, build.succeeded, build.store_path])).toEqual([["Beta", false, null], ["Alpha", true, alpha]]);
 
     // A later check keeps the last Build all.
     await check(harness, built("Alpha", alpha, 1) + built("Beta", beta, 3) + metadata);

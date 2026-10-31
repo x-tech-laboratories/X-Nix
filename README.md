@@ -210,6 +210,16 @@ These keys of `provisioning` in the config file set it up:
 | `nix_args`            | flakes enabled            | Arguments before every nix command.                                  |
 | `media_root_dir`      | `<X_NIX_STATE_DIR>/media` | Where each built medium is linked.                                   |
 | `job_poll`            | `30s`                     | How often a running install or media build is read.                  |
+## Builds
+
+The Builds page lists every finished build, newest first and filtered by deployment or cache and
+target: a deployment's Build, a cache target's Build, and each target of a Build all. Each shows its
+result, how long it took, its store path, a link to its job and so its whole log, and the products
+its store path lists in Hydra's `nix-support/hydra-build-products`, read once when the build ends. A
+product that is a regular file inside its build's store path, such as an installer ISO, downloads
+through the logged-in page: the host that built it checks again that the file still lies inside that
+store path, then sends it in pieces through its agent. A product collected since reads as gone.
+Builds that ended before this history existed are only in the job history.
 
 ## Agents
 
