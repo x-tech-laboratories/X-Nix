@@ -23,7 +23,7 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media" | "build-all";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
@@ -174,12 +174,19 @@ export interface TargetRow {
   summary: string;
 }
 
+export interface BuildAllOutcome {
+  job_id: number;
+  finished_epoch: number;
+  results: { name: string; result: string; seconds: number | null }[];
+}
+
 export interface CacheReading {
   status: Status;
   checked_epoch: number;
   messages: Message[];
   revision: string | null;
   rows: TargetRow[];
+  build_all?: BuildAllOutcome | null;
 }
 
 export interface CacheServerReading {
@@ -200,6 +207,7 @@ export interface Cache {
   cache_url: string;
   interval: number;
   can_push: boolean;
+  build_all_refusal: string | null;
   reading: CacheReading | null;
   server_urls: { info: string | null; health: string | null; metrics: string | null };
   server: CacheServerReading | null;

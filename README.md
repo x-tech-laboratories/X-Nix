@@ -127,6 +127,12 @@ closure's own paths it lacks, leaving out paths an upstream cache signed. The ch
 run, and the previous reading stands until it ends. Each target can be built or pushed by hand;
 the job checks that target again once it ends. Cache ids share one space with deployment ids.
 
+Build all builds every target in one job, the way nix-fast-build does: `nix-eval-jobs` evaluates
+all of them in one parallel pass, each target's build starts as soon as its own evaluation ends, and
+with a `push_command` each is pushed once built. It ends by checking every target, and the cache's
+page lists how each one ended and how long its build took. The modules put `nix-eval-jobs` on the
+PATH; elsewhere, a host without it fails the job with a message saying so.
+
 | Setting          | Default                           | Meaning                                                                 |
 | ---------------- | --------------------------------- | ----------------------------------------------------------------------- |
 | `id`             | required                          | Letters, digits, `-` and `_`.                                           |
@@ -149,6 +155,8 @@ the job checks that target again once it ends. Cache ids share one space with de
 | `build_links`    | `<cache id>-<target>`             | Each target's link name under `build_root_dir`.                         |
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
+| `eval_jobs_bin`  | `nix-eval-jobs`                   | The program Build all evaluates every target with.                      |
+| `eval_workers`   | `4`                               | How many targets Build all evaluates at once.                           |
 | `info_url`       | `<cache_url>/nix-cache-info` for an http cache | The cache server's nix-cache-info, or `false` to not read it.  |
 | `health_url`     | none                              | The cache server's health check; any 2xx answer is healthy.           |
 | `metrics_url`    | none                              | The cache server's Prometheus metrics, such as `/metrics`.              |

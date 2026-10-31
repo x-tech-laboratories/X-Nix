@@ -157,8 +157,10 @@ describe("/api/caches", () => {
     const [view] = (await inject("GET", "/api/caches")).json<CacheView[]>();
     expect(view.targets.map((target) => [target.name, target.refusals.push])).toEqual([["Alpha", "No push_command is set, so X-Nix cannot push"]]);
 
+    expect(view.build_all_refusal).toBeNull();
     const started = await inject("POST", "/api/caches/fleet/targets/Alpha/build");
     expect(started.statusCode).toBe(200);
+    expect((await inject("POST", "/api/caches/fleet/build-all")).statusCode).toBe(409);
     expect((await inject("POST", "/api/caches/fleet/targets/Gamma/build")).statusCode).toBe(409);
     expect((await inject("POST", "/api/caches/fleet/targets/Alpha/delete")).statusCode).toBe(404);
     expect((await inject("GET", "/api/caches/nope")).statusCode).toBe(404);

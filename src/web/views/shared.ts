@@ -82,6 +82,13 @@ export function action_button(deployment: Deployment, action: ActionView, done: 
   }, action.label);
 }
 
+// A length of time in words, such as "3m 20s".
+export function duration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
 // A flake revision cut to fit a tile, keeping the -dirty mark.
 export function short_revision(revision: string | null): string {
   if (!revision) return "—";
@@ -92,7 +99,7 @@ export function short_revision(revision: string | null): string {
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 // The jobs a cache runs, whose owner is a cache rather than a deployment.
-const cache_job_kinds = new Set<Job["kind"]>(["check", "build-target", "push"]);
+const cache_job_kinds = new Set<Job["kind"]>(["check", "build-target", "build-all", "push"]);
 
 // The jobs the Provision page starts, whose owner is a host being installed or a configuration's media.
 const provision_job_kinds = new Set<Job["kind"]>(["install", "media"]);

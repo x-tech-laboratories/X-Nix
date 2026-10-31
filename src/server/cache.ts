@@ -4,7 +4,7 @@
 // server; later cycles poll it every `job_poll`, and the finished run's whole output becomes the new reading. While it
 // runs the previous reading stands. A target whose evaluation fails is failed; one not yet built, or not fully pushed,
 // is `pending_status`. Each target can also be built or pushed by hand, one job at a time, and the job's own check of
-// that target updates its row once it ends.
+// that target updates its row once it ends. Build all builds every target in one job, keeping how each one's build ended.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -14,11 +14,13 @@ import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { probe_cache_server, type CacheServerReading, type Fetcher } from "./cache_server.ts";
 import { level_of_status, type CacheSettings, type Status } from "./config.ts";
 import type { Message } from "./deployment.ts";
-import { build_command, check_command, parse_report, push_command, report_mark, rows_status, target_row, targets, type TargetRow } from "./nixos/attic.ts";
+import {
+  build_all_command, build_command, check_command, parse_report, push_command, report_mark, rows_status, target_row, targets, type Report, type TargetRow,
+} from "./nixos/attic.ts";
 import { timed_out_exit_code } from "./nixos/commands.ts";
 import { parse_metadata } from "./nixos/flake.ts";
 import { follow } from "./runs.ts";
-import type { Job, JobKind, Store } from "./store.ts";
+import type { Job, JobKind, JobWithOutput, Store } from "./store.ts";
 import { format_duration } from "./durations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -27,6 +29,13 @@ export type CacheActionId = "build" | "push";
 
 export const cache_action_ids: CacheActionId[] = ["build", "push"];
 
+// How the last Build all ended for each target: ok, failed, push_failed, eval_failed or not_reported.
+export interface BuildAllOutcome {
+  job_id: number;
+  finished_epoch: number;
+  results: { name: string; result: string; seconds: number | null }[];
+}
+
 // What the last finished check found.
 export interface CacheReading {
   status: Status;
@@ -34,6 +43,8 @@ export interface CacheReading {
   messages: Message[];
   revision: string | null;
   rows: TargetRow[];
+  // Absent from readings saved before Build all existed.
+  build_all?: BuildAllOutcome | null;
 }
 
 export interface CacheActionOutcome {
@@ -51,7 +62,7 @@ export interface CacheOptions {
   fetch?: Fetcher;
 }
 
-const cache_job_kinds: JobKind[] = ["check", "build-target", "push"];
+const cache_job_kinds: JobKind[] = ["check", "build-target", "build-all", "push"];
 
 const action_kinds: Record<CacheActionId, JobKind> = { build: "build-target", push: "push" };
 
@@ -108,6 +119,11 @@ export class Cache {
     }
     if (this.running_job() !== null) return "A job is already running for this cache";
     return null;
+  }
+
+  // Why Build all cannot run now, or null when it can.
+  build_all_refusal(): string | null {
+    return this.running_job() === null ? null : "A job is already running for this cache";
   }
 
   // ── Cycle ────────────────────────────────────────────────────────────────
@@ -170,6 +186,8 @@ export class Cache {
       return;
     }
 
+    if (job.kind === "build-all") return this.finish_build_all(finished, report);
+
     // A build or push names its target in its report; with no report it changed nothing that can be read.
     const [name] = report.targets.keys();
     const word = job.kind === "push" ? "Push" : "Build";
@@ -182,21 +200,38 @@ export class Cache {
     this.save_rows(rows, previous.revision, []);
   }
 
-  // Saves a whole set of rows with their counts and worst-of status.
-  private save_rows(rows: TargetRow[], revision: string | null, extra: Message[]): void {
+  // Updates every row Build all reported on, and keeps how each target's build ended.
+  private finish_build_all(job: JobWithOutput, report: Report): void {
+    const results = targets(this.settings).map(([name]) => {
+      const facts = report.targets.get(name);
+      const seconds = facts?.build_seconds === undefined ? null : Number(facts.build_seconds);
+      return { name, result: facts?.build ?? "not_reported", seconds: seconds !== null && Number.isFinite(seconds) ? seconds : null };
+    });
+    const built = `${results.filter((result) => result.result === "ok").length} of ${results.length} targets built`;
+    if (job.state === "succeeded") this.store.add_event(this.id, this.now(), "info", `Build all finished: ${built}`);
+    else this.store.add_event(this.id, this.now(), "error", `Build all failed: ${built}; ${job.error}`);
+    const previous = this.reading();
+    const rows = targets(this.settings).map(([name]) => report.targets.has(name)
+      ? target_row(this.settings, name, report.targets.get(name))
+      : previous?.rows.find((row) => row.name === name) ?? target_row(this.settings, name, undefined));
+    this.save_rows(rows, previous?.revision ?? null, [], { job_id: job.id, finished_epoch: this.now(), results });
+  }
+
+  // Saves a whole set of rows with their counts and worst-of status, keeping the last Build all unless given a new one.
+  private save_rows(rows: TargetRow[], revision: string | null, extra: Message[], build_all: BuildAllOutcome | null = this.reading()?.build_all ?? null): void {
     const built = rows.filter((row) => row.built === true).length;
     const pushed = rows.filter((row) => row.pushed_ok).length;
     const messages: Message[] = [{ level: "info", text: `${built} of ${rows.length} targets built, ${pushed} fully pushed` }];
     for (const row of rows) if (row.status !== "online") messages.push({ level: level_of_status[row.status], text: `${row.name}: ${row.summary}` });
     messages.push(...extra);
-    this.save_reading({ status: rows_status(rows), checked_epoch: this.now(), messages, revision, rows });
+    this.save_reading({ status: rows_status(rows), checked_epoch: this.now(), messages, revision, rows, build_all });
   }
 
   private save_unavailable(text: string): void {
     const previous = this.reading();
     this.save_reading({
       status: "unavailable", checked_epoch: this.now(), messages: [{ level: "warning", text }],
-      revision: previous?.revision ?? null, rows: previous?.rows ?? [],
+      revision: previous?.revision ?? null, rows: previous?.rows ?? [], build_all: previous?.build_all ?? null,
     });
   }
 
@@ -226,6 +261,21 @@ export class Cache {
       }
       this.store.add_event(this.id, this.now(), "info", `${what} started`);
       return { ok: true, message: `${what} started`, job_id: launched.job_id };
+    });
+  }
+
+  // Evaluates every target in one pass and builds each as soon as it is evaluated, pushing it when there is a push_command.
+  build_all(): Promise<CacheActionOutcome> {
+    return this.serial(async () => {
+      const refusal = this.build_all_refusal();
+      if (refusal !== null) return { ok: false, message: refusal, job_id: null };
+      const launched = await this.launch("build-all", build_all_command(this.settings));
+      if (launched.job_id === null) {
+        this.store.add_event(this.id, this.now(), "error", `Could not start Build all: ${launched.error}`);
+        return { ok: false, message: `Could not start Build all: ${launched.error}`, job_id: null };
+      }
+      this.store.add_event(this.id, this.now(), "info", "Build all started");
+      return { ok: true, message: "Build all started", job_id: launched.job_id };
     });
   }
 

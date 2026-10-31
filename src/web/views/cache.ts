@@ -1,10 +1,10 @@
 // The Cache pages: every Attic cache as a card, and one cache with each target's build and push state and its buttons.
 
-import { api, type ActionOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
+import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
 import { age, bytes, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
-import { events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile, type View } from "./shared.ts";
+import { duration, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile, type View } from "./shared.ts";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
@@ -64,7 +64,13 @@ export function cache_view(id: string): View {
     ]);
     heading.textContent = cache.name;
     badge.replaceChildren(status_badge(cache.reading?.status ?? null));
-    buttons.replaceChildren(h("button", { disabled: cache.running_job !== null, title: cache.running_job ? "A job is running" : null, onclick: () => void run_refresh() }, "Check now"));
+    buttons.replaceChildren(
+      h("button", { disabled: cache.running_job !== null, title: cache.running_job ? "A job is running" : null, onclick: () => void run_refresh() }, "Check now"),
+      h("button", {
+        class: "accent solid", disabled: cache.build_all_refusal !== null, title: cache.build_all_refusal,
+        onclick: () => confirm_dialog(`Build all of ${cache.name}`, `Evaluate every target in one pass and build each as soon as it is evaluated?${cache.can_push ? " What it builds is pushed to the cache." : ""}`, "Build all", run_build_all),
+      }, "Build all"),
+    );
     const rows = cache.reading?.rows ?? [];
     const missing = rows.flatMap((row) => row.missing.map((store_path) => ({ name: row.name, store_path })));
     return [
@@ -72,6 +78,7 @@ export function cache_view(id: string): View {
       section("Findings", messages_list(cache.reading?.messages ?? [])),
       cache.server && section(h("span", {}, "Cache server ", status_badge(cache.server.status)), server_details(cache)),
       section("Tracked targets", rows.length === 0 ? empty("Not checked yet.") : targets_table(cache, rows)),
+      cache.reading?.build_all && build_all_section(cache.reading.build_all),
       missing.length > 0 && section("Paths not in the cache", data_table<{ name: string; store_path: string }>([
         { label: "Target", cell: (item) => item.name },
         { label: "Store path", cell: (item) => h("code", {}, item.store_path) },
@@ -85,6 +92,16 @@ export function cache_view(id: string): View {
   const run_refresh = async () => {
     toast("Checking every target…");
     await api(`${path}/refresh`, "POST").catch((error) => toast(String(error.message), "bad"));
+    await refresh(true);
+  };
+
+  const run_build_all = async () => {
+    try {
+      const outcome = await api<ActionOutcome>(`${path}/build-all`, "POST");
+      toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
     await refresh(true);
   };
 
@@ -192,6 +209,22 @@ function details(cache: Cache): HTMLElement {
     rows.push([target.name, h("span", {}, code(target.installable), h("span", { class: "muted small" }, ` ${where}`))]);
   }
   return facts(rows, "rows");
+}
+
+const build_all_words: Record<string, [text: string, tone: string]> = {
+  ok: ["Built", "good"], failed: ["Build failed", "bad"], push_failed: ["Push failed", "bad"], eval_failed: ["Evaluation failed", "bad"], not_reported: ["Not reported", "warn"],
+};
+
+// How the last Build all ended for each target.
+function build_all_section(outcome: BuildAllOutcome): HTMLElement {
+  return section(h("span", {}, "Last build all ", h("a", { class: "small", href: link(["jobs", String(outcome.job_id)]) }, `job #${outcome.job_id}`)), data_table<BuildAllOutcome["results"][number]>([
+    { label: "Target", cell: (result) => h("strong", {}, result.name) },
+    { label: "Result", cell: (result) => {
+      const [text, tone] = build_all_words[result.result] ?? [result.result, "none"];
+      return h("span", { class: `badge tone-${tone}` }, text);
+    } },
+    { label: "Took", cell: (result) => (result.seconds === null ? "—" : duration(result.seconds)) },
+  ], outcome.results, "Last build all"));
 }
 
 // How many targets pass, out of all of them.

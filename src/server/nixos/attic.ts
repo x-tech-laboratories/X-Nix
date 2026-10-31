@@ -5,7 +5,9 @@
 // Attic never stores them. A target named in `drop_pushed` is kept only in the cache: once a check finds it fully pushed,
 // its closure's path list is written beside its build root as `<link>.closure` and the root is removed, so garbage
 // collection frees the store, and later checks judge it by that list. Build and Push run one target and end by checking
-// it again, so its row shows the outcome as soon as they finish.
+// it again, so its row shows the outcome as soon as they finish. Build all evaluates every target in one parallel pass of
+// nix-eval-jobs, as nix-fast-build does, starts each target's build as soon as its own evaluation ends, pushes it once
+// built, and ends by checking every target.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,9 @@ export interface TargetFacts {
   error?: string;
   cache_error?: string;
   dropped?: string;
+  // How Build all ended for the target: ok, failed, push_failed or eval_failed, and its build's seconds.
+  build?: string;
+  build_seconds?: string;
   missing: string[];
 }
 
@@ -193,6 +198,111 @@ export function push_script(settings: CacheSettings, name: string, path: string)
     ...preamble, functions(settings), target_line(settings, name), `out=${shell_quote(path)}`,
     `${settings.push_command} "$out"`, "rc=$?", 'report target "$out"', "inspect", "exit $rc",
   ];
+  return lines.join("\n");
+}
+
+// ── Build all ────────────────────────────────────────────────────────────────
+
+// Quotes text as a Nix string.
+function nix_string(text: string): string {
+  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("${", "\\${")}"`;
+}
+
+// One attribute set of every target's derivation, keyed t0, t1 and so on, so no name needs quoting in the shell.
+export function build_all_expression(settings: CacheSettings): string {
+  const attributes = [
+    ...settings.configurations.map((name) => `nixosConfigurations.${nix_string(name)}.config.system.build.toplevel`),
+    ...Object.values(settings.installables),
+  ];
+  const entries = attributes.map((attribute, index) => `t${index} = flake.${attribute};`).join(" ");
+  return `let flake = builtins.getFlake ${nix_string(settings.flake)}; in { ${entries} }`;
+}
+
+// Evaluates and builds every target, then checks each, failing when any target did not build.
+export function build_all_command(settings: CacheSettings): string {
+  return `sh -c ${shell_quote(build_all_script(settings))}`;
+}
+
+export function build_all_script(settings: CacheSettings): string {
+  const tracked = targets(settings);
+  const eval_jobs = shell_quote(settings.eval_jobs_bin);
+  const missing_tool = `${settings.eval_jobs_bin} is not installed on this host; Build all needs it on the PATH of services.x-nix or services.x-nix-agent`;
+  // A remote flake is fetched afresh, as every other job does with --refresh.
+  const fresh = remote(settings) ? " --option tarball-ttl 0" : "";
+  const evaluate = `${eval_jobs} --impure --workers ${settings.eval_workers} --gc-roots-dir "$t/roots"${fresh} --expr ${shell_quote(build_all_expression(settings))}`;
+  const args = settings.build_args.map(shell_quote).join(" ");
+  const builds = tracked.map(([name], index) => {
+    const link = build_link(settings, name);
+    const build = link === null
+      ? `${nix(settings)} build --no-link ${args} "$drv^*"`
+      : `mkdir -p ${shell_quote(settings.build_root_dir!)} && ${nix(settings)} build --out-link ${shell_quote(link)} ${args} "$drv^*"`;
+    return `    t${index}) ${build} ;;`;
+  });
+  const names = tracked.map(([name], index) => `    t${index}) printf %s ${shell_quote(name)} ;;`);
+  const lines = [
+    ...preamble,
+    functions(settings),
+    `if ! command -v ${eval_jobs} >/dev/null 2>&1; then echo ${shell_quote(missing_tool)} >&2; exit 127; fi`,
+    'mkdir "$t/roots"',
+    "name_of() {",
+    '  case "$1" in',
+    ...names,
+    "  esac",
+    "}",
+    // Each build runs in the background and leaves its outcome and duration in $t/<key>.result for the report.
+    "build_one() {",
+    "  key=$1 drv=$2 out=$3 started=$(date +%s)",
+    '  case "$key" in',
+    ...builds,
+    "  esac",
+    "  if [ $? = 0 ]; then word=ok; else word=failed; fi",
+    ...(settings.push_command === null ? [] : [`  if [ "$word" = ok ]; then ${settings.push_command} "$out" || word=push_failed; fi`]),
+    '  echo "$word $(( $(date +%s) - started ))" > "$t/$key.result"',
+    '  echo "$(name_of "$key"): $word"',
+    "}",
+    // nix-eval-jobs prints one JSON line per target as its evaluation ends, and that target's build starts at once.
+    `{ { ${evaluate}; echo $? > "$t/eval_rc"; } 2>&1 1>&3 3>&- | tee "$t/eval_err" >&2; } 3>&1 | {`,
+    "  while IFS= read -r line; do",
+    `    key=$(printf '%s\\n' "$line" | sed -n 's/.*"attr":"\\(t[0-9]*\\)".*/\\1/p')`,
+    '    [ -n "$key" ] || continue',
+    `    if printf '%s\\n' "$line" | grep -q '"error":'; then`,
+    `      printf '%s\\n' "$line" | sed -n 's/.*"error":"\\(.*\\)".*/\\1/p' | sed 's/\\\\n/ /g' | tail -c 400 > "$t/$key.error"`,
+    '      echo "$(name_of "$key"): evaluation failed"',
+    "      continue",
+    "    fi",
+    `    drv=$(printf '%s\\n' "$line" | sed -n 's/.*"drvPath":"\\([^"]*\\)".*/\\1/p')`,
+    `    out=$(printf '%s\\n' "$line" | sed -n 's/.*"out":"\\(\\/nix\\/store\\/[^"]*\\)".*/\\1/p')`,
+    '    echo "$out" > "$t/$key.out"',
+    '    echo "$(name_of "$key"): evaluated, building $out"',
+    '    build_one "$key" "$drv" "$out" </dev/null &',
+    "  done",
+    "  wait",
+    "}",
+    "rc=0",
+    // Each target is reported in turn, as inspect shares its scratch files.
+    "finish() {",
+    "  key=$1",
+    '  if [ -f "$t/$key.error" ]; then',
+    '    report error "$(cat "$t/$key.error")"',
+    "    report build eval_failed",
+    "    rc=1",
+    '  elif [ -f "$t/$key.result" ]; then',
+    '    read -r word seconds < "$t/$key.result"',
+    '    report build "$word"',
+    '    report build_seconds "$seconds"',
+    '    [ "$word" = ok ] || rc=1',
+    '    out=$(cat "$t/$key.out")',
+    '    report target "$out"',
+    "    inspect",
+    "  else",
+    '    report error "nix-eval-jobs never evaluated it: $(tail -c 300 "$t/eval_err")"',
+    "    report build eval_failed",
+    "    rc=1",
+    "  fi",
+    "}",
+  ];
+  tracked.forEach(([name], index) => lines.push(`${target_line(settings, name)}; finish t${index}`));
+  lines.push('[ "$(cat "$t/eval_rc" 2>/dev/null)" = 0 ] || rc=1', "exit $rc");
   return lines.join("\n");
 }
 

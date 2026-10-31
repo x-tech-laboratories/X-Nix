@@ -150,6 +150,8 @@ in
         # Installs new hosts from the Provision page, logging in to them over SSH.
         pkgs.nixos-anywhere
         pkgs.openssh
+        # Build all evaluates every target of a cache with it.
+        pkgs.nix-eval-jobs
       ]
       ++ cfg.path;
 

@@ -9,7 +9,7 @@ import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
 import { parse_metrics, probe_cache_server, type Fetcher } from "../src/server/cache_server.ts";
 import { ConfigError, cache_settings, parse_config, type CacheSettings } from "../src/server/config.ts";
-import { build_script, check_command, check_script, parse_report, push_script, report_mark } from "../src/server/nixos/attic.ts";
+import { build_all_expression, build_all_script, build_script, check_command, check_script, parse_report, push_script, report_mark } from "../src/server/nixos/attic.ts";
 import { Store } from "../src/server/store.ts";
 import { clock, FakeAgent } from "./fake_agent.ts";
 
@@ -228,6 +228,100 @@ describe("build and push scripts", () => {
     for (const script of [check_script(settings({ build_root_dir: "/r", drop_pushed: ["Alpha"] })), build_script(settings({ push_command: "attic push c" }), "Alpha"), push_script(settings({ push_command: "attic push c" }), "Alpha", alpha)]) {
       expect(() => execFileSync("sh", ["-n", "-c", script])).not.toThrow();
     }
+  });
+});
+
+// ── Build all ────────────────────────────────────────────────────────────────
+
+describe("build all", () => {
+  // A nix-eval-jobs that prints one line per target, the second one failing to evaluate.
+  function fake_eval_jobs(folder: string, lines: string[]): string {
+    const program = join(folder, "nix-eval-jobs");
+    writeFileSync(program, `#!/bin/sh\nprintf '%s\\n' "$*" > ${shell_quote_for_test(join(folder, "eval-args"))}\ncat <<'END'\n${lines.join("\n")}\nEND\n`);
+    chmodSync(program, 0o755);
+    return program;
+  }
+
+  function shell_quote_for_test(text: string): string {
+    return `'${text.replaceAll("'", `'"'"'`)}'`;
+  }
+
+  const builds_and_inspects = [
+    `  *'build --no-link'*bad*) echo 'error: builder failed' >&2; exit 1 ;;`,
+    `  *'build --no-link'*) echo "building $*" >&2; exit 0 ;;`,
+    `  *'path-info --stdin'*) cat >/dev/null; echo '{}' ;;`,
+    `  *'path-info -r'*) echo ${alpha} ;;`,
+    `  *path-info*${alpha}*) exit 0 ;;`,
+    "  *path-info*) exit 1 ;;",
+  ].join("\n");
+
+  it("evaluates every target in one expression keyed by position", () => {
+    expect(build_all_expression(settings({ flake: 'github:o/f"x' }))).toBe(
+      'let flake = builtins.getFlake "github:o/f\\"x"; in { t0 = flake.nixosConfigurations."Alpha".config.system.build.toplevel; '
+      + 't1 = flake.nixosConfigurations."Beta".config.system.build.toplevel; t2 = flake.packages.aarch64-linux.kernel; }');
+  });
+
+  it("builds each evaluated target, reports how each ended and checks it", () => {
+    const { settings: fake, folder } = fake_nix(builds_and_inspects, { upstream_keys: [], build_args: [], configurations: ["Alpha", "Beta"], installables: { Broken: "x" } });
+    const eval_jobs_bin = fake_eval_jobs(folder, [
+      `{"attr":"t0","attrPath":["t0"],"drvPath":"/nix/store/aaaa-alpha.drv","name":"alpha","outputs":{"out":"${alpha}"},"system":"x86_64-linux"}`,
+      `{"attr":"t1","attrPath":["t1"],"drvPath":"/nix/store/bbbb-bad.drv","name":"beta","outputs":{"out":"${beta}"},"system":"x86_64-linux"}`,
+      `{"attr":"t2","attrPath":["t2"],"error":"error: attribute 'x' missing\\n at flake.nix:3"}`,
+    ]);
+
+    const result = run(build_all_script({ ...fake, eval_jobs_bin }));
+
+    expect(result.status).toBe(1);
+    const report = parse_report(result.stdout);
+    expect(report.targets.get("Alpha")).toMatchObject({ build: "ok", target: alpha, built: "1" });
+    expect(report.targets.get("Beta")).toMatchObject({ build: "failed", target: beta, built: "0" });
+    expect(report.targets.get("Broken")).toMatchObject({ build: "eval_failed", error: "error: attribute 'x' missing  at flake.nix:3" });
+    expect(report.targets.get("Alpha")?.build_seconds).toMatch(/^\d+$/);
+    expect(result.stdout).toContain(`Alpha: evaluated, building ${alpha}`);
+    expect(result.stderr).toContain("building build --no-link /nix/store/aaaa-alpha.drv^*");
+    expect(readFileSync(join(folder, "eval-args"), "utf8")).toContain("--impure --workers 4 --gc-roots-dir");
+  });
+
+  it("pushes each target it built, and fails a target whose push fails", () => {
+    const { settings: fake, folder } = fake_nix(builds_and_inspects, { upstream_keys: [], build_args: [], configurations: ["Alpha"], installables: {}, push_command: "false" });
+    const eval_jobs_bin = fake_eval_jobs(folder, [`{"attr":"t0","drvPath":"/nix/store/aaaa-alpha.drv","outputs":{"out":"${alpha}"}}`]);
+
+    expect(parse_report(run(build_all_script({ ...fake, eval_jobs_bin })).stdout).targets.get("Alpha")?.build).toBe("push_failed");
+  });
+
+  it("says plainly when nix-eval-jobs is missing", () => {
+    const result = run(build_all_script(settings({ eval_jobs_bin: "/nonexistent/nix-eval-jobs" })));
+    expect(result.status).toBe(127);
+    expect(result.stderr).toContain("/nonexistent/nix-eval-jobs is not installed on this host");
+  });
+
+  it("is plain sh, as the agent runs it", () => {
+    expect(() => execFileSync("sh", ["-n", "-c", build_all_script(settings({ build_root_dir: "/r", push_command: "attic push c" }))])).not.toThrow();
+  });
+
+  it("runs as one job and keeps each target's outcome", async () => {
+    const harness = make_cache();
+    await check(harness, built("Alpha", alpha, 1, [alpha]) + built("Beta", beta, 3) + metadata);
+
+    expect(await harness.cache.build_all()).toMatchObject({ ok: true, message: "Build all started" });
+    expect(harness.cache.build_all_refusal()).toContain("already running");
+    harness.agent.end(harness.agent.last_run("nix-eval-jobs")!, `Alpha: ok\n${line("Alpha", "build", "ok")}${line("Alpha", "build_seconds", 42)}${built("Alpha", alpha, 1)}`
+      + line("Beta", "error", "error: boom") + line("Beta", "build", "eval_failed"), 1);
+    await harness.cache.cycle();
+
+    const reading = harness.cache.reading()!;
+    expect(reading.build_all?.results).toEqual([
+      { name: "Alpha", result: "ok", seconds: 42 },
+      { name: "Beta", result: "eval_failed", seconds: null },
+      { name: "kernel", result: "not_reported", seconds: null },
+    ]);
+    expect(rows(harness).Alpha.pushed).toBe("All 1");
+    expect(rows(harness).Beta.status).toBe("failed");
+    expect(harness.store.events("fleet").map((event) => event.message)).toContain("Build all failed: 1 of 3 targets built; Exited with status 1");
+
+    // A later check keeps the last Build all.
+    await check(harness, built("Alpha", alpha, 1) + built("Beta", beta, 3) + metadata);
+    expect(harness.cache.reading()?.build_all?.job_id).toBe(reading.build_all?.job_id);
   });
 });
 

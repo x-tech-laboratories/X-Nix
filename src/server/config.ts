@@ -114,6 +114,9 @@ export interface CacheSettings {
   push_command: string | null;
   // Targets kept only in the cache once fully pushed.
   drop_pushed: string[];
+  // The nix-eval-jobs program Build all evaluates with, and how many workers it evaluates on.
+  eval_jobs_bin: string;
+  eval_workers: number;
   // The cache server's own endpoints, each read by the X-Nix server; null when not read.
   info_url: string | null;
   health_url: string | null;
@@ -266,6 +269,8 @@ export function cache_settings(entry: unknown, index = 0): CacheSettings {
     build_links: read.names("build_links"),
     push_command: read.text("push_command"),
     drop_pushed: read.list("drop_pushed", []),
+    eval_jobs_bin: read.text("eval_jobs_bin") ?? "nix-eval-jobs",
+    eval_workers: Math.max(1, Math.trunc(read.limit("eval_workers", 4) ?? 4)),
     info_url: values.info_url === false ? null : read.text("info_url") ?? default_info_url(cache_url),
     health_url: read.text("health_url"),
     metrics_url: read.text("metrics_url"),

@@ -38,6 +38,7 @@
       "build_root_dir": "/var/lib/x-nix/build-roots",
       "drop_pushed": ["server"],
       "push_command": "attic push fleet",
+      "eval_workers": 2,
       "health_url": "https://attic.example/health",
       "metrics_url": "https://attic.example/metrics"
     }

@@ -99,6 +99,8 @@ export interface CacheView {
   cache_url: string;
   interval: number;
   can_push: boolean;
+  // Why Build all cannot run now, or null when it can.
+  build_all_refusal: string | null;
   reading: CacheReading | null;
   // The cache server's endpoints, and what they last answered.
   server_urls: { info: string | null; health: string | null; metrics: string | null };
@@ -166,6 +168,7 @@ function cache_view(cache: Cache): CacheView {
     cache_url: settings.cache_url,
     interval: settings.interval,
     can_push: settings.push_command !== null,
+    build_all_refusal: cache.build_all_refusal(),
     reading: cache.reading(),
     server_urls: { info: settings.info_url, health: settings.health_url, metrics: settings.metrics_url },
     server: cache.server_reading(),
@@ -262,6 +265,15 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (cache === null) return reply;
     await poller.refresh(cache);
     return cache_view(cache);
+  });
+
+  // Builds every target in one job.
+  app.post<{ Params: { id: string } }>("/api/caches/:id/build-all", async (request, reply) => {
+    const cache = find_cache(request.params.id, reply);
+    if (cache === null) return reply;
+    const outcome = await cache.build_all();
+    if (outcome.ok) poller.soon(cache);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 
   app.post<{ Params: { id: string; name: string; action: string } }>("/api/caches/:id/targets/:name/:action", async (request, reply) => {
