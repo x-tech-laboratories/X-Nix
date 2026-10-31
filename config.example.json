@@ -6,7 +6,8 @@
       "flake": "/etc/nixos",
       "configuration": "workstation",
       "max_input_age": "14d",
-      "build_at": "03:00"
+      "build_at": "03:00",
+      "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 }
     },
     {
       "id": "server",

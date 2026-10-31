@@ -93,6 +93,8 @@ interface FakeRun {
 
 export class FakeAgent implements Agent {
   probe_result: RunResult = probe();
+  // What the store's probe answers; nothing at all unless a test sets it.
+  gc_probe_result: RunResult = result(0);
   // What any command other than the probe answers, such as a reboot.
   command_result: RunResult = result(0);
   start_error: AgentError | null = null;
@@ -102,7 +104,8 @@ export class FakeAgent implements Agent {
 
   async run(command: string): Promise<RunResult> {
     this.commands.push(command);
-    return command === probe_script() ? this.probe_result : this.command_result;
+    if (command === probe_script()) return this.probe_result;
+    return command.includes("journalctl") ? this.gc_probe_result : this.command_result;
   }
 
   async start(run_id: string, command: string): Promise<LongRun> {

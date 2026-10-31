@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect";
 export type JobState = "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 
@@ -87,6 +87,7 @@ const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exi
 
 export interface JobFilter {
   deployment_id?: string;
+  kind?: JobKind;
   // Evaluations run every hour and would push every other job out of the list, so they are left out unless asked for.
   include_evaluations?: boolean;
   limit?: number;
@@ -170,7 +171,10 @@ export class Store {
       conditions.push("deployment_id = ?");
       values.push(filter.deployment_id);
     }
-    if (!filter.include_evaluations) conditions.push("kind != 'eval'");
+    if (filter.kind !== undefined) {
+      conditions.push("kind = ?");
+      values.push(filter.kind);
+    } else if (!filter.include_evaluations) conditions.push("kind != 'eval'");
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.database.prepare(`SELECT ${job_columns} FROM jobs ${where} ORDER BY id DESC LIMIT ${Math.trunc(filter.limit ?? 100)}`).all(...values);
     return rows as unknown as Job[];

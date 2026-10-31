@@ -10,10 +10,6 @@ interface Upcoming {
 }
 
 export const upcoming_sections: Record<string, Upcoming> = {
-  store: {
-    title: "Store",
-    summary: "The Nix store's size, every profile's generations, and garbage collection.",
-  },
   cache: {
     title: "Cache",
     summary: "Whether each closure is built from the flake's latest revision and pushed to the Attic cache.",

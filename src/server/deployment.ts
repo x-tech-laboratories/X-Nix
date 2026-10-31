@@ -6,27 +6,33 @@
 // ends. A failed evaluation is retried after `retry_interval`. Update, build and switch run as long runs on the agent
 // the settings name, one at a time, and every action lands in the job history with its output. With `auto_switch`, drift
 // lasting `auto_switch_after` starts a switch once per target closure, and `update_at` and `build_at` start a daily job.
+// Unless `gc` is false, every cycle also reads the host's Nix store and its garbage collection, judged apart from the
+// deployment's own status, and Collect Garbage runs the same collection the timer does.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
-import { worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
+import { level_of_status, worse, type DeploymentSettings, type GcSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import {
   build_command, can_update, eval_command, reboot_command, split_eval_output, switch_command, timed_out_exit_code, update_command,
 } from "./nixos/commands.ts";
 import { parse_metadata, short_revision } from "./nixos/flake.ts";
+import {
+  assess_store, collect_command, finished_collection, fold_collection, gc_probe_script, observed_collection, parse_gc_probe, unread_store,
+  type Collection, type StoreReading,
+} from "./nixos/garbage.ts";
 import { parse_probe, probe_script, reboot_required, type ProbeFields } from "./nixos/probe.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
 export type ScheduledKind = "update" | "build";
-export type ActionId = "update" | "build" | "switch" | "reboot";
+export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
-export const action_ids: ActionId[] = ["update", "build", "switch", "reboot"];
+export const action_ids: ActionId[] = ["update", "build", "switch", "reboot", "collect"];
 
 // The last evaluation and what the deployment remembers between cycles.
 export interface Evaluation {
@@ -45,6 +51,8 @@ export interface Evaluation {
   auto_switch_target: string | null;
   // The last slot of each daily job that has been handled.
   scheduled: Partial<Record<ScheduledKind, number>>;
+  // The last garbage collection seen, kept after the journal has rotated past it.
+  last_collection: Collection | null;
 }
 
 export interface Message {
@@ -66,6 +74,8 @@ export interface Reading {
   up_to_date: boolean | null;
   reboot_required: boolean | null;
   flake_reachable: boolean | null;
+  // The host's Nix store, with its own status; null when it is not watched.
+  store: StoreReading | null;
 }
 
 export interface ActionOutcome {
@@ -84,13 +94,11 @@ export interface DeploymentOptions {
 const empty_evaluation: Evaluation = {
   evaluated_epoch: null, target: null, eval_error: null, eval_unreachable: false, metadata_error: null, flake_revision: null,
   flake_last_modified_epoch: null, oldest_input: null, inputs_last_modified_epoch: null, drift_target: null, drift_since_epoch: null,
-  auto_switch_target: null, scheduled: {},
+  auto_switch_target: null, scheduled: {}, last_collection: null,
 };
 
-const level_of_status: Record<Status, EventLevel> = { online: "info", info: "info", unavailable: "warning", warning: "warning", failed: "error" };
-
 // The jobs that hold the deployment's buttons; an evaluation runs beside them.
-const main_job_kinds: JobKind[] = ["update", "build", "switch"];
+const main_job_kinds: JobKind[] = ["update", "build", "switch", "collect"];
 
 const probe_timeout_in_seconds = 60;
 const reboot_timeout_in_seconds = 60;
@@ -158,6 +166,7 @@ export class Deployment {
     if (action === "update" && !can_update(this.settings)) {
       return `Cannot update ${this.settings.flake}: only a local checkout, or a github: flake with a push_ssh_key, has a lock file X-Nix can write`;
     }
+    if (action === "collect" && this.settings.gc === null) return "The store is not watched for this deployment; its gc is off";
     if (this.running_job() !== null) return "A job is already running for this deployment";
     return null;
   }
@@ -189,29 +198,53 @@ export class Deployment {
     if (evaluation_job !== null) evaluating = this.poll_evaluation(evaluation_job);
     // An evaluation on another host needs the target's attribute name, which the first probe supplies.
     else if (this.due_for_evaluation() && !(this.settings.eval_agent !== null && this.attribute() === null)) evaluating = this.launch_evaluation();
-    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_script(), probe_timeout_in_seconds), evaluating]);
+    const agent = this.agents.get(this.settings.host);
+    const gc = this.settings.gc;
+    const [probe, gc_probe, folded] = await Promise.all([
+      agent.run(probe_script(), probe_timeout_in_seconds),
+      gc === null ? null : agent.run(gc_probe_script(gc), probe_timeout_in_seconds),
+      evaluating,
+    ]);
+    const evaluation = folded ?? this.evaluation();
+    const store = gc === null ? null : this.read_store(gc, gc_probe!, evaluation);
 
     if (probe.exit_code !== 0 && probe.stdout.trim() === "") {
-      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200)}`, folded);
+      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200)}`, evaluation, store);
     }
     const fields = parse_probe(probe.stdout);
-    if (fields.current === null) return this.save_unavailable("/run/current-system is unreadable; is this a NixOS host?", folded);
-    this.assemble(fields, folded ?? this.evaluation(), folded !== null);
+    if (fields.current === null) return this.save_unavailable("/run/current-system is unreadable; is this a NixOS host?", evaluation, store);
+    this.assemble(fields, evaluation, folded !== null, store);
   }
 
-  private save_unavailable(text: string, folded: Evaluation | null): void {
-    if (folded !== null) this.store.save_evaluation(this.id, folded);
+  private save_unavailable(text: string, evaluation: Evaluation, store: StoreReading | null): void {
+    this.store.save_evaluation(this.id, evaluation);
     const previous = this.reading();
     this.save_reading({
       ...(previous ?? blank_reading()),
       status: "unavailable",
       checked_epoch: this.now(),
       messages: [{ level: "warning", text }],
+      store,
     });
   }
 
+  // Reads the store from its probe, folding the last collection it shows into the evaluation.
+  private read_store(gc: GcSettings, result: RunResult, evaluation: Evaluation): StoreReading {
+    const unavailable = (text: string): StoreReading => ({
+      ...(this.reading()?.store ?? unread_store(gc)),
+      status: "unavailable",
+      checked_epoch: this.now(),
+      messages: [{ level: "warning", text }],
+    });
+    if (result.exit_code !== 0 && result.stdout.trim() === "") return unavailable(`Could not read the Nix store: ${clip(result.stderr || result.stdout, 200)}`);
+    const fields = parse_gc_probe(result.stdout);
+    if (fields.df === "") return unavailable(`${gc.store} is unreadable; is Nix installed on this host?`);
+    evaluation.last_collection = fold_collection(evaluation.last_collection, observed_collection(fields));
+    return assess_store(gc, fields, evaluation.last_collection, this.now());
+  }
+
   // Turns the probe's facts and the evaluation into this cycle's reading and worst-of status.
-  private assemble(fields: ProbeFields, evaluation: Evaluation, evaluated: boolean): void {
+  private assemble(fields: ProbeFields, evaluation: Evaluation, evaluated: boolean, store: StoreReading | null): void {
     const now = this.now();
     const messages: Message[] = [];
     let status: Status = "online";
@@ -290,17 +323,23 @@ export class Deployment {
       status, checked_epoch: now, messages,
       hostname: fields.hostname, current: fields.current, booted: fields.booted, version: fields.version, generation: fields.generation,
       switched_epoch: fields.switched_epoch, up_to_date, reboot_required: reboot, flake_reachable: evaluation.evaluated_epoch === null ? null : evaluation.metadata_error === null,
+      store,
     });
   }
 
-  // Saves the reading, noting a change of status as an event.
+  // Saves the reading, noting a change of the deployment's or the store's status as an event.
   private save_reading(reading: Reading): void {
     const previous = this.reading();
     this.store.save_reading(this.id, reading);
-    if (previous?.status === reading.status) return;
-    const level = level_of_status[reading.status];
-    const reason = reading.messages.find((message) => message.level === level && level !== "info");
-    this.store.add_event(this.id, reading.checked_epoch, level, reason ? `Now ${reading.status}: ${reason.text}` : `Now ${reading.status}`);
+    this.note_change(previous?.status ?? null, reading.status, reading.messages, reading.checked_epoch, "Now");
+    if (reading.store !== null) this.note_change(previous?.store?.status ?? null, reading.store.status, reading.store.messages, reading.store.checked_epoch, "Store now");
+  }
+
+  private note_change(previous: Status | null, status: Status, messages: Message[], epoch: number, prefix: string): void {
+    if (previous === status) return;
+    const level = level_of_status[status];
+    const reason = messages.find((message) => message.level === level && level !== "info");
+    this.store.add_event(this.id, epoch, level, reason ? `${prefix} ${status}: ${reason.text}` : `${prefix} ${status}`);
   }
 
   // ── Evaluation ───────────────────────────────────────────────────────────
@@ -446,9 +485,9 @@ export class Deployment {
       const launched = await this.launch(action, command, "manual", true);
       if (launched.job_id === null) {
         const job_id = this.record_failed_launch(action, command, "manual", launched.error);
-        return { ok: false, message: `Could not start the ${action}: ${launched.error}`, job_id };
+        return { ok: false, message: `Could not start the ${job_noun(action)}: ${launched.error}`, job_id };
       }
-      return { ok: true, message: `${capitalise(action)} started`, job_id: launched.job_id };
+      return { ok: true, message: `${capitalise(job_noun(action))} started`, job_id: launched.job_id };
     });
   }
 
@@ -466,8 +505,9 @@ export class Deployment {
     return { ok, message: ok ? "Reboot requested" : `Could not reboot: ${clip(result.stderr || result.stdout, 200)}`, job_id };
   }
 
-  private command_for(kind: "update" | "build" | "switch"): string {
+  private command_for(kind: "update" | "build" | "switch" | "collect"): string {
     if (kind === "update") return update_command(this.settings);
+    if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
     if (kind === "build") return build_command(this.settings, this.attribute());
     return switch_command(this.settings);
   }
@@ -478,7 +518,7 @@ export class Deployment {
   agent_for(kind: JobKind): string | null {
     if (kind === "eval") return this.settings.eval_agent ?? this.settings.host;
     if (kind === "build") return this.settings.build_agent ?? this.settings.host;
-    if (kind === "reboot") return this.settings.host;
+    if (kind === "reboot" || kind === "collect") return this.settings.host;
     return this.settings.switch_agent ?? this.settings.host;
   }
 
@@ -492,7 +532,7 @@ export class Deployment {
       return { job_id: null, error: (error as Error).message, unreachable };
     }
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent, run_id, trigger, started_epoch: this.now() });
-    if (announce) this.store.add_event(this.id, this.now(), "info", `${capitalise(kind)} started`);
+    if (announce) this.store.add_event(this.id, this.now(), "info", `${capitalise(job_noun(kind))} started`);
     return { job_id, error: "", unreachable: false };
   }
 
@@ -501,7 +541,7 @@ export class Deployment {
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.agent_for(kind), run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, `${error}\n`);
     this.store.finish_job(job_id, "failed", null, "The job could not be started", this.now());
-    this.store.add_event(this.id, this.now(), "error", `Could not start the ${kind}: ${error}`);
+    this.store.add_event(this.id, this.now(), "error", `Could not start the ${job_noun(kind)}: ${error}`);
     return job_id;
   }
 
@@ -539,11 +579,20 @@ export class Deployment {
       return;
     }
     if (followed.outcome === "running") return;
-    // Whatever the job changed, the next cycle evaluates afresh.
-    this.force_eval = true;
     const finished = this.store.job(job.id)!;
-    if (finished.state === "succeeded") this.store.add_event(this.id, this.now(), "info", `${capitalise(job.kind)} finished`);
-    else this.store.add_event(this.id, this.now(), "error", `${capitalise(job.kind)} failed: ${finished.error}`);
+    const succeeded = finished.state === "succeeded";
+    if (job.kind === "collect") {
+      // A manual collection is the last collection, just as a timer run would be.
+      const evaluation = this.evaluation();
+      evaluation.last_collection = finished_collection(finished.output, succeeded, finished.error, this.now());
+      this.store.save_evaluation(this.id, evaluation);
+    } else {
+      // Whatever the job changed, the next cycle evaluates afresh.
+      this.force_eval = true;
+    }
+    const noun = capitalise(job_noun(job.kind));
+    if (succeeded) this.store.add_event(this.id, this.now(), "info", `${noun} finished`);
+    else this.store.add_event(this.id, this.now(), "error", `${noun} failed: ${finished.error}`);
   }
 }
 
@@ -552,8 +601,13 @@ export class Deployment {
 function blank_reading(): Reading {
   return {
     status: "unavailable", checked_epoch: 0, messages: [], hostname: null, current: null, booted: null, version: null, generation: null,
-    switched_epoch: null, up_to_date: null, reboot_required: null, flake_reachable: null,
+    switched_epoch: null, up_to_date: null, reboot_required: null, flake_reachable: null, store: null,
   };
+}
+
+// What the history and events call a job of this kind.
+function job_noun(kind: JobKind): string {
+  return kind === "collect" ? "collection" : kind;
 }
 
 function clip(text: string, length: number): string {

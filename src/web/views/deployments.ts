@@ -1,10 +1,12 @@
 // The Deployments pages: every deployment as a card, and one deployment with its drift, actions, jobs and events.
 
-import { api, type ActionView, type Deployment, type EventRow, type Job } from "../api.ts";
+import { api, type Deployment, type EventRow, type Job } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
-import { confirm_dialog, crumbs, empty, facts, level_badge, load, section, status_badge, toast } from "../ui.ts";
-import { deployment_card, drift_state, jobs_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
+import { crumbs, empty, facts, load, section, status_badge, toast } from "../ui.ts";
+import {
+  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, tile, type View,
+} from "./shared.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -47,11 +49,12 @@ export function deployment_view(id: string): View {
     badge.replaceChildren(status_badge(deployment.reading?.status ?? null));
     buttons.replaceChildren(
       h("button", { onclick: () => void run_refresh() }, "Check now"),
-      ...deployment.actions.map((action) => action_button(deployment, action)),
+      // Collect Garbage lives on the deployment's Store page.
+      ...deployment.actions.filter((action) => action.id !== "collect").map((action) => action_button(deployment, action, () => refresh(true))),
     );
     return [
       tiles(deployment),
-      section("Findings", findings(deployment)),
+      section("Findings", messages_list(deployment.reading?.messages ?? [])),
       section("Details", details(deployment)),
       section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
       section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
@@ -63,26 +66,6 @@ export function deployment_view(id: string): View {
     await api(`/api/deployments/${encodeURIComponent(id)}/refresh`, "POST").catch((error) => toast(String(error.message), "bad"));
     await refresh(true);
   };
-
-  const run_action = async (action: ActionView) => {
-    try {
-      const outcome = await api<{ message: string; job_id: number | null }>(`/api/deployments/${encodeURIComponent(id)}/actions/${action.id}`, "POST");
-      toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
-    } catch (error) {
-      toast((error as Error).message, "bad");
-    }
-    await refresh(true);
-  };
-
-  const action_button = (deployment: Deployment, action: ActionView) => h("button", {
-    class: action.id === "reboot" ? "danger" : action.id === "switch" ? "accent solid" : null,
-    disabled: action.refusal !== null,
-    title: action.refusal,
-    onclick: () => {
-      if (action.confirm === null) void run_action(action);
-      else confirm_dialog(`${action.label} ${deployment.name}`, action.confirm, action.label, () => run_action(action));
-    },
-  }, action.label);
 
   void refresh(false);
   const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
@@ -104,8 +87,6 @@ function tiles(deployment: Deployment): HTMLElement {
   const reading = deployment.reading;
   const evaluation = deployment.evaluation;
   const [drift, tone] = drift_state(deployment);
-  const tile = (label: string, value: string, class_name: string | null = null) =>
-    h("div", { class: `tile${class_name ? ` ${class_name}` : ""}` }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value));
   return h("div", { class: "tiles" },
     tile("Flake", drift, tone === "bad" ? "tile-bad" : null),
     tile("Reboot", reading?.reboot_required === true ? "Needed" : reading?.reboot_required === false ? "Not needed" : "—"),
@@ -114,12 +95,6 @@ function tiles(deployment: Deployment): HTMLElement {
     tile("Revision", short_revision(evaluation.flake_revision)),
     tile("Oldest input", evaluation.inputs_last_modified_epoch ? age(evaluation.inputs_last_modified_epoch) : "—"),
   );
-}
-
-function findings(deployment: Deployment): HTMLElement {
-  const messages = deployment.reading?.messages ?? [];
-  if (messages.length === 0) return empty("Not read yet.");
-  return h("ul", { class: "events" }, ...messages.map((message) => h("li", {}, level_badge(message.level), " ", h("span", { class: "event-message" }, message.text))));
 }
 
 function details(deployment: Deployment): HTMLElement {
@@ -151,13 +126,6 @@ function details(deployment: Deployment): HTMLElement {
   if (evaluation.eval_error) rows.push(["Evaluation error", h("pre", { class: "output" }, evaluation.eval_error)]);
   if (evaluation.metadata_error) rows.push(["Metadata error", h("pre", { class: "output" }, evaluation.metadata_error)]);
   return facts(rows, "rows");
-}
-
-function events_list(events: EventRow[]): HTMLElement {
-  return h("ul", { class: "events" }, ...events.map((event) => h("li", {},
-    h("span", { class: "event-time muted small", title: stamp(event.epoch) }, age(event.epoch)), " ",
-    level_badge(event.level), " ",
-    h("span", { class: "event-message" }, event.message))));
 }
 
 // A flake revision cut to fit a tile, keeping the -dirty mark.

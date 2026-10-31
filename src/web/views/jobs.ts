@@ -1,4 +1,4 @@
-// The Jobs pages: every update, build, switch and reboot, and one job with its whole output.
+// The Jobs pages: every update, build, switch, reboot and collection, and one job with its whole output.
 
 import { api, type Job, type JobWithOutput } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
@@ -13,7 +13,7 @@ export function jobs_view(): View {
   const list = h("div");
   const refresh = (quiet: boolean) => load(list, async () => {
     const jobs = await api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`);
-    return jobs.length === 0 ? empty("No jobs yet.", "Updates, builds, switches and reboots show here with their output.") : jobs_table(jobs, true);
+    return jobs.length === 0 ? empty("No jobs yet.", "Updates, builds, switches, reboots and collections show here with their output.") : jobs_table(jobs, true);
   }, { quiet });
   void refresh(false);
   const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
@@ -22,7 +22,7 @@ export function jobs_view(): View {
     title: "Jobs",
     root: h("div", { class: "page" },
       h("h1", {}, "Jobs"),
-      h("p", { class: "muted" }, "Every update, build, switch and reboot, newest first. ",
+      h("p", { class: "muted" }, "Every update, build, switch, reboot and collection, newest first. ",
         h("a", { href: link(["jobs"], { evaluations: show_evaluations ? null : "1" }) }, show_evaluations ? "Hide evaluations" : "Show evaluations")),
       section("History", list),
     ),

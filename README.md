@@ -32,8 +32,8 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 The config file lists `deployments`, each a NixOS host and the flake that describes it; see
 `config.example.json`. Every `interval` X-Nix reads the host's running system, and every
 `eval_interval` it evaluates `<flake>#nixosConfigurations.<configuration>.config.system.build.toplevel`
-and compares the two store paths. Update, build, switch and evaluation run as long runs that
-survive a restart of X-Nix; each lands in the job history with its output.
+and compares the two store paths. Update, build, switch, garbage collection and evaluation run as
+long runs that survive a restart of X-Nix; each lands in the job history with its output.
 
 Hosts are named by agent. Only the server's own host has one so far, so a deployment, `eval_agent`,
 `build_agent` or `switch_agent` naming another host reads as unreachable.
@@ -75,6 +75,30 @@ Hosts are named by agent. Only the server's own host has one so far, so a deploy
 | `push_ssh_key`      | none                              | The key a `github:` flake's update pushes with.                      |
 | `commit_author`     | `X-Nix <x-nix@localhost>`         | The update commit's author.                                          |
 | `commit_message`    | `chore(flake): update inputs`     | The update commit's message.                                         |
+| `gc`                | the defaults below                | How the host's Nix store is watched, or `false` to leave it alone.   |
+
+### Store
+
+Every cycle also reads the host's Nix store: how full it is, its path and GC root counts, every
+profile's generations, the collection unit and timer, and the last collection's summary from the
+journal. The last collection is kept after the journal rotates past it, and Collect Garbage runs the
+timer's collection as a job that counts as the last collection once it ends. The store has its own
+status, apart from the deployment's, set by these keys of `gc`:
+
+| Setting              | Default                     | Meaning                                                      |
+| -------------------- | --------------------------- | ------------------------------------------------------------ |
+| `unit`               | `nix-gc.service`            | The collection unit.                                         |
+| `timer`              | `nix-gc.timer`              | The timer that starts it.                                    |
+| `store`              | `/nix/store`                | The store whose filesystem is measured.                      |
+| `max_age`            | `2w`                        | How long since the last collection before it is stale.       |
+| `stale_status`       | `failed`                    | The status a stale collection raises.                        |
+| `timer_status`       | `warning`                   | The status a missing or inactive timer raises.               |
+| `warning`            | `80`                        | Warn once the store's filesystem is this full, in percent; `null` turns it off. |
+| `threshold`          | `90`                        | Fail once it is this full; `null` turns it off.              |
+| `max_generations`    | none                        | Warn about a profile keeping more generations than this.     |
+| `max_generation_age` | none                        | Warn once the oldest generation kept is older than this.     |
+| `gc_bin`             | `nix-collect-garbage`       | The collection program.                                      |
+| `gc_args`            | `--delete-older-than 7d`    | Its arguments, which should match the timer's.               |
 
 ## Package
 
@@ -92,10 +116,12 @@ services.x-nix = {
 };
 ```
 
-The service runs as the `x-nix` user. Update, switch and reboot run under `sudo -n` unless
+The service runs as the `x-nix` user, in the `systemd-journal` group so it can read the last
+collection from the journal. Update, switch, reboot and Collect Garbage run under `sudo -n` unless
 `require_sudo` is off, so grant that user NOPASSWD rules for exactly the commands its deployments
-run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh` and
-`/run/current-system/sw/bin/systemctl reboot`.
+run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh`,
+`/run/current-system/sw/bin/systemctl reboot` and
+`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`.
 
 ## License
 

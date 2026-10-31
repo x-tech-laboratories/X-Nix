@@ -10,7 +10,8 @@ import { register_auth } from "./auth.ts";
 import type { DeploymentSettings, TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Poller } from "./poller.ts";
-import type { EventRow, Job, Store } from "./store.ts";
+import { collect_command } from "./nixos/garbage.ts";
+import type { EventRow, Job, JobKind, Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,8 @@ export interface DeploymentView {
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
   auto_switch: boolean;
+  // How the store is watched, or null when it is not.
+  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
   evaluation: Evaluation;
   evaluating: boolean;
@@ -58,7 +61,14 @@ export interface DeploymentView {
   actions: ActionView[];
 }
 
-const action_labels: Record<ActionId, string> = { update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot" };
+const action_labels: Record<ActionId, string> = {
+  update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
+};
+
+const confirmations: Partial<Record<ActionId, (name: string) => string>> = {
+  reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
+  collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
+};
 
 const web_build_directory = fileURLToPath(new URL("../../dist", import.meta.url));
 const package_file = fileURLToPath(new URL("../../package.json", import.meta.url));
@@ -80,6 +90,10 @@ function deployment_view(deployment: Deployment): DeploymentView {
     agents: { eval: deployment.agent_for("eval"), build: deployment.agent_for("build"), switch: deployment.agent_for("switch") },
     schedule: { update: clock(settings.update_at), build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
+    gc: settings.gc === null ? null : {
+      unit: settings.gc.unit, timer: settings.gc.timer, store: settings.gc.store, max_age: settings.gc.max_age,
+      warning: settings.gc.warning, threshold: settings.gc.threshold, command: collect_command(settings.gc, settings.require_sudo),
+    },
     reading: deployment.reading(),
     evaluation: deployment.evaluation(),
     evaluating: deployment.running_evaluation() !== null,
@@ -88,7 +102,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
       id,
       label: action_labels[id],
       refusal: deployment.action_refusal(id),
-      confirm: id === "reboot" ? `Reboot ${settings.name}? Everything running on it stops until it is back up.` : null,
+      confirm: confirmations[id]?.(settings.name) ?? null,
     })),
   };
 }
@@ -146,8 +160,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
-  app.get<{ Querystring: { deployment?: string; evaluations?: string; limit?: string } }>("/api/jobs", async (request): Promise<Job[]> => store.jobs({
+  app.get<{ Querystring: { deployment?: string; kind?: string; evaluations?: string; limit?: string } }>("/api/jobs", async (request): Promise<Job[]> => store.jobs({
     deployment_id: request.query.deployment || undefined,
+    kind: (request.query.kind as JobKind) || undefined,
     include_evaluations: request.query.evaluations === "1",
     limit: Math.min(500, Math.max(1, Number(request.query.limit) || 100)),
   }));

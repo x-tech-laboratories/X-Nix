@@ -37,6 +37,27 @@ export function age(epoch: number | null | undefined): string {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+// How long until a time to come, such as "in 3d".
+export function until(epoch: number): string {
+  const seconds = Math.max(0, epoch - Date.now() / 1000);
+  if (seconds < 90) return "now";
+  if (seconds < 5400) return `in ${Math.round(seconds / 60)}m`;
+  if (seconds < 129600) return `in ${Math.round(seconds / 3600)}h`;
+  return `in ${Math.round(seconds / 86400)}d`;
+}
+
+// Sizes in binary units, such as "44.4 GiB".
+export function bytes(count: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+  let value = count;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${Math.round(value)} B` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
 export function stamp(epoch: number): string {
   return new Date(epoch * 1000).toLocaleString();
 }

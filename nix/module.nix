@@ -84,6 +84,8 @@ in
     users.users.x-nix = {
       isSystemUser = true;
       group = "x-nix";
+      # Reads the last garbage collection's outcome from the system journal.
+      extraGroups = [ "systemd-journal" ];
       home = "/var/lib/x-nix";
       description = "X-Nix";
     };

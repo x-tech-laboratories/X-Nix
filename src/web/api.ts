@@ -23,9 +23,9 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot";
+export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect";
 export type JobState = "running" | "succeeded" | "failed";
-export type ActionId = "update" | "build" | "switch" | "reboot";
+export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
 
 export interface Message {
   level: EventLevel;
@@ -45,6 +45,42 @@ export interface Reading {
   up_to_date: boolean | null;
   reboot_required: boolean | null;
   flake_reachable: boolean | null;
+  store: StoreReading | null;
+}
+
+export interface Profile {
+  path: string;
+  generation: number | null;
+  count: number;
+  oldest_epoch: number | null;
+}
+
+export interface StoreReading {
+  status: Status;
+  checked_epoch: number;
+  messages: Message[];
+  store: string;
+  size_bytes: number | null;
+  used_bytes: number | null;
+  avail_bytes: number | null;
+  used_percent: number | null;
+  paths: number | null;
+  roots: number | null;
+  profiles: Profile[];
+  generations: number | null;
+  oldest_generation_epoch: number | null;
+  collecting: boolean;
+  timer_loaded: boolean;
+  timer_active: boolean;
+  next_epoch: number | null;
+}
+
+export interface Collection {
+  epoch: number;
+  succeeded: boolean;
+  deleted: number | null;
+  freed_bytes: number | null;
+  error: string | null;
 }
 
 export interface Evaluation {
@@ -59,6 +95,7 @@ export interface Evaluation {
   inputs_last_modified_epoch: number | null;
   drift_since_epoch: number | null;
   scheduled: Partial<Record<"update" | "build", number>>;
+  last_collection: Collection | null;
 }
 
 export interface Job {
@@ -96,6 +133,7 @@ export interface Deployment {
   agents: { eval: string | null; build: string | null; switch: string | null };
   schedule: { update: string | null; build: string | null };
   auto_switch: boolean;
+  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
   evaluation: Evaluation;
   evaluating: boolean;

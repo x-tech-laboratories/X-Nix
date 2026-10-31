@@ -55,9 +55,11 @@ describe("/api/deployments", () => {
     const [deployment] = (await inject("GET", "/api/deployments")).json<DeploymentView[]>();
 
     expect(deployment.id).toBe("host-deploy");
-    expect(deployment.actions.map((action) => action.id)).toEqual(["update", "build", "switch", "reboot"]);
+    expect(deployment.actions.map((action) => action.id)).toEqual(["update", "build", "switch", "reboot", "collect"]);
     expect(deployment.actions[0].refusal).toContain("push_ssh_key");
     expect(deployment.actions[3].confirm).toContain("Reboot");
+    expect(deployment.actions[4].confirm).toContain("Collect garbage");
+    expect(deployment.gc?.command).toBe("sudo -n nix-collect-garbage --delete-older-than 7d");
   });
 
   it("starts an action, then refuses a second one with 409", async () => {
@@ -72,6 +74,7 @@ describe("/api/deployments", () => {
     const jobs = (await inject("GET", "/api/jobs?deployment=host-deploy")).json<{ id: number; kind: string }[]>();
     expect(jobs.map((job) => job.kind)).toEqual(["switch"]);
     expect((await inject("GET", `/api/jobs/${jobs[0].id}`)).json()).toHaveProperty("output");
+    expect((await inject("GET", "/api/jobs?kind=collect")).json()).toEqual([]);
   });
 
   it("answers 404 for an unknown deployment or action", async () => {

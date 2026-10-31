@@ -34,7 +34,7 @@ only the job of watching X-Nix itself, as it does for X-Backups.
        `rebuild_bin`, `nix_args`, `rebuild_args`.
    - **Ported.** `base/nixos_boot.py` and the NixOS part of `reboot_required.py`: reboot needed when the
      booted and current `initrd`, `kernel`, `kernel-modules` or `systemd` differ.
-   - `nix_gc.py`: store size and path count, every profile's generations, the `nix-gc` unit and
+   - **Ported.** `nix_gc.py`: store size and path count, every profile's generations, the `nix-gc` unit and
      timer, the last collection's freed space from the journal (kept after the journal rotates),
      `max_generations` and `max_generation_age`, and a `nix-collect-garbage` action.
    - `attic_push.py`: whether each tracked closure is built from the flake's latest revision and
