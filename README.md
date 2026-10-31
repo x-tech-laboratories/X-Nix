@@ -1,7 +1,7 @@
 # X-Nix
 
 A web portal for managing NixOS deployments: drift against the flake, updates, builds, switches,
-the Nix store, the Attic cache and boot entries.
+the Nix store, the Attic cache, boot entries, options, secrets and the machine inventory.
 
 ## Development
 
@@ -58,6 +58,8 @@ whose agent is not connected reads as unreachable.
 | `eval_interval`     | `1h`                              | How often the flake is evaluated.                                    |
 | `retry_interval`    | `15m`                             | How soon a failed evaluation is tried again.                         |
 | `eval_timeout`      | `10m`                             | How long an evaluation may run.                                      |
+| `options_timeout`   | `30m`                             | How long generating the option and package lists may run.            |
+| `options_file`      | `x-nix/<configuration>.json`      | The JSON file in the flake the option form commits to; see Options.  |
 | `job_poll`          | `30s`                             | How often a running job is read.                                     |
 | `max_input_age`     | none                              | Warn once the oldest locked input is older than this.                |
 | `drift_status`      | `warning`                         | The status drift raises.                                             |
@@ -169,6 +171,38 @@ and the one-shot next entry. The Boot page sets the next boot with the loader's 
 (`bootctl set-oneshot`, `grub-reboot` or `efibootmgr --bootnext`), and can reboot into it at once.
 Reading `/boot` usually needs root, so the read tries `sudo -n` first and falls back to reading
 unprivileged.
+
+### Options
+
+The Options page searches the deployment's NixOS options and packages from its own nixpkgs pin,
+and its Home Manager options when the flake has a `home-manager` input. Generate lists runs one
+`options` job on the evaluating host: it builds the configuration's
+`config.system.build.manual.optionsJSON` (so the flake's own modules' options are listed, and
+`documentation.nixos.enable` must stay on), builds `home-manager`'s `docs-json`, and runs
+`nix search` over the pinned nixpkgs. X-Nix then fetches the lists and keeps them under
+`options/` in the state folder: options per deployment and pin, packages per pin, so a second
+deployment on the same nixpkgs skips the search. Each option shows its type, default, example,
+description and where it is declared; Show current value evaluates it in the configuration.
+
+Booleans, integers, strings and enums can be set from the page. Each change is one commit to a
+JSON file X-Nix owns in the flake, `options_file`, nesting each value under its option path; X-Nix
+never edits hand-written Nix. A `github:` flake is cloned fresh, committed as `commit_author` and
+pushed with `push_ssh_key`, as Update Flake does; a local checkout is written in place and
+committed when it is a git repository, so it must be writable by the user X-Nix or the agent runs
+as. Each commit is a `configure` job, and the flake is evaluated again at once, so the change shows
+as drift until it is switched to. Add the file to the configuration's modules once, in `flake.nix`:
+
+```nix
+nixosConfigurations.workstation = nixpkgs.lib.nixosSystem {
+  modules = [
+    ./configuration.nix
+    ({ lib, ... }: { config = lib.mapAttrsRecursive (_: lib.mkOverride 90) (lib.importJSON ./x-nix/workstation.json); })
+  ];
+};
+```
+
+Its values take priority over plain definitions elsewhere, but not over `lib.mkForce`. The file
+must exist before the line evaluates: commit a value from the page first, or commit `{}` there.
 
 ### Secrets
 

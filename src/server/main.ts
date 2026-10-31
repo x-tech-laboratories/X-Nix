@@ -13,6 +13,8 @@ import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { parse_duration } from "./durations.ts";
 import { Fleet } from "./fleet.ts";
+import { Catalog } from "./catalog.ts";
+import { Configurator } from "./configurator.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
@@ -71,7 +73,14 @@ hub.on_pulls = (host, pulls) => {
   for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
   return kept;
 };
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets });
+const catalogs = new Map(deployments.map((deployment) => [deployment.id, new Catalog(deployment, { store, agents, directory: join(state_directory, "options") })]));
+const configurators = new Map(deployments.map((deployment) => [deployment.id, new Configurator(deployment, { store, agents })]));
+// A generation nobody is watching is still fetched once it ends.
+const catalog_timer = setInterval(() => {
+  for (const catalog of catalogs.values()) if (catalog.running_job() !== null) void catalog.follow();
+}, 30_000);
+catalog_timer.unref();
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets, catalogs, configurators });
 
 app.addHook("onClose", async () => {
   poller.stop();

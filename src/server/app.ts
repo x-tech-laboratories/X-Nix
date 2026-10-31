@@ -11,6 +11,9 @@ import type { AgentHub } from "./agents/hub.ts";
 import { register_agent_route } from "./agents/route.ts";
 import { register_auth } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
+import type { Catalog, CatalogInfo } from "./catalog.ts";
+import { simple_kind, type Configurator, type SettingValue, type SimpleKind } from "./configurator.ts";
+import { option_path, type OptionEntry, type OptionSource } from "./nixos/options.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
 import { fleet_settings, type DeploymentSettings, type TimeOfDay } from "./config.ts";
@@ -48,6 +51,22 @@ export interface app_options {
   webhook?: Webhook;
   // Uploads each deployment's secrets; the secrets routes answer 404 without it.
   secrets?: Secrets;
+  // Each deployment's option and package lists, and the form that commits options; their routes answer 404 without them.
+  catalogs?: Map<string, Catalog>;
+  configurators?: Map<string, Configurator>;
+}
+
+// An option as the page shows it, with how the form sets it, or null when the form leaves it alone.
+export interface OptionView extends OptionEntry {
+  form: SimpleKind | null;
+}
+
+export interface CatalogView {
+  id: string;
+  name: string;
+  host: string | null;
+  info: CatalogInfo | null;
+  running_job: Job | null;
 }
 
 export interface ProvisioningView {
@@ -426,6 +445,92 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const found = find_secrets(request.params.id, reply);
     if (found === null) return reply;
     const outcome = await found.secrets.upload(found.deployment, "manual");
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // ── Options ──────────────────────────────────────────────────────────────
+
+  const catalog_view = (catalog: Catalog): CatalogView => ({
+    id: catalog.id, name: catalog.deployment.settings.name, host: catalog.deployment.settings.host, info: catalog.info(), running_job: catalog.running_job(),
+  });
+
+  const option_view = (entry: OptionEntry): OptionView => ({
+    ...entry, form: entry.source !== "nixos" || entry.read_only || option_path(entry.name) === null ? null : simple_kind(entry.type),
+  });
+
+  const find_catalog = async (id: string, reply: FastifyReply): Promise<Catalog | null> => {
+    const catalog = options.catalogs?.get(id) ?? null;
+    if (catalog === null) {
+      void reply.code(404).send({ error: `No option list for '${id}'` });
+      return null;
+    }
+    // A generation that has ended is fetched as soon as anyone looks.
+    await catalog.follow();
+    return catalog;
+  };
+
+  const limit_of = (text: string | undefined) => Math.min(200, Math.max(1, Number(text) || 50));
+
+  app.get("/api/options", async (): Promise<CatalogView[]> => {
+    const catalogs = [...(options.catalogs?.values() ?? [])];
+    await Promise.all(catalogs.map((catalog) => catalog.follow()));
+    return catalogs.map(catalog_view);
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { query?: string; source?: string; limit?: string } }>("/api/deployments/:id/options", async (request, reply) => {
+    const catalog = await find_catalog(request.params.id, reply);
+    if (catalog === null) return reply;
+    const source: OptionSource = request.query.source === "home-manager" ? "home-manager" : "nixos";
+    const found = catalog.search_options(request.query.query ?? "", source, limit_of(request.query.limit));
+    return { ...catalog_view(catalog), total: found.total, entries: found.entries.map(option_view) };
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { query?: string; limit?: string } }>("/api/deployments/:id/packages", async (request, reply) => {
+    const catalog = await find_catalog(request.params.id, reply);
+    if (catalog === null) return reply;
+    return { ...catalog_view(catalog), ...catalog.search_packages(request.query.query ?? "", limit_of(request.query.limit)) };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/deployments/:id/options/generate", async (request, reply) => {
+    const catalog = await find_catalog(request.params.id, reply);
+    if (catalog === null) return reply;
+    const outcome = await catalog.generate("manual");
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // The option's value in the deployment's configuration, evaluated now.
+  app.get<{ Params: { id: string }; Querystring: { name?: string } }>("/api/deployments/:id/options/value", async (request, reply) => {
+    const catalog = await find_catalog(request.params.id, reply);
+    if (catalog === null) return reply;
+    if (!request.query.name) return reply.code(400).send({ error: "Name the option as `name`" });
+    return catalog.current_value(request.query.name);
+  });
+
+  const find_configurator = (id: string, reply: FastifyReply): Configurator | null => {
+    const configurator = options.configurators?.get(id) ?? null;
+    if (configurator === null) void reply.code(404).send({ error: `No option form for '${id}'` });
+    return configurator;
+  };
+
+  // The options X-Nix's own file in the flake sets now.
+  app.get<{ Params: { id: string } }>("/api/deployments/:id/settings", async (request, reply) => {
+    const configurator = find_configurator(request.params.id, reply);
+    return configurator === null ? reply : configurator.view();
+  });
+
+  // Commits one option's value, or its removal when the value is null, then evaluates the flake again.
+  app.post<{ Params: { id: string }; Body: { name?: unknown; value?: unknown } }>("/api/deployments/:id/settings", async (request, reply) => {
+    const configurator = find_configurator(request.params.id, reply);
+    if (configurator === null) return reply;
+    const catalog = options.catalogs?.get(request.params.id);
+    const name = request.body?.name;
+    if (typeof name !== "string") return reply.code(400).send({ error: "Name the option as `name`" });
+    const option = catalog?.option(name) ?? null;
+    if (option === null) return reply.code(404).send({ error: `${name} is not in the generated option list; generate it first` });
+    const value = request.body?.value;
+    if (value !== null && typeof value !== "boolean" && typeof value !== "number" && typeof value !== "string") return reply.code(400).send({ error: "The value must be true, false, a number, text or null" });
+    const outcome = await configurator.set(option, value as SettingValue | null, "manual");
+    if (outcome.ok && outcome.job_id !== null) void poller.refresh(configurator.deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 

@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 
 export type JobKind =
   | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
-  | "build-all" | "push" | "next-boot" | "install" | "media" | "secrets";
+  | "build-all" | "push" | "next-boot" | "install" | "media" | "secrets" | "options" | "configure" | "inventory";
 export type JobState = "running" | "succeeded" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 

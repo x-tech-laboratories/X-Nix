@@ -8,6 +8,7 @@ import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
 import { is_account_name, is_key_destination, is_key_mode, key_folder } from "../shared/keys.ts";
 import { parse_duration } from "./durations.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
+import { is_flake_path } from "./nixos/flake_files.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,10 @@ export interface DeploymentSettings {
   eval_interval: number;
   retry_interval: number;
   eval_timeout: number;
+  // How long generating the option and package lists may run.
+  options_timeout: number;
+  // The JSON file in the flake the option form commits to; x-nix/<configuration>.json when null.
+  options_file: string | null;
   job_poll: number;
   max_input_age: number | null;
   drift_status: Status;
@@ -365,6 +370,8 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     eval_interval,
     retry_interval: Math.min(read.duration("retry_interval", "15m"), eval_interval),
     eval_timeout: read.duration("eval_timeout", "10m"),
+    options_timeout: read.duration("options_timeout", "30m"),
+    options_file: flake_path(read.text("options_file"), "options_file", read.owner),
     job_poll: read.duration("job_poll", "30s"),
     max_input_age: read.optional_duration("max_input_age"),
     drift_status: read.status("drift_status", "warning"),
@@ -412,6 +419,12 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which cannot be combined with pre_switch_checks, magic_rollback or health checks`);
   }
   return settings;
+}
+
+// A plain path inside the flake, or null when none is set.
+function flake_path(path: string | null, key: string, owner: string): string | null {
+  if (path !== null && !is_flake_path(path)) throw new ConfigError(`\`${key}\` of ${owner} must be a plain path inside the flake, such as x-nix/host.json`);
+  return path;
 }
 
 function secret_settings(entries: unknown, owner: string): SecretSettings[] {
