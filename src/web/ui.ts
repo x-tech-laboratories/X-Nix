@@ -118,8 +118,8 @@ export function toast(message: string, tone: "good" | "bad" | "info" = "info", l
 // ── Dialogs ──────────────────────────────────────────────────────────────────
 
 // Asks before an action that cannot be undone, running it while the dialog stays open.
-export function confirm_dialog(title: string, message: string, confirm_label: string, run: () => Promise<void>): void {
-  const dialog = h("dialog", { class: "dialog", "aria-labelledby": "dialog-title" });
+export function confirm_dialog(title: string, message: Child, confirm_label: string, run: () => Promise<void>, wide = false): void {
+  const dialog = h("dialog", { class: wide ? "dialog wide" : "dialog", "aria-labelledby": "dialog-title" });
   const close = () => {
     dialog.close();
     dialog.remove();
@@ -137,7 +137,7 @@ export function confirm_dialog(title: string, message: string, confirm_label: st
     }
   });
   dialog.addEventListener("close", () => dialog.remove());
-  dialog.append(h("h2", { id: "dialog-title" }, title), h("div", { class: "dialog-body" }, h("p", {}, message)), h("div", { class: "dialog-buttons" }, cancel, confirm));
+  dialog.append(h("h2", { id: "dialog-title" }, title), h("div", { class: "dialog-body" }, typeof message === "string" ? h("p", {}, message) : message), h("div", { class: "dialog-buttons" }, cancel, confirm));
   document.body.append(dialog);
   dialog.showModal();
   confirm.focus();

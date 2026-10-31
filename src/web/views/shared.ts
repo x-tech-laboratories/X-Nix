@@ -1,7 +1,10 @@
 // What every view hands the router, and what several views show the same way.
 
-import { api, type ActionOutcome, type ActionView, type Deployment, type EventRow, type FleetHostState, type FleetRunState, type Job, type Message } from "../api.ts";
-import { age, h, stamp, type Child } from "../dom.ts";
+import {
+  api, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type FleetHostState, type FleetRunState, type Job,
+  type Message, type PackageChange,
+} from "../api.ts";
+import { age, bytes, h, stamp, type Child } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, data_table, empty, job_badge, level_badge, status_badge, toast } from "../ui.ts";
 
@@ -113,6 +116,9 @@ export function events_list(events: EventRow[]): HTMLElement {
     h("span", { class: "event-message" }, event.message))));
 }
 
+// The actions that change the running or the booted system, whose confirmation shows what they change.
+const diffed_actions = new Set<ActionView["id"]>(["switch", "boot", "test"]);
+
 // A button that runs one of the deployment's actions, asking first where the action says to, then calls done.
 export function action_button(deployment: Deployment, action: ActionView, done: () => Promise<unknown>): HTMLElement {
   const run = async () => {
@@ -124,15 +130,79 @@ export function action_button(deployment: Deployment, action: ActionView, done: 
     }
     await done();
   };
-  return h("button", {
+  // A switch's confirmation first compares the running closure with the flake's, so the dialog shows the diff.
+  const confirm_with_diff = async (button: HTMLButtonElement) => {
+    button.disabled = true;
+    let body: Child;
+    try {
+      const outcome = await api<DiffOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/diff`, "POST", {});
+      body = outcome.diff === null || !outcome.diff.built
+        ? h("p", { class: "muted" }, outcome.message ?? "Nothing to compare.")
+        : diff_view(outcome.diff);
+    } catch (error) {
+      body = h("p", { class: "tone-bad" }, `Could not compare the closures: ${(error as Error).message}`);
+    } finally {
+      button.disabled = false;
+    }
+    confirm_dialog(`${action.label} ${deployment.name}`, [h("p", {}, action.confirm), body], action.label, run, true);
+  };
+  const button: HTMLButtonElement = h("button", {
     class: action.id === "reboot" ? "danger" : action.id === "switch" || action.id === "collect" ? "accent solid" : null,
     disabled: action.refusal !== null,
     title: action.refusal,
     onclick: () => {
       if (action.confirm === null) void run();
+      else if (diffed_actions.has(action.id)) void confirm_with_diff(button);
       else confirm_dialog(`${action.label} ${deployment.name}`, action.confirm, action.label, run);
     },
   }, action.label);
+  return button;
+}
+
+// ── Package diff ─────────────────────────────────────────────────────────────
+
+function size_change(delta: number | null): string {
+  if (delta === null || delta === 0) return "";
+  return `${delta > 0 ? "+" : "−"}${bytes(Math.abs(delta))}`;
+}
+
+function versions(list: string[]): string {
+  return list.length === 0 ? "∅" : list.map((version) => version || "ε").join(", ");
+}
+
+// What a switch would change: counts, the closure's size before and after, every changed package, and nix-diff's account.
+export function diff_view(diff: ClosureDiff): HTMLElement {
+  if (!diff.built) return empty("The flake's closure is not built on the host yet.", "Build it first to see what a switch changes; a switch builds it anyway.");
+  const rows: [kind: string, tone: string, change: PackageChange][] = [
+    ...diff.changed.map((change): [string, string, PackageChange] => ["changed", "info", change]),
+    ...diff.added.map((change): [string, string, PackageChange] => ["added", "good", change]),
+    ...diff.removed.map((change): [string, string, PackageChange] => ["removed", "bad", change]),
+  ];
+  const before = diff.closure_before_bytes;
+  const after = diff.closure_after_bytes;
+  const size = before !== null && after !== null ? `Closure ${bytes(before)} → ${bytes(after)} (${size_change(after - before) || "no change"})` : null;
+  return h("div", { class: "stack diff" },
+    h("div", { class: "change-summary" },
+      h("span", { class: "badge tone-info" }, `${diff.changed.length} changed`),
+      h("span", { class: "badge tone-good" }, `${diff.added.length} added`),
+      h("span", { class: "badge tone-bad" }, `${diff.removed.length} removed`),
+      diff.resized.length > 0 && h("span", { class: "badge tone-none" }, `${diff.resized.length} resized`),
+      size && h("span", { class: "muted small" }, size),
+    ),
+    rows.length > 0
+      ? data_table<[string, string, PackageChange]>([
+        { label: "Package", cell: ([, , change]) => h("code", {}, change.name) },
+        { label: "Change", cell: ([kind, tone]) => h("span", { class: `tone-${tone}` }, kind) },
+        { label: "Versions", cell: ([, , change]) => `${versions(change.from)} → ${versions(change.to)}` },
+        { label: "Size", class: "number", cell: ([, , change]) => size_change(change.size_delta_bytes) },
+      ], rows, "Package changes")
+      : h("p", { class: "muted" }, "No package changed version."),
+    diff.derivation_diff && h("details", { class: "command" }, h("summary", {}, "Derivation differences (nix-diff)"), h("pre", { class: "output" }, diff.derivation_diff)),
+    diff.note && h("p", { class: "muted small" }, diff.note),
+    diff.error && h("p", { class: "tone-bad" }, diff.error),
+    h("p", { class: "muted small" }, "Compared ", h("span", { title: stamp(diff.checked_epoch) }, age(diff.checked_epoch)),
+      diff.job_id === null ? null : [" in ", h("a", { href: link(["jobs", String(diff.job_id)]) }, `diff #${diff.job_id}`)]),
+  );
 }
 
 // A length of time in words, such as "3m 20s".

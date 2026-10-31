@@ -7,6 +7,7 @@ import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
 import { boot_view, boots_view } from "./views/boot.ts";
 import { builds_view } from "./views/builds.ts";
 import { cache_view, caches_view } from "./views/cache.ts";
+import { closure_view } from "./views/closure.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { fleet_run_view, fleet_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
@@ -28,7 +29,8 @@ let first_view = true;
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 function view_for(parts: string[]): View {
-  const [section, id] = parts;
+  const [section, id, page] = parts;
+  if (section === "deployments" && id && page === "closure") return closure_view(id);
   if (section === "deployments" && id) return deployment_view(id);
   if (section === "deployments") return deployments_view();
   if (section === "fleet" && id && /^\d+$/.test(id)) return fleet_run_view(Number(id));

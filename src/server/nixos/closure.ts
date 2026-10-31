@@ -219,6 +219,9 @@ function number(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+// The escape sequences nix colours its output with, built from the escape character so no control character is written.
+const colour_pattern = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 function strip_colours(text: string): string {
-  return text.replaceAll(/\u001b\[[0-9;]*m/g, "");
+  return text.replaceAll(colour_pattern, "");
 }

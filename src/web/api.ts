@@ -23,9 +23,11 @@ export interface Health {
 
 export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
-export type JobKind = "eval" | "update" | "build" | "switch" | "reboot" | "collect" | "check" | "build-target" | "push" | "next-boot" | "install" | "media" | "build-all";
+export type JobKind =
+  | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
+  | "build-all" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
-export type ActionId = "update" | "build" | "switch" | "reboot" | "collect";
+export type ActionId = "update" | "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
 
 export interface Message {
   level: EventLevel;
@@ -111,6 +113,68 @@ export interface Evaluation {
   drift_since_epoch: number | null;
   scheduled: Partial<Record<"update" | "build", number>>;
   last_collection: Collection | null;
+  last_diff: ClosureDiff | null;
+}
+
+export interface PackageChange {
+  name: string;
+  from: string[];
+  to: string[];
+  size_delta_bytes: number | null;
+}
+
+export interface ClosureDiff {
+  from: string;
+  to: string;
+  checked_epoch: number;
+  job_id: number | null;
+  built: boolean;
+  added: PackageChange[];
+  removed: PackageChange[];
+  changed: PackageChange[];
+  resized: PackageChange[];
+  closure_before_bytes: number | null;
+  closure_after_bytes: number | null;
+  derivation_diff: string | null;
+  note: string | null;
+  error: string | null;
+}
+
+export interface DiffOutcome {
+  diff: ClosureDiff | null;
+  message: string | null;
+}
+
+export interface Generation {
+  generation: number;
+  created_epoch: number | null;
+  path: string;
+  version: string | null;
+  current: boolean;
+  booted: boolean;
+  profile: boolean;
+}
+
+export interface ClosurePath {
+  path: string;
+  nar_size: number;
+  closure_size: number;
+  references: number[];
+}
+
+export interface ClosureTree {
+  root: string;
+  paths: ClosurePath[];
+}
+
+// A build's live progress, as the server reads it from nix's structured log.
+export interface BuildProgress {
+  builds_done: number;
+  builds_failed: number;
+  builds_expected: number | null;
+  downloads_done: number;
+  downloads_expected: number | null;
+  activities: Record<string, { type: number; name: string; phase: string | null }>;
 }
 
 export interface Job {
@@ -123,6 +187,7 @@ export interface Job {
   exit_code: number | null;
   error: string | null;
   progress: string | null;
+  live: string | null;
   trigger: string;
   started_epoch: number;
   finished_epoch: number | null;
@@ -161,6 +226,16 @@ export interface Deployment {
   running_job: Job | null;
   actions: ActionView[];
   next_boot_refusal: string | null;
+  safety: {
+    pre_switch_checks: string[];
+    magic_rollback: boolean;
+    activation_timeout: number;
+    confirm_timeout: number;
+    health_commands: string[];
+    health_urls: string[];
+    health_period: number;
+    health_timeout: number;
+  };
 }
 
 export type FleetActionId = "update" | "build" | "switch" | "reboot";

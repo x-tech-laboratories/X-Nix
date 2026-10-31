@@ -516,6 +516,9 @@ a.tile:hover { border-top-color: var(--border-hover); border-right-color: var(--
 .tree-children { display: grid; gap: var(--space-1); margin-left: var(--space-2); padding-left: var(--space-6); border-left: var(--border-width) solid var(--border-default); }
 .tree-file { display: flex; gap: var(--space-4); align-items: baseline; padding: var(--space-1) 0 var(--space-1) var(--space-6); flex-wrap: wrap; }
 .tree-name { font-family: var(--font-family-monospace); font-size: var(--text-caption); overflow-wrap: anywhere; }
+.closure-sizes { margin-left: var(--space-4); font-variant-numeric: tabular-nums; }
+.activities { list-style: none; padding: 0; margin: var(--space-5) 0 0; display: grid; gap: var(--space-2); font-size: var(--text-control); }
+.activities li { display: flex; gap: var(--space-4); align-items: baseline; flex-wrap: wrap; }
 
 /* ── Config forms ─────────────────────────────────────────────────────────── */
 

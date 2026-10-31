@@ -1,11 +1,12 @@
 // The Deployments pages: every deployment as a card, and one deployment with its drift, actions, pin, jobs and events.
 
-import { api, type ActionOutcome, type Deployment, type EventRow, type Job } from "../api.ts";
+import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type Job } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
-import { crumbs, empty, facts, load, section, status_badge, toast } from "../ui.ts";
+import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import {
-  action_button, deployment_card, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tag_chips, tile,
+  action_button, deployment_card, diff_view, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tag_chips,
+  tile,
   type View,
 } from "./shared.ts";
 
@@ -56,6 +57,7 @@ export function deployment_view(id: string): View {
     return [
       tiles(deployment),
       section("Findings", messages_list(deployment.reading?.messages ?? [])),
+      changes_section(deployment, () => refresh(true)),
       section("Details", details(deployment)),
       section("Pin", pin_form(deployment, () => refresh(true))),
       section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
@@ -69,7 +71,18 @@ export function deployment_view(id: string): View {
     await refresh(true);
   };
 
+  // Generations are read from the host on demand rather than every refresh.
+  const generations = h("div");
+  const load_generations = (quiet: boolean) => load(generations, async () => {
+    const answer = await api<{ generations: Generation[] }>(`/api/deployments/${encodeURIComponent(id)}/generations`);
+    return generations_table(id, answer.generations, async () => {
+      await refresh(true);
+      await load_generations(true);
+    });
+  }, { quiet });
+
   void refresh(false);
+  void load_generations(false);
   const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
 
   return {
@@ -78,6 +91,7 @@ export function deployment_view(id: string): View {
       crumbs([["Deployments", link(["deployments"])], [id, null]]),
       h("header", { class: "page-head" }, h("div", { class: "card-head" }, heading, badge), buttons),
       body,
+      section("Generations", generations, h("button", { onclick: () => void load_generations(false) }, "Read again")),
     ),
     dispose: () => clearInterval(timer),
   };
@@ -155,7 +169,76 @@ function details(deployment: Deployment): HTMLElement {
   }
   if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
   if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
+  rows.push(["Switch safety", safety_text(deployment)]);
+  if (reading?.current) rows.push(["Closure browser", h("a", { href: link(["deployments", deployment.id, "closure"]) }, "Browse the running closure")]);
   if (evaluation.eval_error) rows.push(["Evaluation error", h("pre", { class: "output" }, evaluation.eval_error)]);
   if (evaluation.metadata_error) rows.push(["Metadata error", h("pre", { class: "output" }, evaluation.metadata_error)]);
   return facts(rows, "rows");
+}
+
+// What guards a switch, in one line.
+function safety_text(deployment: Deployment): string {
+  const safety = deployment.safety;
+  const parts: string[] = [];
+  if (safety.pre_switch_checks.length > 0) parts.push(`${safety.pre_switch_checks.length} pre-switch check${safety.pre_switch_checks.length === 1 ? "" : "s"}`);
+  const health = safety.health_commands.length + safety.health_urls.length;
+  if (health > 0) parts.push(`${health} health check${health === 1 ? "" : "s"} every ${safety.health_period}s for up to ${safety.health_timeout}s`);
+  if (safety.magic_rollback) parts.push(`rolled back unless confirmed within ${safety.confirm_timeout}s of an activation that takes up to ${safety.activation_timeout}s`);
+  return parts.length === 0 ? "none; nixos-rebuild runs alone" : parts.join("; ");
+}
+
+// ── What a switch changes ────────────────────────────────────────────────────
+
+// The last package diff, when it compares the running closure with the flake's current one.
+function changes_section(deployment: Deployment, done: () => Promise<unknown>): HTMLElement | null {
+  const current = deployment.reading?.current ?? null;
+  const target = deployment.evaluation.target;
+  if (current === null || target === null || current === target) return null;
+  const diff = deployment.evaluation.last_diff;
+  const compare = async () => {
+    toast("Comparing the running closure with the flake's…");
+    try {
+      const outcome = await api<DiffOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/diff`, "POST", { force: true });
+      if (outcome.message !== null) toast(outcome.message);
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
+    await done();
+  };
+  const fresh = diff !== null && diff.from === current && diff.to === target;
+  return section("What a switch changes",
+    fresh ? diff_view(diff) : empty("Not compared yet.", "Compare the running closure with the flake's, or a Build on the host compares them once it ends."),
+    h("button", { onclick: () => void compare() }, fresh ? "Compare again" : "Compare now"));
+}
+
+// ── Generations ──────────────────────────────────────────────────────────────
+
+function generations_table(id: string, generations: Generation[], done: () => Promise<unknown>): HTMLElement {
+  if (generations.length === 0) return empty("No generations read.");
+  const roll_back = (generation: Generation) => confirm_dialog(
+    `Roll back to generation ${generation.generation}`,
+    `Activate generation ${generation.generation} and boot it from now on? The rollback is kept in the job history.`,
+    "Roll back",
+    async () => {
+      try {
+        const outcome = await api<ActionOutcome>(`/api/deployments/${encodeURIComponent(id)}/rollback`, "POST", { generation: generation.generation });
+        toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
+      } catch (error) {
+        toast((error as Error).message, "bad");
+      }
+      await done();
+    },
+  );
+  return data_table<Generation>([
+    { label: "Generation", class: "number", cell: (generation) => String(generation.generation) },
+    { label: "Created", cell: (generation) => (generation.created_epoch ? h("span", { title: stamp(generation.created_epoch) }, age(generation.created_epoch)) : "—") },
+    { label: "Version", cell: (generation) => generation.version ?? "—" },
+    { label: "State", cell: (generation) => h("span", { class: "chips" },
+      generation.current && h("span", { class: "badge tone-good" }, "running"),
+      generation.booted && h("span", { class: "badge tone-info" }, "booted"),
+      generation.profile && h("span", { class: "badge tone-none" }, "default")) },
+    { label: "Actions", class: "actions-cell", cell: (generation) => h("span", { class: "row-actions" },
+      h("a", { class: "button", href: link(["deployments", id, "closure"], { generation: generation.generation }) }, "Closure"),
+      generation.current && generation.profile ? null : h("button", { class: "danger", onclick: () => roll_back(generation) }, "Roll back")) },
+  ], generations, "Generations");
 }
