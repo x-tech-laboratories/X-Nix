@@ -45,6 +45,11 @@
     "stages": ["@canary", "@servers"],
     "sync_timeout": "30m"
   },
+  "inventory": {
+    "flake": "github:example/nixos-config",
+    "file": "inventory.json",
+    "push_ssh_key": "/var/lib/x-nix/deploy_key"
+  },
   "caches": [
     {
       "id": "fleet-cache",

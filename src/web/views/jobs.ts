@@ -4,7 +4,7 @@ import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts
 import { age, h, stamp } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { crumbs, empty, facts, job_badge, load, section } from "../ui.ts";
-import { job_owner_link, jobs_table, refresh_interval_in_milliseconds, tile, type View } from "./shared.ts";
+import { jobs_table, owner_link, refresh_interval_in_milliseconds, tile, type View } from "./shared.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ export function job_view(id: number): View {
     if (job.state !== "running") clearInterval(timer);
     return [
       facts([
-        ["For", h("a", { href: job_owner_link(job) }, job.deployment_id)],
+        ["For", owner_link(job)],
         ["State", job_badge(job.state)],
         ["Started", h("span", { title: stamp(job.started_epoch) }, age(job.started_epoch))],
         ["Finished", job.finished_epoch ? h("span", { title: stamp(job.finished_epoch) }, age(job.finished_epoch)) : "—"],

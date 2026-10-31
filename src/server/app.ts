@@ -12,6 +12,7 @@ import { register_agent_route } from "./agents/route.ts";
 import { register_auth } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import type { Catalog, CatalogInfo } from "./catalog.ts";
+import type { Inventory, InventoryView, Machine } from "./inventory.ts";
 import { simple_kind, type Configurator, type SettingValue, type SimpleKind } from "./configurator.ts";
 import { option_path, type OptionEntry, type OptionSource } from "./nixos/options.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
@@ -54,6 +55,8 @@ export interface app_options {
   // Each deployment's option and package lists, and the form that commits options; their routes answer 404 without them.
   catalogs?: Map<string, Catalog>;
   configurators?: Map<string, Configurator>;
+  // The fleet's inventory file; its routes answer as unconfigured without it.
+  inventory?: Inventory;
 }
 
 // An option as the page shows it, with how the form sets it, or null when the form leaves it alone.
@@ -531,6 +534,20 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (value !== null && typeof value !== "boolean" && typeof value !== "number" && typeof value !== "string") return reply.code(400).send({ error: "The value must be true, false, a number, text or null" });
     const outcome = await configurator.set(option, value as SettingValue | null, "manual");
     if (outcome.ok && outcome.job_id !== null) void poller.refresh(configurator.deployment);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // ── Inventory ────────────────────────────────────────────────────────────
+
+  app.get("/api/inventory", async (): Promise<InventoryView> => options.inventory?.view() ?? {
+    configured: false, flake: null, file: null, refusal: "No inventory is configured", present: false, machines: [], hash: null, error: null, suggestions: [],
+  });
+
+  // Commits the machines, refused when the file changed since the page read it.
+  app.post<{ Body: { machines?: unknown; hash?: unknown } }>("/api/inventory", async (request, reply) => {
+    if (options.inventory === undefined) return reply.code(404).send({ error: "No inventory is configured" });
+    if (typeof request.body?.hash !== "string") return reply.code(400).send({ error: "Send the hash the inventory was read with as `hash`" });
+    const outcome = await options.inventory.save(request.body.machines as Machine[], request.body.hash, "manual");
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 

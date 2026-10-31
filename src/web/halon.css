@@ -564,6 +564,9 @@ a.tile:hover { border-top-color: var(--border-hover); border-right-color: var(--
 .option-description { white-space: pre-line; margin: 0 0 var(--space-4); }
 .option-form { display: flex; gap: var(--space-4); align-items: end; flex-wrap: wrap; margin-top: var(--space-4); }
 .option-form pre { flex-basis: 100%; }
+.chips .chip button.link { margin-left: var(--space-2); color: inherit; }
+.inventory-adder { display: inline-flex; gap: var(--space-2); align-items: center; }
+input.inventory-add { width: 140px; }
 
 /* ── Access ───────────────────────────────────────────────────────────────── */
 
