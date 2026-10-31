@@ -13,6 +13,7 @@ import { fleet_run_view, fleet_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
 import { provision_view } from "./views/provision.ts";
+import { secrets_list_view, secrets_view } from "./views/secrets.ts";
 import { store_view, stores_view } from "./views/store.ts";
 import type { View } from "./views/shared.ts";
 import "./halon-tokens.css";
@@ -45,6 +46,8 @@ function view_for(parts: string[]): View {
   if (section === "boot" && id) return boot_view(id);
   if (section === "boot") return boots_view();
   if (section === "provision") return provision_view();
+  if (section === "secrets" && id) return secrets_view(id);
+  if (section === "secrets") return secrets_list_view();
   return overview_view();
 }
 

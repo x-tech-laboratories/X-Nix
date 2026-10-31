@@ -119,6 +119,8 @@ export interface DeploymentOptions {
   now?: () => number;
   // Fetches a health check's URL, answering null when it passed or why it failed; tests set it.
   http_check?: (url: string) => Promise<string | null>;
+  // Called once a switch has succeeded, such as to upload the host's secrets again.
+  after_switch?: (deployment: Deployment) => void;
 }
 
 // What a request for the package diff answers: the diff, or why there is none.
@@ -162,6 +164,7 @@ export class Deployment {
   private readonly store: Store;
   private readonly agents: AgentPool;
   private readonly now: () => number;
+  private readonly after_switch: ((deployment: Deployment) => void) | null;
   // Set when a job ends or the running closure changes, so the next cycle evaluates at once.
   private force_eval = false;
   // The target an automatic switch is due for on the next cycle.
@@ -180,6 +183,7 @@ export class Deployment {
     this.agents = options.agents;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
     this.http_check = options.http_check ?? fetch_check;
+    this.after_switch = options.after_switch ?? null;
   }
 
   get id(): string {
@@ -770,6 +774,8 @@ export class Deployment {
     this.store.add_event(this.id, this.now(), event.level, event.text);
     // A build on the host itself is compared with the running system at once, so the page shows what a switch changes.
     if (job.kind === "build" && finished.state === "succeeded" && this.agent_for("build") === this.settings.host) await this.compute_diff(false, "schedule");
+    // Whatever account a key belongs to may have just appeared, so an activation that stood lets the secrets follow.
+    if (finished.state === "succeeded" && (job.kind === "switch" || job.kind === "test" || job.kind === "rollback")) this.after_switch?.(this);
   }
 
   // Reads a finished switch's marker lines, giving its job the reason it was refused or rolled back; null when plain.

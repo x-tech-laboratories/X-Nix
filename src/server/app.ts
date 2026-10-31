@@ -23,6 +23,7 @@ import { agent_snippet, media_formats, parse_install_request, type MediaFormat }
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import type { BuildRecord, EventRow, Job, JobKind, Store } from "./store.ts";
 import { register_webhook_route, type Webhook } from "./webhook.ts";
+import type { Secrets, SecretsReading } from "./secrets.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,8 @@ export interface app_options {
   fleet?: Fleet;
   // Takes pushes on /api/webhook; the route answers 404 without it.
   webhook?: Webhook;
+  // Uploads each deployment's secrets; the secrets routes answer 404 without it.
+  secrets?: Secrets;
 }
 
 export interface ProvisioningView {
@@ -132,6 +135,15 @@ export interface FleetView {
   sync_timeout: number;
   tags: string[];
   runs: FleetRun[];
+}
+
+// A deployment's secrets as the Secrets page lists them, with names, paths and owners but never a value.
+export interface SecretsView {
+  id: string;
+  name: string;
+  host: string | null;
+  count: number;
+  reading: SecretsReading | null;
 }
 
 export interface CacheView {
@@ -373,6 +385,48 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/stop", async (request, reply) => {
     const outcome = await fleet.stop(Number(request.params.id));
     return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
+  });
+
+  // ── Secrets ──────────────────────────────────────────────────────────────
+
+  const secrets_view = (deployment: Deployment): SecretsView => ({
+    id: deployment.id, name: deployment.settings.name, host: deployment.settings.host, count: deployment.settings.secrets.length,
+    reading: options.secrets?.reading(deployment) ?? null,
+  });
+
+  const find_secrets = (id: string, reply: FastifyReply): { deployment: Deployment; secrets: Secrets } | null => {
+    const deployment = find(id, reply);
+    if (deployment === null) return null;
+    if (options.secrets === undefined) {
+      void reply.code(404).send({ error: "Secrets are not served here" });
+      return null;
+    }
+    return { deployment, secrets: options.secrets };
+  };
+
+  app.get("/api/secrets", async (): Promise<SecretsView[]> => [...poller.deployments.values()].filter((deployment) => deployment.settings.secrets.length > 0).map(secrets_view));
+
+  // The last check of the deployment's secrets, checking now when there has been none.
+  app.get<{ Params: { id: string } }>("/api/deployments/:id/secrets", async (request, reply) => {
+    const found = find_secrets(request.params.id, reply);
+    if (found === null) return reply;
+    if (found.secrets.reading(found.deployment) === null && found.deployment.settings.secrets.length > 0) await found.secrets.check(found.deployment);
+    return secrets_view(found.deployment);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/deployments/:id/secrets/check", async (request, reply) => {
+    const found = find_secrets(request.params.id, reply);
+    if (found === null) return reply;
+    await found.secrets.check(found.deployment);
+    return secrets_view(found.deployment);
+  });
+
+  // Uploads every secret of the deployment, whether or not the host already holds it.
+  app.post<{ Params: { id: string } }>("/api/deployments/:id/secrets/upload", async (request, reply) => {
+    const found = find_secrets(request.params.id, reply);
+    if (found === null) return reply;
+    const outcome = await found.secrets.upload(found.deployment, "manual");
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 
   // ── Caches ───────────────────────────────────────────────────────────────

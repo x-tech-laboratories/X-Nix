@@ -12,7 +12,7 @@ import type { RunResult } from "../shared/agent_protocol.ts";
 
 export interface RunOptions {
   timeout_in_seconds: number;
-  stdin?: string | null;
+  stdin?: string | Buffer | null;
 }
 
 export interface StreamOptions {
@@ -78,7 +78,7 @@ class BoundedBuffer {
 }
 
 // Its own process group, so stopping it stops the command's children too.
-function spawn_shell(command: string, stdin: string | null | undefined) {
+function spawn_shell(command: string, stdin: string | Buffer | null | undefined) {
   const child = spawn("sh", ["-c", command], { detached: true, stdio: [stdin == null ? "ignore" : "pipe", "pipe", "pipe"] });
   if (stdin != null) {
     child.stdin!.on("error", () => {});

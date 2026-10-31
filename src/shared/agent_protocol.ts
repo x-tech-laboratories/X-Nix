@@ -7,6 +7,10 @@
 // `challenge`, and the agent's hello carries its signature of that nonce (see agent_keys.ts). After its hello, an agent
 // that deployed from Git on its own sends `pulls`, and the server answers with `pulls_received` naming those it kept.
 
+// ── Imports ──────────────────────────────────────────────────────────────────
+
+import type { KeyState, KeyWrite } from "./keys.ts";
+
 // ── Version ──────────────────────────────────────────────────────────────────
 
 export const protocol_version = 1;
@@ -69,6 +73,8 @@ export interface Requests {
   stop: { body: { run_id: string }; reply: LongRun };
   forget: { body: { run_id: string }; reply: null };
   runs: { body: Record<never, never>; reply: LongRun[] };
+  write_key: { body: KeyWrite; reply: RunResult };
+  check_keys: { body: { destinations: string[]; salt: string; sudo: boolean }; reply: KeyState[] };
 }
 
 export type RequestType = keyof Requests;
@@ -98,7 +104,7 @@ export type AgentMessage =
 
 // ── Checking ─────────────────────────────────────────────────────────────────
 
-type FieldKind = "string" | "number" | "string_or_null" | "array" | "any";
+type FieldKind = "string" | "number" | "boolean" | "string_or_null" | "array" | "any";
 
 const id_fields = { id: "string" } as const;
 const run_fields = { ...id_fields, run_id: "string" } as const;
@@ -110,6 +116,8 @@ const server_fields: Record<ServerMessage["type"], Record<string, FieldKind>> = 
   stop: run_fields,
   forget: run_fields,
   runs: id_fields,
+  write_key: { ...id_fields, destination: "string", owner: "string", group: "string", mode: "string", content_base64: "string", sudo: "boolean" },
+  check_keys: { ...id_fields, destinations: "array", salt: "string", sudo: "boolean" },
   ping: { epoch_ms: "number" },
   pong: { epoch_ms: "number" },
   challenge: { nonce: "string" },

@@ -98,6 +98,7 @@ whose agent is not connected reads as unreachable.
 | `boot`              | `true`                            | Read the host's boot entries, and let the Boot page set the next boot. |
 | `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
 | `pin`               | none                              | A commit hash or tag that evaluation, build and switch use instead of the branch head. |
+| `secrets`           | none                              | Keys uploaded to the host outside the Nix store; see Secrets.        |
 
 ### Pins
 
@@ -168,6 +169,40 @@ and the one-shot next entry. The Boot page sets the next boot with the loader's 
 (`bootctl set-oneshot`, `grub-reboot` or `efibootmgr --bootnext`), and can reboot into it at once.
 Reading `/boot` usually needs root, so the read tries `sudo -n` first and falls back to reading
 unprivileged.
+
+### Secrets
+
+`secrets` lists keys X-Nix uploads to the host outside the Nix store, into `/run/keys`, which
+NixOS keeps in memory. Each value stays in its source file on the X-Nix server, which is read only
+to upload or check it and is never stored, logged or shown: it travels to the host inside one
+agent request, and the agent's key writer takes it on stdin and puts it in place with its owner,
+group and mode. The Secrets page shows each key's name, size, destination, owner and mode, and
+whether the host holds it current, missing or stale, by comparing a freshly salted hash of each
+side. Upload all writes every key; X-Nix also uploads whatever is missing or stale after every
+successful switch, whenever a host's agent connects (so after a reboot, which empties
+`/run/keys`), and for the server's own host when X-Nix starts. Each upload is a `secrets` job.
+
+| Setting       | Default              | Meaning                                                  |
+| ------------- | -------------------- | -------------------------------------------------------- |
+| `name`        | required             | Letters, digits, `.`, `-` and `_`.                       |
+| `source`      | required             | The file on the X-Nix server holding the value.          |
+| `destination` | `/run/keys/<name>`   | Where it is written; a plain path under `/run/keys`.     |
+| `owner`       | `root`               | The file's owner.                                        |
+| `group`       | `root`               | The file's group.                                        |
+| `mode`        | `0400`               | The file's permission bits.                              |
+
+The writer runs under `sudo -n` unless `require_sudo` is off. Declaring the keys on the host with
+`services.x-nix-agent.keys` (or `services.x-nix.keys` on the server's own host) lets the service
+user run exactly that writer as root, and gives each key a `<name>-key.service` that finishes once
+the file is there, so a service waits for its key with `after` and `wants`:
+
+```nix
+services.x-nix-agent.keys.database = { };  # /run/keys/database
+systemd.services.postgresql = {
+  after = [ "database-key.service" ];
+  wants = [ "database-key.service" ];
+};
+```
 
 ## Fleet
 
@@ -356,7 +391,8 @@ whose `provisioning` takes the Provisioning settings, whose `agents` takes each 
 `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook. Both modules put
 nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
 `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`, and pull mode under `pull`
-with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs` and `requireSudo`:
+with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs` and `requireSudo`. Both take `keys`, the
+secrets X-Nix uploads to that host (see Secrets):
 
 ```nix
 services.x-nix = {

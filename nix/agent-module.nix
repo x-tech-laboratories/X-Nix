@@ -29,10 +29,23 @@ let
     rebuild_args = cfg.pull.rebuildArgs;
     require_sudo = cfg.pull.requireSudo;
   };
+
+  key_support = import ./keys.nix { inherit lib pkgs; };
+
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
 in
 {
+  # The key units and the writer's sudo rule, apart from the service, for a host that declares keys.
+  imports = [
+    {
+      config = mkIf (cfg.enable && cfg.keys != { }) {
+        systemd.services = key_support.units cfg.keys;
+        security.sudo.extraRules = [ (key_support.sudo_rule "x-nix-agent" key_support.writer) ];
+      };
+    }
+  ];
+
   options.services.x-nix-agent = {
     enable = mkEnableOption "the X-Nix agent, which reads, builds and switches this host for an X-Nix server";
 
@@ -69,6 +82,8 @@ in
       defaultText = literalExpression "lib.toLower config.networking.hostName";
       description = "The host the agent logs in as, which must be its name in the server's config.";
     };
+
+    keys = key_support.option;
 
     path = mkOption {
       type = types.listOf (types.either types.package types.str);
@@ -181,6 +196,7 @@ in
         X_NIX_AGENT_HOST = cfg.host;
         X_NIX_AGENT_KEY_FILE = "${credentials_directory}/key";
         X_NIX_AGENT_STATE_DIR = state_directory;
+        X_NIX_KEY_WRITER = toString key_support.writer;
         HOME = state_directory;
         # Node keeps its own CA list, so the system bundle, which holds security.pki.certificates, is added to it.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";

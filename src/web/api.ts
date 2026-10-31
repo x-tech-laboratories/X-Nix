@@ -25,7 +25,7 @@ export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 export type JobKind =
   | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
-  | "build-all" | "push" | "next-boot" | "install" | "media";
+  | "build-all" | "push" | "next-boot" | "install" | "media" | "secrets";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
 
@@ -371,6 +371,30 @@ export interface EventRow {
   epoch: number;
   level: EventLevel;
   message: string;
+}
+
+export type KeyCondition = "current" | "stale" | "missing" | "unknown";
+
+// One secret with where it goes and whether the host holds it, never its value.
+export interface SecretView {
+  name: string;
+  source: string;
+  destination: string;
+  owner: string;
+  group: string;
+  mode: string;
+  source_size: number | null;
+  source_error: string | null;
+  on_host: KeyCondition;
+  difference: string | null;
+}
+
+export interface SecretsView {
+  id: string;
+  name: string;
+  host: string | null;
+  count: number;
+  reading: { checked_epoch: number; error: string | null; secrets: SecretView[] } | null;
 }
 
 // A host with a declared agent key, and its agent when connected.

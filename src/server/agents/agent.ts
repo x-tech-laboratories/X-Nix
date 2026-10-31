@@ -3,8 +3,10 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { LongRun, LongRunPoll, RunResult } from "../../shared/agent_protocol.ts";
+import type { KeyState, KeyWrite } from "../../shared/keys.ts";
 
 export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared/agent_protocol.ts";
+export type { KeyState, KeyWrite } from "../../shared/keys.ts";
 
 // ── Agent ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,10 @@ export interface Agent {
   poll(run_id: string, offset: number): Promise<LongRunPoll>;
   // Removes an ended long run's output from the host.
   forget(run_id: string): Promise<void>;
+  // Writes one key on the host from contents that travel only inside this request; rejects with an AgentError.
+  write_key(request: KeyWrite): Promise<RunResult>;
+  // Whether each key is on the host, its contents hashed after the salt; rejects with an AgentError.
+  check_keys(destinations: string[], salt: string, sudo: boolean): Promise<KeyState[]>;
 }
 
 // ── Pool ─────────────────────────────────────────────────────────────────────
@@ -54,6 +60,14 @@ class MissingAgent implements Agent {
   }
 
   async forget(): Promise<void> {}
+
+  async write_key(): Promise<RunResult> {
+    throw new AgentError(this.message, true);
+  }
+
+  async check_keys(): Promise<KeyState[]> {
+    throw new AgentError(this.message, true);
+  }
 }
 
 // The agents by host name; the server's own host is served by its built-in agent.
