@@ -23,7 +23,7 @@ async function start_app(harness: Harness = make_deployment(), caches: Cache[] =
   const server = app;
   return {
     server,
-    inject: (method: "GET" | "POST", url: string) => server.inject({ method, url, headers: { cookie } }),
+    inject: (method: "GET" | "POST", url: string, payload?: object) => server.inject({ method, url, headers: { cookie }, payload }),
   };
 }
 
@@ -57,7 +57,7 @@ describe("/api/deployments", () => {
     const [deployment] = (await inject("GET", "/api/deployments")).json<DeploymentView[]>();
 
     expect(deployment.id).toBe("host-deploy");
-    expect(deployment.actions.map((action) => action.id)).toEqual(["update", "build", "switch", "reboot", "collect"]);
+    expect(deployment.actions.map((action) => action.id)).toEqual(["update", "build", "switch", "reboot", "collect", "boot", "test", "dry-activate"]);
     expect(deployment.actions[0].refusal).toContain("push_ssh_key");
     expect(deployment.actions[3].confirm).toContain("Reboot");
     expect(deployment.actions[4].confirm).toContain("Collect garbage");
@@ -147,6 +147,32 @@ describe("/api/deployments/:id/next-boot", () => {
 });
 
 // ── Caches ───────────────────────────────────────────────────────────────────
+
+describe("rollback, generations and closures", () => {
+  const generations = result(0, "current\t/nix/store/b-system\nprofile\tsystem-2-link\ngeneration\tsystem-1-link\t1\t/nix/store/a-system\t\ngeneration\tsystem-2-link\t2\t/nix/store/b-system\t\n");
+
+  it("lists generations and rolls back to one, refusing a malformed request", async () => {
+    const harness = make_deployment();
+    harness.agent.answers.push(["profiles/system-*-link", generations]);
+    const { inject } = await start_app(harness);
+
+    const listed = (await inject("GET", "/api/deployments/host-deploy/generations")).json<{ generations: { generation: number }[] }>();
+    const bad = await inject("POST", "/api/deployments/host-deploy/rollback", { generation: "one" });
+    const started = await inject("POST", "/api/deployments/host-deploy/rollback", { generation: 1, reason: "broken wifi" });
+
+    expect(listed.generations.map((generation) => generation.generation)).toEqual([2, 1]);
+    expect(bad.statusCode).toBe(400);
+    expect(started.statusCode).toBe(200);
+    expect(harness.deployment.running_job()?.command).toContain("broken wifi");
+  });
+
+  it("refuses a closure for a generation that is not a number", async () => {
+    const { inject } = await start_app();
+
+    expect((await inject("GET", "/api/deployments/host-deploy/closure?generation=1;rm")).statusCode).toBe(400);
+    expect((await inject("GET", "/api/deployments/host-deploy/closure")).statusCode).toBe(502);
+  });
+});
 
 describe("/api/caches", () => {
   it("lists each cache with its targets, and starts a build on one", async () => {

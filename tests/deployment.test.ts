@@ -721,3 +721,167 @@ describe("daily jobs", () => {
     expect(latest_slot({ hour: 0, minute: 30 }, one_am)).toBe(new Date(2026, 9, 10, 0, 30).getTime() / 1000);
   });
 });
+
+// ── Safer switches ───────────────────────────────────────────────────────────
+
+describe("safer switches", () => {
+  const guarded = { magic_rollback: true, health_urls: ["https://host.example/health"], health_timeout: "2m" };
+
+  // Starts a guarded switch and has it print that it awaits confirmation.
+  async function awaiting(values: Record<string, unknown> = guarded, http_check: (url: string) => Promise<string | null> = async () => null) {
+    const harness = make_deployment(values, { http_check });
+    await harness.deployment.act("switch");
+    const run = harness.agent.last_run("x-nix-switch")!;
+    harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
+    return { harness, run };
+  }
+
+  it("runs each mode as its own job, and dry activation unguarded", async () => {
+    const harness = make_deployment(guarded);
+
+    await harness.deployment.act("dry-activate");
+
+    const job = harness.deployment.running_job()!;
+    expect(job.kind).toBe("dry-activate");
+    expect(job.command).toBe("sudo -n nixos-rebuild dry-activate --flake /etc/nixos");
+  });
+
+  it("confirms a switch once its HTTP checks pass, and only once", async () => {
+    const { harness } = await awaiting();
+
+    await cycle(harness);
+    await cycle(harness);
+
+    expect(harness.agent.commands.filter((command) => command.includes("/confirmed"))).toHaveLength(1);
+    expect(harness.store.job(harness.deployment.running_job()!.id)!.output).toContain("confirmed the switch");
+  });
+
+  it("polls a guarded switch every health_period", async () => {
+    const { harness } = await awaiting({ ...guarded, health_period: "3s" });
+
+    expect(harness.deployment.poll_interval()).toBe(3);
+  });
+
+  it("waits for a failing HTTP check, then tells the watchdog to roll back with why", async () => {
+    const { harness } = await awaiting(guarded, async () => "answered 502 Bad Gateway");
+
+    await cycle(harness);
+    expect(harness.agent.commands.some((command) => command.includes("rollback.part"))).toBe(false);
+    clock.now += 121;
+    await cycle(harness);
+    clock.now -= 121;
+
+    const signal = harness.agent.commands.find((command) => command.includes("rollback.part"))!;
+    expect(signal).toContain("HTTP health check failed: https://host.example/health: answered 502 Bad Gateway");
+    expect(harness.agent.commands.some((command) => command.includes("/confirmed"))).toBe(false);
+  });
+
+  it("records why a switch was rolled back", async () => {
+    const { harness, run } = await awaiting();
+    harness.agent.end(run, "@@x-nix-switch outcome rolled-back Health check 1 (curl) failed with status 7\n", 1);
+
+    await cycle(harness);
+
+    const job = harness.store.jobs()[0];
+    expect(job.error).toBe("Rolled back to the previous system: Health check 1 (curl) failed with status 7");
+    expect(harness.store.events(harness.deployment.id)[0].message).toContain("Switch rolled back to the previous system: Health check 1");
+  });
+
+  it("records a refusal by a pre-switch check", async () => {
+    const harness = make_deployment({ pre_switch_checks: ["test -d /boot"] });
+    await harness.deployment.act("boot");
+    harness.agent.end(harness.agent.last_run("pre-switch")!, "@@x-nix-switch refused Pre-switch check 1 (test -d /boot) failed with status 1\n", 3);
+
+    await cycle(harness);
+
+    expect(harness.store.jobs()[0]).toMatchObject({ kind: "boot", state: "failed", error: "Refused before anything changed: Pre-switch check 1 (test -d /boot) failed with status 1" });
+  });
+});
+
+// ── Rollback ─────────────────────────────────────────────────────────────────
+
+describe("rollback", () => {
+  const generations = result(0, [
+    "current\t/nix/store/b-system",
+    "booted\t/nix/store/b-system",
+    "profile\tsystem-2-link",
+    "generation\tsystem-1-link\t1700000000\t/nix/store/a-system\t26.05",
+    "generation\tsystem-2-link\t1700100000\t/nix/store/b-system\t26.11",
+  ].join("\n"));
+
+  it("activates an earlier generation as a job, recording why", async () => {
+    const harness = make_deployment();
+    harness.agent.answers.push(["profiles/system-*-link", generations]);
+
+    const outcome = await harness.deployment.roll_back(1, "the new kernel panics");
+
+    expect(outcome.ok).toBe(true);
+    const job = harness.deployment.running_job()!;
+    expect(job.kind).toBe("rollback");
+    expect(job.command).toContain("Rolling back to generation 1: the new kernel panics");
+    expect(job.command).toContain("--switch-generation 1");
+    expect(harness.store.events(harness.deployment.id)[0].message).toBe("Rolling back to generation 1: the new kernel panics");
+  });
+
+  it("refuses the running generation and one that does not exist", async () => {
+    const harness = make_deployment();
+    harness.agent.answers.push(["profiles/system-*-link", generations]);
+
+    expect((await harness.deployment.roll_back(2, "x")).message).toContain("already running");
+    expect((await harness.deployment.roll_back(9, "x")).message).toContain("not one of");
+    expect(harness.deployment.running_job()).toBeNull();
+  });
+});
+
+// ── Package diff ─────────────────────────────────────────────────────────────
+
+describe("package diff", () => {
+  const diff_output = result(0, "@@x-nix-diff closures\nhello: 2.11 → 2.12, +4.0 KiB\n@@x-nix-diff sizes\n{}\n@@x-nix-diff derivations\n");
+
+  it("compares the running closure with the flake's as a job, and reuses it for the same two", async () => {
+    const harness = make_deployment();
+    await collect(harness);
+    harness.agent.answers.push(["diff-closures", diff_output]);
+
+    const first = await harness.deployment.diff(false);
+    await harness.deployment.diff(false);
+
+    expect(first.diff?.changed.map((change) => change.name)).toEqual(["hello"]);
+    expect(harness.store.jobs({ kind: "diff" })).toHaveLength(1);
+    expect(harness.deployment.evaluation().last_diff?.job_id).toBe(first.diff?.job_id);
+  });
+
+  it("says the flake's closure is not built yet", async () => {
+    const harness = make_deployment();
+    await collect(harness);
+    harness.agent.answers.push(["diff-closures", result(0, "@@x-nix-diff missing\n")]);
+
+    const outcome = await harness.deployment.diff(false);
+
+    expect(outcome.diff?.built).toBe(false);
+    expect(outcome.message).toContain("not in the host's store yet");
+  });
+
+  it("has nothing to compare before an evaluation", async () => {
+    expect((await make_deployment().deployment.diff(false)).message).toContain("not been read");
+  });
+});
+
+// ── Live build progress ──────────────────────────────────────────────────────
+
+describe("live build progress", () => {
+  it("keeps a build's counts with its job and shows them as its progress", async () => {
+    const harness = make_deployment();
+    await harness.deployment.act("build");
+    const run = harness.agent.last_run("internal-json")!;
+    harness.agent.write(run, `@nix ${JSON.stringify({ action: "start", id: 5, type: 105, fields: ["/nix/store/dddddddddddddddddddddddddddddddd-hello-2.12.drv"] })}\n`
+      + `@nix ${JSON.stringify({ action: "result", id: 5, type: 101, fields: ["make"] })}\n`);
+
+    await cycle(harness);
+
+    const job = harness.store.job(harness.deployment.running_job()!.id)!;
+    expect(job.output).toBe("hello-2.12> make\n");
+    expect(job.progress).toBe("Built 0, building 1; downloaded 0");
+    expect(JSON.parse(job.live!).activities["5"].name).toBe("hello-2.12");
+  });
+});
