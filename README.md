@@ -74,7 +74,7 @@ whose agent is not connected reads as unreachable.
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
 | `switch_agent`      | the host                          | The host that runs update and switch.                                |
-| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build. |
+| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build; not with `pre_switch_checks`, `magic_rollback` or health checks. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
@@ -82,6 +82,15 @@ whose agent is not connected reads as unreachable.
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command the switch runs inside, outside sudo.                      |
 | `post_switch`       | none                              | A command run after the switch, which keeps the switch's status.     |
+| `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
+| `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
+| `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back.           |
+| `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
+| `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
+| `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
+| `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
+| `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |
+| `build_progress`    | `true`                            | Read Build's structured log into counts of what builds and downloads. |
 | `push_ssh_key`      | none                              | The key a `github:` flake's update pushes with.                      |
 | `commit_author`     | `X-Nix <x-nix@localhost>`         | The update commit's author.                                          |
 | `commit_message`    | `chore(flake): update inputs`     | The update commit's message.                                         |
@@ -98,6 +107,35 @@ builds and switches `github:owner/repo?rev=<commit>` (or `?ref=<tag>`), and for 
 `/etc/nixos` is read as `git+file://`. A `path:` or tarball flake cannot be pinned. The deployment's
 page shows the pin and sets another, follows the branch head again, or goes back to the settings'
 `pin`. Update Flake still updates the branch, and a pinned deployment ignores pushes.
+
+### Switches
+
+The deployment page offers nixos-rebuild's `switch`, `boot`, `test` and `dry-activate`. Before a
+switch, boot or test, the page compares the running system with the flake's closure on the host
+with `nix store diff-closures` and `nix path-info -S`, and shows the packages added, removed and
+changed and the closure's size before and after; when no package changed but the store paths
+differ, it shows `nix-diff`'s account of the derivations. The comparison runs as a job, and a Build
+on the host itself compares at once when it ends. When the flake's closure is not in the host's
+store yet, the page says so and the switch builds it. The Generations panel lists every generation
+of the system profile, rolls back to any of them as a job that records why, and opens the closure
+browser: a generation's dependency tree with each path's own and closure size, and its largest
+paths. A Build with `build_progress` shows what is building, downloading and done.
+
+A switch is guarded when `pre_switch_checks`, `health_commands`, `health_urls` or `magic_rollback`
+is set, and runs as one long run where it activates: on the switch agent, or over SSH on
+`target_host` as nixos-rebuild reaches it. The pre-switch checks run first, and the first to fail
+refuses the switch before anything changes. For `switch` and `test` it then starts a watchdog on
+that host in a session of its own, so it outlives the run, the agent and a lost connection. After
+the activation the health commands run every `health_period` until they pass, then X-Nix fetches
+the health URLs and, once they answer, confirms by touching a file in the watchdog's folder under
+`/tmp`. The watchdog rolls back to the previous system when the activation fails, outlasts
+`activation_timeout`, or a health check keeps failing for `health_timeout`, and, with
+`magic_rollback`, when no confirmation arrives within `confirm_timeout` (plus `health_timeout` when
+health checks are set). Without `magic_rollback` an unconfirmed switch is kept. Each refusal and
+rollback lands in the job and the events with its reason. On the server's own host the confirmation
+means the X-Nix server is still running after the switch, or came back up if the switch restarted it.
+While a guarded switch runs, X-Nix polls it every `health_period`, so keep `confirm_timeout` well
+above it.
 
 ### Store
 
@@ -355,7 +393,11 @@ run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --
 `/nix/store/*/bin/switch-to-configuration switch`, and for systemd-boot
 `/run/current-system/sw/bin/bootctl list --json=short` and
 `/run/current-system/sw/bin/bootctl set-oneshot *`, and for pull mode
-`/run/current-system/sw/bin/nixos-rebuild switch --flake git+*`.
+`/run/current-system/sw/bin/nixos-rebuild switch --flake git+*`. Rollbacks, and guarded switches that roll back,
+also run `/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --switch-generation *`,
+`/nix/var/nix/profiles/system/bin/switch-to-configuration switch` and
+`/nix/store/*-nixos-system-*/bin/switch-to-configuration *` under `sudo -n`. Both services carry
+`nix-diff` on their PATH for the derivation diff; a host without it says so on the page.
 
 ## License
 

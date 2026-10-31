@@ -19,7 +19,12 @@
       "auto_switch": true,
       "auto_switch_after": "30m",
       "tags": ["canary", "servers"],
-      "pin": "v2026.10"
+      "pin": "v2026.10",
+      "pre_switch_checks": ["test \"$(df --output=pcent /boot | tail -1 | tr -dc 0-9)\" -lt 90"],
+      "magic_rollback": true,
+      "confirm_timeout": "30s",
+      "health_commands": ["systemctl is-active --quiet nginx.service"],
+      "health_urls": ["https://server.example/health"]
     },
     {
       "id": "pi",
