@@ -498,7 +498,7 @@ describe("switch from cache", () => {
 
   it("waits for the cache to hold the new system before switching automatically", async () => {
     const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
-    const missing: [string, ReturnType<typeof result>] = ["path-info --store https://cache.example/fleet", result(1, "", "path is not valid")];
+    const missing: [string, ReturnType<typeof result>] = ["path-info --store https://cache.example/fleet --recursive", result(1, "", "path is not valid")];
     harness.agent.answers.push(missing);
     await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
     rewind_drift(harness, 1801);

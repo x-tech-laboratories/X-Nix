@@ -209,14 +209,14 @@ export function is_store_path(value: string): boolean {
 // Exits 0 only when the cache already holds the store path, so a switch from it can fetch it.
 export function cache_holds_command(settings: DeploymentSettings, store_path: string): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
-  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} ${shell_quote(store_path)} >/dev/null`;
+  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} --recursive ${shell_quote(store_path)} >/dev/null`;
 }
 
 export function switch_from_cache_command(settings: DeploymentSettings, store_path: string, mode: SwitchMode = "switch"): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const path = shell_quote(store_path);
   // The copy runs as the agent's user, as the daemon takes signed paths from anyone, so only activation needs sudo.
-  const steps = [`${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`];
+  const steps = [`${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`, `${nix(settings)} path-info --recursive ${path} >/dev/null`];
   // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
   if (mode === "switch" || mode === "boot") steps.push(`${sudo(settings)}nix-env -p ${system_profile} --set ${path}`);
   steps.push(`${sudo(settings)}${store_path}/bin/switch-to-configuration ${mode}`);

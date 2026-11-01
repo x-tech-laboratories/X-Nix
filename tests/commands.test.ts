@@ -118,6 +118,7 @@ describe("the switch from the cache", () => {
   it("fetches the closure, sets the system profile and activates it", () => {
     expect(switch_from_cache_command(settings(from_cache), current_closure)).toBe([
       `nix --extra-experimental-features 'nix-command flakes' copy --from https://cache.example/fleet ${current_closure}`,
+      `nix --extra-experimental-features 'nix-command flakes' path-info --recursive ${current_closure} >/dev/null`,
       `sudo -n nix-env -p /nix/var/nix/profiles/system --set ${current_closure}`,
       `sudo -n ${current_closure}/bin/switch-to-configuration switch`,
     ].join(" && "));
@@ -128,7 +129,7 @@ describe("the switch from the cache", () => {
 
     expect(activate("boot")).toContain(`--set ${current_closure} && sudo -n ${current_closure}/bin/switch-to-configuration boot`);
     expect(activate("test")).not.toContain("nix-env");
-    expect(activate("test")).toContain(`${current_closure} && sudo -n ${current_closure}/bin/switch-to-configuration test`);
+    expect(activate("test")).toContain(`${current_closure} >/dev/null && sudo -n ${current_closure}/bin/switch-to-configuration test`);
     expect(activate("dry-activate")).not.toContain("nix-env");
     expect(activate("dry-activate").endsWith("switch-to-configuration dry-activate")).toBe(true);
   });

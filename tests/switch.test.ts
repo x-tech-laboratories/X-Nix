@@ -55,7 +55,10 @@ function fake_host() {
     `if [ "$3" = --set ]; then ln -sfn "$4" ${join(profiles, "system-2-link")}; ln -sfn system-2-link ${join(profiles, "system")}`,
     `else ln -sfn "system-$4-link" ${join(profiles, "system")}; fi`,
   ].join("\n"));
-  write_program(join(bin, "nix"), `echo "nix $*" >> ${log}`);
+  write_program(join(bin, "nix"), [
+    `echo "nix $*" >> ${log}`,
+    'case "$*" in *path-info*) if [ -n "$PATH_INFO_FAILS" ]; then echo "error: path is not valid" >&2; exit 1; fi;; esac',
+  ].join("\n"));
   // Holds the inhibitor until its stdin closes, as systemd-inhibit running cat does.
   write_program(join(bin, "systemd-inhibit"), `echo "inhibit $*" >> ${log}\n[ -z "$INHIBIT_FAILS" ] || exit 1\ncat > /dev/null\necho released >> ${log}`);
   return {
@@ -311,6 +314,18 @@ describe("a guarded switch from the cache", () => {
     expect(host.read_log()).toContain("activate old test");
     expect(host.read_log()).not.toContain("nix-env");
     expect(host.profile()).toBe("system-1-link");
+  }, 20_000);
+
+  it("leaves the profile untouched when the copied closure is incomplete", async () => {
+    const host = fake_host();
+    const command = `PATH_INFO_FAILS=1; export PATH_INFO_FAILS\n${host.localise(switch_job_command(settings(from_cache), "switch", token(), target_closure))}`;
+
+    const run = await run_until(command, host.bin);
+
+    expect(run.status).toBe(1);
+    expect(switch_verdict(run.output).outcome?.kind).toBe("unchanged");
+    expect(host.profile()).toBe("system-1-link");
+    expect(host.read_log()).not.toContain("activate new switch");
   }, 20_000);
 });
 
