@@ -25,7 +25,7 @@ export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 export type EventLevel = "info" | "warning" | "error";
 export type JobKind =
   | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
-  | "build-all" | "push" | "next-boot" | "install" | "media" | "secrets" | "options" | "configure" | "inventory";
+  | "build-all" | "push" | "next-boot" | "install" | "media" | "secrets";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "update" | "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
 
@@ -371,66 +371,6 @@ export interface EventRow {
   epoch: number;
   level: EventLevel;
   message: string;
-}
-
-export type OptionSource = "nixos" | "home-manager";
-
-export type SimpleKind =
-  | { kind: "boolean" }
-  | { kind: "string" }
-  | { kind: "integer"; minimum: number | null; maximum: number | null }
-  | { kind: "enum"; choices: string[] };
-
-export type SettingValue = boolean | number | string;
-
-export interface OptionView {
-  name: string;
-  source: OptionSource;
-  type: string;
-  default: string | null;
-  example: string | null;
-  description: string;
-  declared_in: string[];
-  read_only: boolean;
-  form: SimpleKind | null;
-}
-
-export interface PackageEntry {
-  attribute: string;
-  name: string;
-  version: string;
-  description: string;
-}
-
-export interface CatalogInfo {
-  key: string;
-  nixpkgs: string;
-  revision: string | null;
-  generated_epoch: number;
-  counts: { nixos: number; home_manager: number; packages: number };
-  errors: string[];
-}
-
-export interface CatalogView {
-  id: string;
-  name: string;
-  host: string | null;
-  info: CatalogInfo | null;
-  running_job: Job | null;
-}
-
-export interface SearchAnswer<Entry> extends CatalogView {
-  total: number;
-  entries: Entry[];
-}
-
-export interface SettingsView {
-  file: string | null;
-  refusal: string | null;
-  present: boolean;
-  values: Record<string, SettingValue>;
-  import_line: string | null;
-  error: string | null;
 }
 
 export type KeyCondition = "current" | "stale" | "missing" | "unknown";

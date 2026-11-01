@@ -556,14 +556,6 @@ a.tile:hover { border-top-color: var(--border-hover); border-right-color: var(--
 .form-actions .danger { margin-left: auto; }
 .setting-value { display: flex; gap: var(--space-4); align-items: center; }
 .setting-value input { max-width: 240px; }
-.option-results { display: grid; }
-.option-result { padding: var(--space-4) 0; border-bottom: var(--border-width) solid var(--border-default); }
-.option-result:last-child { border-bottom: none; }
-.option-result > summary { flex-wrap: wrap; }
-.option-result[open] > summary { margin-bottom: var(--space-4); }
-.option-description { white-space: pre-line; margin: 0 0 var(--space-4); }
-.option-form { display: flex; gap: var(--space-4); align-items: end; flex-wrap: wrap; margin-top: var(--space-4); }
-.option-form pre { flex-basis: 100%; }
 
 /* ── Access ───────────────────────────────────────────────────────────────── */
 

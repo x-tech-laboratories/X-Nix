@@ -1,5 +1,6 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -13,8 +14,6 @@ import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { parse_duration } from "./durations.ts";
 import { Fleet } from "./fleet.ts";
-import { Catalog } from "./catalog.ts";
-import { Configurator } from "./configurator.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
@@ -39,6 +38,8 @@ const webhook_debounce = parse_duration(process.env.X_NIX_WEBHOOK_DEBOUNCE || "1
 
 const config: Config = config_path ? load_config(config_path) : parse_config({});
 const store = new Store(join(state_directory, "x-nix.sqlite"));
+// No feature keeps option lists under the state folder, so any left there go.
+await rm(join(state_directory, "options"), { recursive: true, force: true });
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
 const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
 // Every other host's agent dials in, and joins the pool once it proves its declared key.
@@ -73,14 +74,7 @@ hub.on_pulls = (host, pulls) => {
   for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
   return kept;
 };
-const catalogs = new Map(deployments.map((deployment) => [deployment.id, new Catalog(deployment, { store, agents, directory: join(state_directory, "options") })]));
-const configurators = new Map(deployments.map((deployment) => [deployment.id, new Configurator(deployment, { store, agents })]));
-// A generation nobody is watching is still fetched once it ends.
-const catalog_timer = setInterval(() => {
-  for (const catalog of catalogs.values()) if (catalog.running_job() !== null) void catalog.follow();
-}, 30_000);
-catalog_timer.unref();
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets, catalogs, configurators });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets });
 
 app.addHook("onClose", async () => {
   poller.stop();

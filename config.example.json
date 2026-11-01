@@ -5,7 +5,6 @@
       "name": "Workstation",
       "flake": "/etc/nixos",
       "configuration": "workstation",
-      "options_file": "hosts/workstation/x-nix.json",
       "max_input_age": "14d",
       "build_at": "03:00",
       "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 },
