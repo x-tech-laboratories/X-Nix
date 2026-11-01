@@ -1,8 +1,6 @@
 // A scripted agent and deployment for the tests: the probe answers what a test sets, and long runs end when it says.
 
-import { createHash } from "node:crypto";
-
-import { AgentError, AgentPool, type Agent, type KeyState, type KeyWrite, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
+import { AgentError, AgentPool, type Agent, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
 import { deployment_settings } from "../src/server/config.ts";
 import { Deployment } from "../src/server/deployment.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
@@ -134,28 +132,6 @@ export class FakeAgent implements Agent {
   }
 
   async forget(): Promise<void> {}
-
-  // The keys written, by destination, as the host would hold them.
-  readonly keys = new Map<string, { content: Buffer; owner: string; group: string; mode: string }>();
-  readonly key_writes: KeyWrite[] = [];
-  key_error: AgentError | null = null;
-
-  async write_key(request: KeyWrite): Promise<RunResult> {
-    if (this.key_error !== null) throw this.key_error;
-    this.key_writes.push(request);
-    this.keys.set(request.destination, { content: Buffer.from(request.content_base64, "base64"), owner: request.owner, group: request.group, mode: request.mode.replace(/^0/, "") });
-    return result(0);
-  }
-
-  async check_keys(destinations: string[], salt: string): Promise<KeyState[]> {
-    if (this.key_error !== null) throw this.key_error;
-    return destinations.map((destination) => {
-      const key = this.keys.get(destination);
-      if (key === undefined) return { destination, present: false, salted_hash: null, size: null, owner: null, group: null, mode: null };
-      const salted_hash = createHash("sha256").update(salt).update(key.content).digest("hex");
-      return { destination, present: true, salted_hash, size: key.content.length, owner: key.owner, group: key.group, mode: key.mode };
-    });
-  }
 
   // The newest long run, optionally only those whose command holds some text.
   last_run(containing = ""): FakeRun | undefined {

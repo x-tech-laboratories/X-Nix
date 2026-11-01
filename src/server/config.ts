@@ -5,7 +5,6 @@
 import { readFileSync } from "node:fs";
 
 import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
-import { is_account_name, is_key_destination, is_key_mode, key_folder } from "../shared/keys.ts";
 import { parse_duration } from "./durations.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 
@@ -40,18 +39,6 @@ export interface GcSettings {
   max_generation_age: number | null;
   gc_bin: string;
   gc_args: string[];
-}
-
-// A key uploaded to the host outside the store; its value stays in the source file on this server.
-export interface SecretSettings {
-  name: string;
-  // The file on this server holding the value, read only to upload or check it.
-  source: string;
-  destination: string;
-  owner: string;
-  group: string;
-  // The permission bits, such as "0400".
-  mode: string;
 }
 
 export interface DeploymentSettings {
@@ -115,7 +102,6 @@ export interface DeploymentSettings {
   tags: string[];
   // The commit or tag evaluation, build and switch use instead of the branch head; null follows the head.
   pin: string | null;
-  secrets: SecretSettings[];
 }
 
 // How fleet runs act on many deployments at once.
@@ -404,7 +390,6 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     boot: read.flag("boot", true),
     tags,
     pin,
-    secrets: secret_settings(values.secrets, read.owner),
   };
   // A switch from the cache activates the store path directly, so it cannot run the guarded switch's checks and watchdog.
   const guarded = settings.pre_switch_checks.length > 0 || settings.magic_rollback || settings.health_commands.length > 0 || settings.health_urls.length > 0;
@@ -412,30 +397,6 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which cannot be combined with pre_switch_checks, magic_rollback or health checks`);
   }
   return settings;
-}
-
-function secret_settings(entries: unknown, owner: string): SecretSettings[] {
-  if (entries === undefined || entries === null) return [];
-  if (!Array.isArray(entries)) throw new ConfigError(`\`secrets\` of ${owner} must be a list`);
-  const seen = new Set<string>();
-  return entries.map((entry, index) => {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new ConfigError(`Secret ${index + 1} of ${owner} must be an object`);
-    const read = new Reader(entry as Record<string, unknown>, `secret ${index + 1} of ${owner}`);
-    const name = read.text("name");
-    if (name === null || !/^[A-Za-z0-9_.-]+$/.test(name)) throw new ConfigError(`Secret ${index + 1} of ${owner} needs a \`name\` of letters, digits, ., - and _`);
-    if (seen.has(name)) throw new ConfigError(`Two secrets of ${owner} are named '${name}'`);
-    seen.add(name);
-    const source = read.text("source");
-    if (source === null || !source.startsWith("/")) throw new ConfigError(`Secret '${name}' of ${owner} needs a \`source\` file as an absolute path`);
-    const destination = read.text("destination") ?? `${key_folder}/${name}`;
-    if (!is_key_destination(destination)) throw new ConfigError(`The \`destination\` of secret '${name}' of ${owner} must be a plain path under ${key_folder}`);
-    const file_owner = read.text("owner") ?? "root";
-    const group = read.text("group") ?? "root";
-    if (!is_account_name(file_owner) || !is_account_name(group)) throw new ConfigError(`The \`owner\` and \`group\` of secret '${name}' of ${owner} must be account names`);
-    const mode = read.text("mode") ?? "0400";
-    if (!is_key_mode(mode)) throw new ConfigError(`The \`mode\` of secret '${name}' of ${owner} must be permission bits such as "0400"`);
-    return { name, source, destination, owner: file_owner, group, mode };
-  });
 }
 
 function gc_settings(entry: unknown, owner: string): GcSettings | null {

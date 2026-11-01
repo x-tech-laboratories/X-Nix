@@ -3,9 +3,8 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { run_command } from "../../agent/commands.ts";
-import { check_keys, KeyError, write_key } from "../../agent/keys.ts";
 import { LongRunError, LongRuns, type LongRunOptions } from "../../agent/long_runs.ts";
-import { AgentError, type Agent, type KeyState, type KeyWrite, type LongRun, type LongRunPoll, type RunResult } from "./agent.ts";
+import { AgentError, type Agent, type LongRun, type LongRunPoll, type RunResult } from "./agent.ts";
 
 // ── Local agent ──────────────────────────────────────────────────────────────
 
@@ -36,20 +35,12 @@ export class LocalAgent implements Agent {
       // A run already gone, or still running, is left as it is.
     }
   }
-
-  write_key(request: KeyWrite): Promise<RunResult> {
-    return as_agent_error(() => write_key(request));
-  }
-
-  check_keys(destinations: string[], salt: string, sudo: boolean): Promise<KeyState[]> {
-    return as_agent_error(() => check_keys(destinations, salt, sudo));
-  }
 }
 
 async function as_agent_error<Answer>(work: () => Answer | Promise<Answer>): Promise<Answer> {
   try {
     return await work();
   } catch (error) {
-    throw error instanceof LongRunError || error instanceof KeyError ? new AgentError(error.message) : error;
+    throw error instanceof LongRunError ? new AgentError(error.message) : error;
   }
 }

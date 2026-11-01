@@ -7,7 +7,6 @@ import {
   encode_message, parse_agent_message, type AgentMessage, type LongRun, type LongRunPoll, type PullReport, type RequestType, type Requests,
   type RunResult, type ServerMessage,
 } from "../../shared/agent_protocol.ts";
-import type { KeyState, KeyWrite } from "../../shared/keys.ts";
 import { AgentError, type Agent } from "./agent.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -90,14 +89,6 @@ export class AgentConnection implements Agent {
 
   async forget(run_id: string): Promise<void> {
     await this.request("forget", { run_id });
-  }
-
-  write_key(request: KeyWrite): Promise<RunResult> {
-    return this.request("write_key", request);
-  }
-
-  check_keys(destinations: string[], salt: string, sudo: boolean): Promise<KeyState[]> {
-    return this.request("check_keys", { destinations, salt, sudo });
   }
 
   // ── Socket ───────────────────────────────────────────────────────────────

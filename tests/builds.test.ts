@@ -37,8 +37,6 @@ const local_agent: Agent = {
   start: async () => { throw new Error("not used"); },
   poll: async () => { throw new Error("not used"); },
   forget: async () => {},
-  write_key: async () => { throw new Error("not used"); },
-  check_keys: async () => { throw new Error("not used"); },
 };
 
 // ── Store paths ──────────────────────────────────────────────────────────────

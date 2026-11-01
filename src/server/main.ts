@@ -17,7 +17,6 @@ import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
-import { Secrets } from "./secrets.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
 
@@ -51,16 +50,7 @@ const provisioner = new Provisioner(config.provisioning, {
   declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys,
 });
 accept_agent_keys(provisioner.agent_keys());
-const secrets = new Secrets({ store, agents });
-// A switch may add the accounts a key belongs to, so each switch uploads what is missing or stale.
-const upload_needed = (deployment: Deployment, trigger: string) => {
-  if (deployment.settings.secrets.length > 0) void secrets.upload(deployment, trigger, true);
-};
-const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents, after_switch: (deployment) => upload_needed(deployment, "switch") }));
-// The keys folder is emptied by a reboot, so a host's agent coming back has its secrets uploaded again.
-hub.on("connect", (status) => {
-  for (const deployment of deployments) if (deployment.settings.host === status.host) upload_needed(deployment, "agent connect");
-});
+const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents }));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const poller = new Poller(deployments, null, caches, [provisioner]);
 const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });
@@ -74,7 +64,7 @@ hub.on_pulls = (host, pulls) => {
   for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
   return kept;
 };
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook });
 
 app.addHook("onClose", async () => {
   poller.stop();
@@ -89,7 +79,3 @@ app.log.info(`Watching ${deployments.length} deployments and ${caches.length} ca
 await app.listen({ host, port });
 poller.start();
 fleet.start_timer();
-// The server's own host has no agent to connect, so its secrets are seen to on start.
-for (const deployment of deployments) {
-  if (deployment.settings.host === null || deployment.settings.host === server_name) upload_needed(deployment, "server start");
-}

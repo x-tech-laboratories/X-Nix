@@ -8,7 +8,6 @@ import type { KeyObject } from "node:crypto";
 import { sign_challenge } from "../shared/agent_keys.ts";
 import { encode_message, parse_server_message, protocol_version, type AgentMessage, type PullReport, type RequestMessage } from "../shared/agent_protocol.ts";
 import { run_command } from "./commands.ts";
-import { check_keys, write_key } from "./keys.ts";
 import type { LongRuns } from "./long_runs.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -119,10 +118,6 @@ export class AgentSession {
         return null;
       case "runs":
         return this.runs.list();
-      case "write_key":
-        return write_key(message);
-      case "check_keys":
-        return check_keys(message.destinations, message.salt, message.sudo);
     }
   }
 

@@ -16,8 +16,6 @@ let
 
   json = pkgs.formats.json { };
 
-  key_support = import ./keys.nix { inherit lib pkgs; };
-
   # systemd places each loaded secret here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix.service";
 
@@ -28,16 +26,6 @@ let
   };
 in
 {
-  # The key units and the writer's sudo rule, apart from the service, for a host that declares keys.
-  imports = [
-    {
-      config = mkIf (cfg.enable && cfg.keys != { }) {
-        systemd.services = key_support.units cfg.keys;
-        security.sudo.extraRules = [ (key_support.sudo_rule "x-nix" key_support.writer) ];
-      };
-    }
-  ];
-
   options.services.x-nix = {
     enable = mkEnableOption "X-Nix, a web portal for managing NixOS deployments";
 
@@ -157,8 +145,6 @@ in
       description = "How long after the last push to a deployment its evaluation starts.";
     };
 
-    keys = key_support.option;
-
     path = mkOption {
       type = types.listOf (types.either types.package types.str);
       default = [ ];
@@ -207,7 +193,6 @@ in
         X_NIX_PASSWORD_HASH_FILE = "${credentials_directory}/password-hash";
         X_NIX_STATE_DIR = "/var/lib/x-nix";
         X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
-        X_NIX_KEY_WRITER = toString key_support.writer;
       }
       // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
       // lib.optionalAttrs (cfg.webhookSecretFile != null) {
