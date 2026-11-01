@@ -16,6 +16,8 @@ let
 
   json = pkgs.formats.json { };
 
+  sudo_rules = import ./sudo-rules.nix { inherit pkgs; };
+
   # systemd places each loaded secret here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix.service";
 
@@ -150,6 +152,11 @@ in
       default = [ ];
       description = "Extra entries on the PATH of the commands X-Nix runs, such as a wrapper named by rebuild_bin.";
     };
+
+    sudoRules = mkEnableOption ''
+      the NOPASSWD sudo rules for every command X-Nix runs under `sudo -n` on this host, as README.md
+      lists; turn them off only to write your own, such as for a rebuild_bin outside the system profile
+    '' // { default = true; };
   };
 
   config = mkIf cfg.enable {
@@ -217,6 +224,8 @@ in
         UMask = "0077";
       };
     };
+
+    security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix") ];
 
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
   };

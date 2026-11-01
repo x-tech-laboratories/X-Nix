@@ -47,7 +47,7 @@ export function boot_script(require_sudo: boolean): string {
     '  echo @@entries; printf "%s\\n" "$out"',
     "elif e=$(command -v grub-editenv || command -v grub2-editenv); then",
     '  echo loader=grub; echo "editenv=${e##*/}"',
-    '  echo @@env; "$e" list 2>/dev/null; echo @@cfg',
+    `  echo @@env; ${read(require_sudo, '"$e" list')}; echo @@cfg`,
     `  for f in ${grub_configs.join(" ")}; do [ -e "$f" ] && { ${read(require_sudo, 'cat "$f"')}; break; }; done`,
     "elif command -v efibootmgr >/dev/null 2>&1; then",
     "  echo loader=efi; echo @@entries; efibootmgr 2>/dev/null",

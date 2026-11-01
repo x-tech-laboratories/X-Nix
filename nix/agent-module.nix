@@ -19,6 +19,8 @@ let
 
   json = pkgs.formats.json { };
 
+  sudo_rules = import ./sudo-rules.nix { inherit pkgs; };
+
   pull_file = json.generate "x-nix-agent-pull.json" {
     inherit (cfg.pull)
       remotes
@@ -75,6 +77,11 @@ in
       default = [ ];
       description = "Extra entries on the PATH of the commands the agent runs, such as a wrapper named by rebuild_bin.";
     };
+
+    sudoRules = mkEnableOption ''
+      the NOPASSWD sudo rules for every command the agent runs under `sudo -n` on this host, pull
+      mode's switch included, as README.md lists; turn them off only to write your own
+    '' // { default = true; };
 
     pull = {
       enable = mkEnableOption ''
@@ -154,6 +161,8 @@ in
       description = "X-Nix agent";
     };
     users.groups.x-nix-agent = { };
+
+    security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix-agent") ];
 
     systemd.services.x-nix-agent = {
       description = "X-Nix agent";
