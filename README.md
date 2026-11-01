@@ -379,42 +379,6 @@ through the logged-in page: the host that built it checks again that the file st
 store path, then sends it in pieces through its agent. A product collected since reads as gone.
 Builds that ended before this history existed are only in the job history.
 
-## Inventory
-
-The config file may also name an `inventory`: one JSON file in a flake listing the fleet's machines
-with the tags and roles each takes, after Clan's `inventory.json`. The Inventory page shows every
-machine, adds and removes machines, tags and roles, and saves the whole file as one commit, in the
-same way the option form commits (a fresh clone pushed with `push_ssh_key` for a `github:` flake,
-or a commit in a local checkout). A save is refused when the file changed since the page read it,
-and any other key in the file is kept. Each save is an `inventory` job. Inventory tags live in the
-file and are apart from any deployment setting.
-
-| Setting          | Default                              | Meaning                                         |
-| ---------------- | ------------------------------------ | ----------------------------------------------- |
-| `flake`          | required                             | The flake holding the file.                     |
-| `file`           | `inventory.json`                     | Its path inside the flake.                      |
-| `host`           | the server's own host                | The host that clones and commits.               |
-| `push_ssh_key`   | none                                 | The key a `github:` flake's commit pushes with. |
-| `commit_author`  | `X-Nix <x-nix@localhost>`            | The commit's author.                            |
-| `commit_message` | `chore(inventory): update machines`  | The commit's message.                           |
-
-The file holds `{"machines": {"<name>": {"tags": [...], "roles": [...]}}}`. The flake reads it
-with `builtins.fromJSON` and maps each role to a module, so a machine's roles decide what it runs:
-
-```nix
-let
-  inventory = builtins.fromJSON (builtins.readFile ./inventory.json);
-  roles_of = name: inventory.machines.${name}.roles or [ ];
-  tagged = tag: builtins.attrNames (nixpkgs.lib.filterAttrs (_: machine: builtins.elem tag (machine.tags or [ ])) inventory.machines);
-in
-{
-  nixosConfigurations.odin = nixpkgs.lib.nixosSystem {
-    modules = [ ./hosts/odin ] ++ map (role: ./roles/${role}.nix) (roles_of "odin");
-  };
-  # tagged "server" lists every machine with that tag, such as for a monitoring role's targets.
-}
-```
-
 ## Agents
 
 Every host other than the server's own runs `x-nix-agent`, which dials out to the server's
@@ -457,7 +421,7 @@ job history of every deployment on that host with the trigger `agent pull`.
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
-whose `provisioning` takes the Provisioning settings, whose `inventory` takes the inventory's settings, whose `agents` takes each host's key line, and whose
+whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, and whose
 `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook. Both modules put
 nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
 `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`, and pull mode under `pull`

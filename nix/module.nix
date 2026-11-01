@@ -21,14 +21,11 @@ let
   # systemd places each loaded secret here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix.service";
 
-  config_file = json.generate "x-nix.json" (
-    {
-      deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
-      caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-      inherit (cfg) agents provisioning fleet;
-    }
-    // lib.optionalAttrs (cfg.inventory != null) { inherit (cfg) inventory; }
-  );
+  config_file = json.generate "x-nix.json" {
+    deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
+    caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
+    inherit (cfg) agents provisioning fleet;
+  };
 in
 {
   # The key units and the writer's sudo rule, apart from the service, for a host that declares keys.
@@ -158,16 +155,6 @@ in
       type = types.str;
       default = "10s";
       description = "How long after the last push to a deployment its evaluation starts.";
-    };
-
-    inventory = mkOption {
-      type = types.nullOr json.type;
-      default = null;
-      example = {
-        flake = "github:example/nixos-config";
-        push_ssh_key = "/var/lib/x-nix/deploy_key";
-      };
-      description = "The fleet's inventory file, with the settings README.md lists; null keeps none.";
     };
 
     keys = key_support.option;

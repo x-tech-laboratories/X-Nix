@@ -373,24 +373,6 @@ export interface EventRow {
   message: string;
 }
 
-export interface Machine {
-  name: string;
-  tags: string[];
-  roles: string[];
-}
-
-export interface InventoryView {
-  configured: boolean;
-  flake: string | null;
-  file: string | null;
-  refusal: string | null;
-  present: boolean;
-  machines: Machine[];
-  hash: string | null;
-  error: string | null;
-  suggestions: string[];
-}
-
 export type OptionSource = "nixos" | "home-manager";
 
 export type SimpleKind =

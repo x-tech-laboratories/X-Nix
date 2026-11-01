@@ -193,17 +193,6 @@ export interface ProvisioningSettings {
   job_poll: number;
 }
 
-// The fleet's inventory: one JSON file in a flake listing each machine's tags and roles, which the page edits.
-export interface InventorySettings {
-  flake: string;
-  file: string;
-  // The host that clones and commits; the server's own host when null.
-  host: string | null;
-  push_ssh_key: string | null;
-  commit_author: string;
-  commit_message: string;
-}
-
 export interface Config {
   deployments: DeploymentSettings[];
   caches: CacheSettings[];
@@ -211,12 +200,7 @@ export interface Config {
   // Each other host's agent key, as its OpenSSH public key line.
   agents: Map<string, string>;
   fleet: FleetSettings;
-  // Null when no inventory is kept.
-  inventory?: InventorySettings | null;
 }
-
-// The id the inventory's jobs and events are kept under.
-export const inventory_id = "inventory";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -256,13 +240,10 @@ export function parse_config(raw: unknown): Config {
     if (seen.has(id)) throw new ConfigError(`Two deployments or caches are named '${id}'`);
     seen.add(id);
   }
-  const inventory = inventory_settings((raw as { inventory?: unknown } | null)?.inventory);
-  if (inventory !== null && seen.has(inventory_id)) throw new ConfigError(`'${inventory_id}' names the inventory's jobs, so no deployment or cache may take it`);
   return {
     deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
     agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
     fleet: fleet_settings((raw as { fleet?: unknown } | null)?.fleet),
-    inventory,
   };
 }
 
@@ -294,22 +275,6 @@ export function fleet_settings(entry: unknown): FleetSettings {
   const parallel = read.limit("parallel", 4) ?? 4;
   if (!Number.isInteger(parallel) || parallel < 1) throw new ConfigError("`parallel` of the fleet must be a whole number of at least 1");
   return { parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m") };
-}
-
-function inventory_settings(entry: unknown): InventorySettings | null {
-  if (entry === undefined || entry === null) return null;
-  if (typeof entry !== "object" || Array.isArray(entry)) throw new ConfigError("`inventory` must be an object");
-  const read = new Reader(entry as Record<string, unknown>, "the inventory");
-  const flake = read.text("flake");
-  if (flake === null) throw new ConfigError("The inventory needs a `flake`");
-  return {
-    flake,
-    file: flake_path(read.text("file"), "file", read.owner) ?? "inventory.json",
-    host: read.text("host"),
-    push_ssh_key: read.text("push_ssh_key"),
-    commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
-    commit_message: read.text("commit_message") ?? "chore(inventory): update machines",
-  };
 }
 
 function agent_keys(raw: unknown): Map<string, string> {

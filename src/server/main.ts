@@ -15,7 +15,6 @@ import { parse_duration } from "./durations.ts";
 import { Fleet } from "./fleet.ts";
 import { Catalog } from "./catalog.ts";
 import { Configurator } from "./configurator.ts";
-import { Inventory } from "./inventory.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
@@ -81,10 +80,7 @@ const catalog_timer = setInterval(() => {
   for (const catalog of catalogs.values()) if (catalog.running_job() !== null) void catalog.follow();
 }, 30_000);
 catalog_timer.unref();
-const inventory = new Inventory(config.inventory ?? null, {
-  store, agents, suggestions: [...new Set(deployments.map((deployment) => deployment.settings.configuration ?? deployment.settings.host ?? server_name))].sort(),
-});
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets, catalogs, configurators, inventory });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook, secrets, catalogs, configurators });
 
 app.addHook("onClose", async () => {
   poller.stop();
