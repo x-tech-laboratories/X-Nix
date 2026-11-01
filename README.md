@@ -271,10 +271,11 @@ wiped. The install is a long run that survives a restart of X-Nix and lands in t
 A full install also generates the new host's `hardware-configuration.nix` with
 `nixos-generate-config` on the target, shown with the install for you to copy into the flake, and
 makes the new host's agent key. The private half is piped to the install and placed on the new
-system at `agent_key_path` through `--extra-files`; X-Nix keeps only the public line. Once the install succeeds X-Nix accepts that key, so the agent logs in on first
-boot, provided the configuration already enables `services.x-nix-agent` with that `keyFile` (the
-page shows the lines). The page then shows what to add to the config to declare the key and watch
-the host as a deployment; X-Nix never writes the config file itself. A key the config declares for
+system at `agent_key_path` through `--extra-files`; X-Nix keeps only the public line. Once the
+install succeeds X-Nix accepts that key, so the agent logs in on first boot, provided the
+configuration already enables `services.x-nix-agent` with that `keyFile` (the page shows the
+lines). The page then shows what to add to the config to declare the key and watch the host as a
+deployment; X-Nix never writes the config file itself. A key the config declares for
 the same host wins, and a made key can be forgotten from the page.
 
 The page also builds install media for a deployment or any flake and attribute: an installer ISO,
