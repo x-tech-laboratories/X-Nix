@@ -24,7 +24,7 @@ const folder = mkdtempSync(join(tmpdir(), "x-nix-provisioning-"));
 
 const request: InstallRequest = {
   host: "freya", address: "192.0.2.10", user: "root", port: 22, flake: "github:owner/fleet", configuration: "freya",
-  agent: null, stop_after_partitioning: false, generate_hardware_config: true, hardware_config_path: null,
+  agent: null, stop_after_partitioning: false, generate_hardware_config: true,
 };
 
 function settings(values: Record<string, unknown> = {}) {
@@ -75,7 +75,6 @@ describe("an install request", () => {
     expect(parse_install_request({ ...request, address: "a;b" })).toContain("SSH address");
     expect(parse_install_request({ ...request, port: 70000 })).toContain("port");
     expect(parse_install_request({ ...request, flake: "two\nlines" })).toContain("flake");
-    expect(parse_install_request({ ...request, hardware_config_path: "relative.nix" })).toContain("absolute");
   });
 });
 

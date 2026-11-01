@@ -79,7 +79,6 @@ function install_fields(provisioning: Provisioning, health: Health, agents: Agen
   const agent = h("select", { id: "install-agent" }, ...runners.map((name) => h("option", { value: name, selected: name === default_agent }, name === health.server_name ? `${name} (this server)` : name)));
   const stop = h("input", { id: "install-stop", type: "checkbox" });
   const hardware = h("input", { id: "install-hardware", type: "checkbox", checked: true });
-  const hardware_path = text_input("install-hardware-path", { placeholder: "a temporary file, shown below once done" });
   const confirm = text_input("install-confirm", { required: true });
   const submit = h("button", { type: "submit", class: "danger solid", disabled: true }, "Wipe and install");
   const warning_target = h("strong", {}, "the target");
@@ -98,7 +97,7 @@ function install_fields(provisioning: Provisioning, health: Health, agents: Agen
       const outcome = await api<ActionOutcome>("/api/provisioning/install", "POST", {
         host: host.value.trim(), address: address.value.trim(), user: user.value.trim(), port: Number(port.value), flake: flake.value.trim(),
         configuration: configuration.value.trim(), agent: agent.value === health.server_name ? null : agent.value, stop_after_partitioning: stop.checked,
-        generate_hardware_config: hardware.checked, hardware_config_path: hardware_path.value.trim(), confirm: confirm.value,
+        generate_hardware_config: hardware.checked, confirm: confirm.value,
       });
       toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
       confirm.value = "";
@@ -119,7 +118,6 @@ function install_fields(provisioning: Provisioning, health: Health, agents: Agen
       row("Runs nixos-anywhere", agent),
       row("Stop after partitioning", stop, "Runs only the kexec and disko phases: the disks are wiped and partitioned, and nothing is installed."),
       row("Generate hardware-configuration.nix", hardware, "Runs nixos-generate-config on the target; the result is shown with the install."),
-      row("Write it to", hardware_path, "A path on the host that runs nixos-anywhere, such as inside a local flake checkout the configuration imports."),
     ),
     h("p", { class: "muted small" }, `The configuration needs the agent before it is installed, so it can log in on first boot; X-Nix makes the key and places it at ${provisioning.agent_key_path}:`),
     h("pre", { class: "output" }, provisioning.agent_snippet),

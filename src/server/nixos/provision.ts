@@ -29,8 +29,6 @@ export interface InstallRequest {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  // Where the hardware configuration is written on the host that runs nixos-anywhere; a passing temporary file when null.
-  hardware_config_path: string | null;
 }
 
 // What the install script's first line records, so the job's own command says what it installs.
@@ -94,10 +92,6 @@ export function parse_install_request(body: unknown): InstallRequest | string {
   if (!single_line(values.configuration)) return "Name the nixosConfigurations attribute to install";
   const agent = values.agent === undefined || values.agent === null || values.agent === "" ? null : values.agent;
   if (agent !== null && typeof agent !== "string") return "Name the host that runs nixos-anywhere";
-  const hardware_config_path = values.hardware_config_path === undefined || values.hardware_config_path === null || values.hardware_config_path === "" ? null : values.hardware_config_path;
-  if (hardware_config_path !== null && (!single_line(hardware_config_path) || !hardware_config_path.startsWith("/"))) {
-    return "Give the hardware configuration's path as an absolute path";
-  }
   return {
     host, address, user, port,
     flake: (values.flake as string).trim(),
@@ -105,7 +99,6 @@ export function parse_install_request(body: unknown): InstallRequest | string {
     agent,
     stop_after_partitioning: values.stop_after_partitioning === true,
     generate_hardware_config: values.generate_hardware_config !== false,
-    hardware_config_path: hardware_config_path as string | null,
   };
 }
 
@@ -121,7 +114,7 @@ function key_folders(agent_key_path: string): { path: string; mode: string }[] {
 export function install_command(settings: ProvisioningSettings, request: InstallRequest, public_line: string | null): string {
   const record: InstallRecord = { ...request, public_line, agent_key_path: settings.agent_key_path };
   const tool = settings.nixos_anywhere_bin;
-  const hardware = request.hardware_config_path === null ? '"$t/hardware-configuration.nix"' : shell_quote(request.hardware_config_path);
+  const hardware = '"$t/hardware-configuration.nix"';
   const ssh_key = settings.ssh_key ?? "";
   const lines = [
     `# ${install_mark} ${JSON.stringify(record)}`,

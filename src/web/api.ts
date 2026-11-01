@@ -392,7 +392,6 @@ export interface InstallRecord {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  hardware_config_path: string | null;
   public_line: string | null;
   agent_key_path: string;
 }
