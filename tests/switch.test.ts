@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -179,6 +179,23 @@ describe("a guarded switch", () => {
     expect(switch_verdict(run.output).outcome?.kind).toBe("confirmed");
     expect(host.system()).toBe(join(host.root, "new"));
     expect(host.profile()).toBe("system-2-link");
+    expect(existsSync(watch_folder(watch))).toBe(false);
+  }, 20_000);
+
+  it("clears the folders that dead runs left a day or more ago, and no newer ones", async () => {
+    const host = fake_host();
+    const stale = watch_folder(token());
+    const recent = watch_folder(token());
+    mkdirSync(stale);
+    mkdirSync(recent);
+    const two_days_ago = new Date(Date.now() - 2 * 86_400_000);
+    utimesSync(stale, two_days_ago, two_days_ago);
+    const command = host.localise(guarded_switch_command(settings({ ...quick, health_commands: ["true"] }), "switch", token()));
+
+    await run_until(command, host.bin);
+
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(recent)).toBe(true);
   }, 20_000);
 
   it("rolls back a failing health check with its output as the reason", async () => {

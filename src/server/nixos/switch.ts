@@ -73,9 +73,12 @@ export function confirm_window(settings: DeploymentSettings): number {
   return settings.confirm_timeout + (has_health_checks(settings) ? settings.health_timeout : 0);
 }
 
+const watch_folder_parent = "/tmp";
+const watch_folder_prefix = "x-nix-switch-";
+
 // The folder on the activated host that the watchdog and X-Nix share for one switch.
 export function watch_folder(token: string): string {
-  return `/tmp/x-nix-switch-${token}`;
+  return `${watch_folder_parent}/${watch_folder_prefix}${token}`;
 }
 
 // The watch token a guarded switch's command names, or null for a plain switch.
@@ -163,6 +166,8 @@ export function guarded_switch_command(settings: DeploymentSettings, mode: Switc
   lines.push("outcome=''; waited=0");
   lines.push(`while [ -z "$outcome" ] && [ $waited -lt ${limit} ]; do outcome=$(${host(`cat ${folder}/outcome 2>/dev/null`)}); [ -n "$outcome" ] || { sleep 2; waited=$((waited + 2)); }; done`);
   lines.push(`${host(`cat ${folder}/log 2>/dev/null`)}`);
+  // A watchdog that never reported may still be running, so its folder is left for the next switch's sweep.
+  lines.push(`if [ -n "$outcome" ]; then ${host(`rm -rf ${folder}`)} || true; fi`);
   lines.push('mark outcome "${outcome:-unknown The watchdog never reported an outcome}"');
   lines.push('case "$outcome" in confirmed*|kept*|unchanged*) exit $rc ;; esac');
   lines.push("[ $rc -ne 0 ] && exit $rc");
@@ -170,10 +175,12 @@ export function guarded_switch_command(settings: DeploymentSettings, mode: Switc
   return lines.join("\n");
 }
 
-// Makes the watchdog's folder, notes the previous system, and starts the watchdog in a session of its own.
+// Clears the folders of switches whose run died a day or more ago, makes this switch's folder, notes the previous
+// system, and starts the watchdog in a session of its own.
 function start_watchdog_script(settings: DeploymentSettings, mode: SwitchMode, folder: string): string {
   return [
     "set -e",
+    `find ${watch_folder_parent} -maxdepth 1 -name '${watch_folder_prefix}*' -mmin +1440 -exec rm -rf {} + 2>/dev/null || true`,
     `mkdir -m 700 ${folder}`,
     `readlink -f /run/current-system > ${folder}/previous_system`,
     `readlink ${system_profile} > ${folder}/previous_profile`,
