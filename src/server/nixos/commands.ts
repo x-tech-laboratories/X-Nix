@@ -185,9 +185,14 @@ export function switch_command(settings: DeploymentSettings, mode: SwitchMode = 
   ].map(shell_quote).join(" ");
   const wrapper = settings.switch_wrapper.map((word) => `${shell_quote(word)} `).join("");
   const rebuild = `${wrapper}${sudo(settings)}${settings.rebuild_bin} ${mode} --flake ${shell_quote(flake_reference)} ${args}`.trim();
-  if (settings.post_switch === null) return rebuild;
-  // The job's exit status stays the switch's own, whatever the follow-up returns.
-  return `${rebuild}; rc=$?; ${settings.post_switch}; (exit $rc)`;
+  return with_post_switch(settings, rebuild);
+}
+
+// Runs post_switch after the switch, as root under sudo, keeping the switch's own exit status whatever it returns.
+export function with_post_switch(settings: DeploymentSettings, switching: string): string {
+  if (settings.post_switch === null) return switching;
+  const follow_up = settings.require_sudo ? `sudo -n /bin/sh -c ${shell_quote(settings.post_switch)}` : settings.post_switch;
+  return `${switching}; rc=$?; ${follow_up}; (exit $rc)`;
 }
 
 // ── Switch from cache ────────────────────────────────────────────────────────
@@ -200,19 +205,18 @@ export function is_store_path(value: string): boolean {
   return /^\/nix\/store\/[0-9a-z]{32}-[A-Za-z0-9+._?=-]+$/.test(value);
 }
 
-// Fetches the evaluated closure from the cache and activates it, so the host neither evaluates nor builds.
-export function switch_from_cache_command(settings: DeploymentSettings, store_path: string): string {
+// Fetches the evaluated closure from the cache and activates it in the mode asked, so the host neither evaluates nor builds.
+export function switch_from_cache_command(settings: DeploymentSettings, store_path: string, mode: SwitchMode = "switch"): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const path = shell_quote(store_path);
   // The copy runs as the agent's user, as the daemon takes signed paths from anyone, so only activation needs sudo.
-  const steps = [
-    `${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`,
-    `${sudo(settings)}nix-env -p ${system_profile} --set ${path}`,
-    `${sudo(settings)}${store_path}/bin/switch-to-configuration switch`,
-  ].join(" && ");
-  const switching = settings.switch_wrapper.length === 0 ? steps : `${settings.switch_wrapper.map(shell_quote).join(" ")} sh -c ${shell_quote(steps)}`;
-  if (settings.post_switch === null) return switching;
-  return `${switching}; rc=$?; ${settings.post_switch}; (exit $rc)`;
+  const steps = [`${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`];
+  // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
+  if (mode === "switch" || mode === "boot") steps.push(`${sudo(settings)}nix-env -p ${system_profile} --set ${path}`);
+  steps.push(`${sudo(settings)}${store_path}/bin/switch-to-configuration ${mode}`);
+  const joined = steps.join(" && ");
+  const switching = settings.switch_wrapper.length === 0 ? joined : `${settings.switch_wrapper.map(shell_quote).join(" ")} sh -c ${shell_quote(joined)}`;
+  return with_post_switch(settings, switching);
 }
 
 // ── Reboot ───────────────────────────────────────────────────────────────────

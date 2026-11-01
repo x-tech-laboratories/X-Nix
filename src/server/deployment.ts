@@ -11,10 +11,10 @@
 // cycle also reads the boot loader's entries, and the next boot can be set to any of them once. A pin, from the settings
 // or set on the page, fixes evaluation, build and switch at one commit or tag instead of the branch head.
 //
-// A switch runs in one of nixos-rebuild's modes, and with pre_switch_checks, health checks or magic_rollback it runs
-// guarded (see nixos/switch.ts): while it waits for confirmation, each poll runs the HTTP checks and confirms, and once
-// it ends its marker lines say whether it was refused or rolled back and why. Rollback activates any earlier generation
-// of the system profile. Before a switch the page asks for the package diff between the running and the built closure,
+// A switch runs in one of nixos-rebuild's modes, from the cache with switch_from_cache, and with pre_switch_checks,
+// health checks or magic_rollback it runs guarded (see nixos/switch.ts): while it waits for confirmation, each poll runs
+// the HTTP checks and confirms, and once it ends its marker lines say whether it was refused or rolled back and why.
+// Rollback activates any earlier generation of the system profile. Before a switch the page asks for the package diff between the running and the built closure,
 // which runs as a job and is kept with the evaluation, and the closure browser reads any generation's dependency graph.
 // A Build with build_progress reads nix's structured log into counts of what is building and downloading.
 
@@ -29,7 +29,7 @@ import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import { closure_command, diff_command, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
-  build_command, can_update, eval_command, reboot_command, split_eval_output, switch_from_cache_command, switch_modes,
+  build_command, can_update, eval_command, reboot_command, split_eval_output, switch_modes,
   timed_out_exit_code, update_command, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
@@ -222,7 +222,7 @@ export class Deployment {
       return `Cannot update ${this.settings.flake}: only a local checkout, or a github: flake with a push_ssh_key, has a lock file X-Nix can write`;
     }
     if (action === "collect" && this.settings.gc === null) return "The store is not watched for this deployment; its gc is off";
-    if (action === "switch" && this.settings.switch_from_cache && this.cached_target() === null) {
+    if (is_switch_kind(action) && this.settings.switch_from_cache && this.cached_target() === null) {
       return "Switching from the cache needs the store path of a successful evaluation; evaluate first";
     }
     if (this.running_job() !== null) return "A job is already running for this deployment";
@@ -667,10 +667,9 @@ export class Deployment {
     if (kind === "update") return update_command(this.settings);
     if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
     if (kind === "build") return build_command(this.effective_settings(), this.attribute());
-    const target = this.cached_target();
-    if (kind === "switch" && this.settings.switch_from_cache && target !== null) return switch_from_cache_command(this.effective_settings(), target);
+    const store_path = this.settings.switch_from_cache ? this.cached_target() : null;
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
-    return switch_job_command(this.effective_settings(), kind, randomBytes(8).toString("hex"));
+    return switch_job_command(this.effective_settings(), kind, randomBytes(8).toString("hex"), store_path);
   }
 
   // The store path a switch from the cache activates: the last evaluation's, unless that evaluation failed.

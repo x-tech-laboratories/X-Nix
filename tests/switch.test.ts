@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,8 +8,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ConfigError, deployment_settings } from "../src/server/config.ts";
 import { switch_command } from "../src/server/nixos/commands.ts";
 import {
-  confirm_command, guarded_switch_command, is_guarded, parse_generations, rollback_command, switch_job_command, switch_verdict, watch_folder, watch_token,
+  confirm_command, guarded_switch_command, is_guarded, kept_awake, parse_generations, rollback_command, switch_job_command, switch_verdict, watch_folder,
+  watch_token,
 } from "../src/server/nixos/switch.ts";
+import { target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -48,13 +50,22 @@ function fake_host() {
     `ln -sfn ${join(root, "new")} ${current}`,
     'exit "${REBUILD_EXIT:-0}"',
   ].join("\n"));
-  write_program(join(bin, "nix-env"), `echo "nix-env $*" >> ${log}\nln -sfn "system-$4-link" ${join(profiles, "system")}`);
+  write_program(join(bin, "nix-env"), [
+    `echo "nix-env $*" >> ${log}`,
+    `if [ "$3" = --set ]; then ln -sfn "$4" ${join(profiles, "system-2-link")}; ln -sfn system-2-link ${join(profiles, "system")}`,
+    `else ln -sfn "system-$4-link" ${join(profiles, "system")}; fi`,
+  ].join("\n"));
+  write_program(join(bin, "nix"), `echo "nix $*" >> ${log}`);
+  // Holds the inhibitor until its stdin closes, as systemd-inhibit running cat does.
+  write_program(join(bin, "systemd-inhibit"), `echo "inhibit $*" >> ${log}\n[ -z "$INHIBIT_FAILS" ] || exit 1\ncat > /dev/null\necho released >> ${log}`);
   return {
     root, bin, log, current,
     profile: () => readlinkSync(join(profiles, "system")),
     system: () => readlinkSync(current),
-    // Points the command's system paths into the folder.
-    localise: (command: string) => command.replaceAll("/run/current-system", current).replaceAll("/nix/var/nix/profiles/system", join(profiles, "system")),
+    // Points the command's system paths, and the cache's closure, into the folder.
+    localise: (command: string) => command.replaceAll("/run/current-system", current).replaceAll("/nix/var/nix/profiles/system", join(profiles, "system"))
+      .replaceAll(target_closure, join(root, "new")),
+    read_log: () => (existsSync(log) ? readFileSync(log, "utf8") : ""),
   };
 }
 
@@ -130,6 +141,21 @@ describe("switch commands", () => {
     expect(confirm_command(guarded, "ab12")).toBe("sudo -n ssh $NIX_SSHOPTS root@odin 'touch /tmp/x-nix-switch-ab12/confirmed'");
     expect(rollback_command(guarded, 7, "asked")).toContain("ssh $NIX_SSHOPTS root@odin 'nix-env -p /nix/var/nix/profiles/system --switch-generation 7 &&");
     expect(rollback_command(settings(), 7, "asked")).toContain("sudo -n nix-env");
+  });
+
+  it("activates from the cache in each mode when the switch is given a store path", () => {
+    const from_cache = settings({ switch_from_cache: true, cache_url: "https://cache.example/fleet", magic_rollback: true });
+
+    expect(switch_job_command(from_cache, "dry-activate", "ab12", target_closure)).toContain(`${target_closure}/bin/switch-to-configuration dry-activate`);
+    expect(switch_job_command(from_cache, "switch", "ab12", target_closure)).toContain("x-nix-watchdog");
+    expect(switch_job_command(from_cache, "switch", "ab12", target_closure)).not.toContain("nixos-rebuild");
+  });
+
+  it("holds the inhibitor only with inhibit_sleep, on target_host when there is one", () => {
+    expect(switch_job_command(settings(), "switch", "ab12")).not.toContain("systemd-inhibit");
+    expect(switch_job_command(settings({ inhibit_sleep: true }), "switch", "ab12")).toContain("sh -c 'sudo -n systemd-inhibit --what=idle:sleep");
+    expect(switch_job_command(settings({ inhibit_sleep: true, target_host: "root@odin" }), "switch", "ab12"))
+      .toContain("sudo -n ssh $NIX_SSHOPTS root@odin 'systemd-inhibit --what=idle:sleep");
   });
 
   it("refuses a generation that is not a number", () => {
@@ -241,6 +267,89 @@ describe("a guarded switch", () => {
     expect(switch_verdict(run.output).outcome).toEqual({ kind: "rolled-back", reason: "nixos-rebuild switch failed with status 5" });
     expect(host.system()).toBe(join(host.root, "old"));
   }, 20_000);
+});
+
+// ── Switch from cache ────────────────────────────────────────────────────────
+
+describe("a guarded switch from the cache", () => {
+  const from_cache = { ...quick, switch_from_cache: true, cache_url: "https://cache.example/fleet", magic_rollback: true };
+
+  it("fetches, sets the profile and activates, keeping the new system once X-Nix confirms", async () => {
+    const host = fake_host();
+    const watch = token();
+    const guarded = settings(from_cache);
+    const command = host.localise(switch_job_command(guarded, "switch", watch, target_closure));
+
+    const run = await run_until(command, host.bin, "awaiting-confirmation", () => spawnSync("sh", ["-c", confirm_command(guarded, watch)]));
+
+    expect(run.status).toBe(0);
+    expect(switch_verdict(run.output).outcome?.kind).toBe("confirmed");
+    expect(host.read_log()).toContain("copy --from https://cache.example/fleet");
+    expect(host.system()).toBe(join(host.root, "new"));
+    expect(host.profile()).toBe("system-2-link");
+  }, 20_000);
+
+  it("rolls back the system and its profile when X-Nix never confirms", async () => {
+    const host = fake_host();
+    const command = host.localise(switch_job_command(settings(from_cache), "switch", token(), target_closure));
+
+    const run = await run_until(command, host.bin);
+
+    expect(run.status).toBe(1);
+    expect(switch_verdict(run.output).outcome?.kind).toBe("rolled-back");
+    expect(host.system()).toBe(join(host.root, "old"));
+    expect(host.profile()).toBe("system-1-link");
+  }, 20_000);
+
+  it("rolls back a test switch without touching the profile", async () => {
+    const host = fake_host();
+    const command = host.localise(switch_job_command(settings(from_cache), "test", token(), target_closure));
+
+    await run_until(command, host.bin);
+
+    expect(host.read_log()).toContain("activate new test");
+    expect(host.read_log()).toContain("activate old test");
+    expect(host.read_log()).not.toContain("nix-env");
+    expect(host.profile()).toBe("system-1-link");
+  }, 20_000);
+});
+
+// ── Keeping the host awake ───────────────────────────────────────────────────
+
+describe("inhibit_sleep", () => {
+  // Waits until the log holds some text, or gives up after a while.
+  async function log_holds(host: ReturnType<typeof fake_host>, text: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (host.read_log().includes(text)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  }
+
+  it("holds the inhibitor while the switch runs and releases it once the run ends, even past what the switch leaves running", async () => {
+    const host = fake_host();
+    const command = kept_awake(settings({ ...quick, inhibit_sleep: true }), [
+      `for attempt in 1 2 3 4 5 6 7 8 9 10; do grep -q inhibit ${host.log} && break; sleep 0.2; done`,
+      `(sleep 5 > /dev/null 2>&1 &); grep -c released ${host.log} || true`,
+    ].join("\n"));
+
+    const run = await run_until(command, host.bin);
+
+    expect(run.status).toBe(0);
+    expect(run.output.trim()).toBe("0");
+    expect(host.read_log()).toContain("inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
+    expect(await log_holds(host, "released")).toBe(true);
+  });
+
+  it("switches anyway with a warning when the inhibitor cannot be held, keeping the switch's status", async () => {
+    const host = fake_host();
+    const command = `INHIBIT_FAILS=1; export INHIBIT_FAILS\n${kept_awake(settings({ ...quick, inhibit_sleep: true }), "sleep 0.5; exit 4")}`;
+
+    const run = await run_until(command, host.bin);
+
+    expect(run.status).toBe(4);
+    expect(run.output).toContain("Could not keep the host awake during the switch; switching anyway");
+  });
 });
 
 // ── Generations ──────────────────────────────────────────────────────────────

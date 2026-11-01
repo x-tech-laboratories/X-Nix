@@ -71,6 +71,8 @@ export interface DeploymentSettings {
   switch_agent: string | null;
   // Switch by fetching the evaluated closure from cache_url and activating it, rather than rebuilding on the host.
   switch_from_cache: boolean;
+  // Hold off idle and sleep on the activated host while a switch or rollback runs.
+  inhibit_sleep: boolean;
   target_host: string | null;
   auto_switch: boolean;
   auto_switch_after: number;
@@ -367,6 +369,7 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     cache_url,
     switch_agent,
     switch_from_cache,
+    inhibit_sleep: read.flag("inhibit_sleep", false),
     target_host: read.text("target_host"),
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),
@@ -391,10 +394,9 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     tags,
     pin,
   };
-  // A switch from the cache activates the store path directly, so it cannot run the guarded switch's checks and watchdog.
-  const guarded = settings.pre_switch_checks.length > 0 || settings.magic_rollback || settings.health_commands.length > 0 || settings.health_urls.length > 0;
-  if (switch_from_cache && guarded) {
-    throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which cannot be combined with pre_switch_checks, magic_rollback or health checks`);
+  // A switch from the cache activates on the switch agent's own host, so there is no other host for target_host to name.
+  if (switch_from_cache && settings.target_host !== null) {
+    throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which activates on the switch agent's own host, so it cannot take a \`target_host\``);
   }
   return settings;
 }

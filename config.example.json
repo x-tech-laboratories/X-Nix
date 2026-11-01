@@ -32,8 +32,14 @@
       "flake": "github:example/nixos-config",
       "configuration": "pi",
       "eval_agent": "server",
+      "build_agent": "server",
+      "build_root_dir": "/var/lib/x-nix/build-roots",
       "cache_url": "https://attic.example/fleet",
-      "switch_from_cache": true
+      "switch_from_cache": true,
+      "auto_switch": true,
+      "inhibit_sleep": true,
+      "magic_rollback": true,
+      "post_switch": "systemctl restart display-manager.service"
     }
   ],
   "fleet": {
@@ -46,7 +52,7 @@
       "id": "fleet-cache",
       "name": "Fleet cache",
       "flake": "github:example/nixos-config",
-      "configurations": ["workstation", "server"],
+      "configurations": ["workstation", "server", "pi"],
       "cache_url": "https://attic.example/fleet",
       "build_root_dir": "/var/lib/x-nix/build-roots",
       "drop_pushed": ["server"],

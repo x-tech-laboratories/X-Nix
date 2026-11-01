@@ -37,11 +37,13 @@ The config file lists `deployments`, each a NixOS host and the flake that descri
 and compares the two store paths. Update, build, switch, garbage collection and evaluation run as
 long runs that survive a restart of X-Nix; each lands in the job history with its output.
 
-With `switch_from_cache`, Switch never evaluates or builds on the host: it takes the store path of the latest
-successful evaluation, which may run on `eval_agent`, fetches it with `nix copy --from <cache_url>`, sets it as the
-system profile's next generation and runs its `switch-to-configuration switch`. The closure must already be in the
-cache, built and pushed by a cache's Build or Build all, and signed by a key the host trusts; `build_host`,
-`target_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
+With `switch_from_cache`, a switch never evaluates or builds on the host: it takes the store path of the latest
+successful evaluation, which may run on `eval_agent`, and fetches it with `nix copy --from <cache_url>`. A `switch` or
+`boot` then sets it as the system profile's next generation, and every mode runs its own `switch-to-configuration`
+with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
+activating on the switch agent's own host, so it takes no `target_host`. The closure must already be in the cache,
+built and pushed by a cache's Build or Build all (or anything else that pushes, such as `attic watch-store`), and
+signed by a key the host trusts; `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
@@ -62,7 +64,7 @@ whose agent is not connected reads as unreachable.
 | `max_input_age`     | none                              | Warn once the oldest locked input is older than this.                |
 | `drift_status`      | `warning`                         | The status drift raises.                                             |
 | `reboot_status`     | `warning`                         | The status a needed reboot raises.                                   |
-| `require_sudo`      | `true`                            | Run update, switch and reboot under `sudo -n`.                       |
+| `require_sudo`      | `true`                            | Run update, switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
 | `nix_bin`           | `nix`                             | The nix program.                                                     |
 | `rebuild_bin`       | `nixos-rebuild`                   | The nixos-rebuild program.                                           |
 | `nix_args`          | flakes enabled                    | Arguments before every nix command.                                  |
@@ -74,14 +76,15 @@ whose agent is not connected reads as unreachable.
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
 | `switch_agent`      | the host                          | The host that runs update and switch.                                |
-| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build; not with `pre_switch_checks`, `magic_rollback` or health checks. |
+| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build; not with `target_host`. |
+| `inhibit_sleep`     | `false`                           | Keep the activated host from idling or sleeping while a switch or rollback runs. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
 | `update_at`         | none                              | Update the flake daily at this local time, such as `02:00`.          |
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command the switch runs inside, outside sudo.                      |
-| `post_switch`       | none                              | A command run after the switch, which keeps the switch's status.     |
+| `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`, which keeps the switch's status. |
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back.           |
@@ -133,9 +136,18 @@ the health URLs and, once they answer, confirms by touching a file in the watchd
 `magic_rollback`, when no confirmation arrives within `confirm_timeout` (plus `health_timeout` when
 health checks are set). Without `magic_rollback` an unconfirmed switch is kept. Each refusal and
 rollback lands in the job and the events with its reason. On the server's own host the confirmation
-means the X-Nix server is still running after the switch, or came back up if the switch restarted it.
-While a guarded switch runs, X-Nix polls it every `health_period`, so keep `confirm_timeout` well
-above it.
+means the X-Nix server is still running after the switch, or came back up if the switch restarted it;
+on a host switched by its own agent, as with `switch_from_cache`, it means X-Nix still reaches that
+agent. While a guarded switch runs, X-Nix polls it every `health_period`, so keep `confirm_timeout`
+well above it.
+
+`post_switch` runs after the activation, inside the guarded switch before its health checks, as
+root through `sudo -n /bin/sh -c` when `require_sudo` is on, so it can restart a system service such
+as a display manager; it runs on the switch agent's host and its status never changes the switch's.
+With `inhibit_sleep`, a switch or rollback holds a `systemd-inhibit --what=idle:sleep --mode=block`
+inhibitor on the activated host from its first step, the download from the cache included, until
+the job ends however it ends: the inhibitor reads a pipe only the job's own shell holds open, so the
+job ending, failing or being stopped releases it, and nothing the switch leaves running keeps it.
 
 ### Store
 
@@ -353,10 +365,11 @@ job history of every deployment on that host with the trigger `agent pull`.
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
 whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, and whose
-`fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook. Both modules put
-nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent` builds the agent, and
-`nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile` and `host`, and pull mode under `pull`
-with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs` and `requireSudo`:
+`fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
+sudo rules below. Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent`
+builds the agent, and `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile`, `host` and
+`sudoRules`, and pull mode under `pull` with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs`
+and `requireSudo`:
 
 ```nix
 services.x-nix = {
@@ -383,21 +396,23 @@ services.x-nix-agent = {
 };
 ```
 
-The service runs as the `x-nix` user, in the `systemd-journal` group so it can read the last
-collection from the journal. Update, switch, reboot and Collect Garbage run under `sudo -n` unless
-`require_sudo` is off, so grant that user, or `x-nix-agent` on a host with an agent, NOPASSWD rules for exactly the commands its deployments
-run, such as `/run/current-system/sw/bin/nixos-rebuild switch --flake <flake> --refresh`,
-`/run/current-system/sw/bin/systemctl reboot`,
-`/run/current-system/sw/bin/nix-collect-garbage --delete-older-than 7d`, with `switch_from_cache`
-`/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set /nix/store/*` and
-`/nix/store/*/bin/switch-to-configuration switch`, and for systemd-boot
-`/run/current-system/sw/bin/bootctl list --json=short` and
-`/run/current-system/sw/bin/bootctl set-oneshot *`, and for pull mode
-`/run/current-system/sw/bin/nixos-rebuild switch --flake git+*`. Rollbacks, and guarded switches that roll back,
-also run `/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --switch-generation *`,
-`/nix/var/nix/profiles/system/bin/switch-to-configuration switch` and
-`/nix/store/*-nixos-system-*/bin/switch-to-configuration *` under `sudo -n`. Both services carry
-`nix-diff` on their PATH for the derivation diff; a host without it says so on the page.
+The service runs as the `x-nix` user, and the agent as `x-nix-agent`, each in the `systemd-journal`
+group so it can read the last collection from the journal. Both modules ship NOPASSWD sudo rules for
+that user covering every command X-Nix runs under `sudo -n` (see `nix/sudo-rules.nix`), so a host
+needs nothing beyond enabling the module: nixos-rebuild in each mode with `--flake` (pull mode's
+`git+` switch included), a switch from the cache (`nix-env -p /nix/var/nix/profiles/system --set
+/nix/store/*` and `/nix/store/*-nixos-system-*/bin/switch-to-configuration` in each mode), rollback
+and the watchdog (`nix-env ... --switch-generation *` and the system profile's
+`switch-to-configuration switch`), Update Flake on a local checkout (`nix ... flake update --flake
+*`), `systemctl reboot`, `nix-collect-garbage`, the boot loader's reads and one-shot setters
+(`bootctl list --json=short`, `cat /boot/grub/grub.cfg`, `grub-editenv list`, `bootctl
+set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`), the `inhibit_sleep` inhibitor,
+`/bin/sh -c *` for `post_switch`, and `ssh` for `target_host`. Each command is matched by its path
+under `/run/current-system/sw/bin`, where both services find it. The service user activates whole
+systems and so is root-equivalent, which is why some rules take any arguments. Set `sudoRules =
+false` on either module to write your own, such as for a `rebuild_bin` outside the system profile.
+Both services carry `nix-diff` on their PATH for the derivation diff; a host without it says so on
+the page.
 
 ## License
 

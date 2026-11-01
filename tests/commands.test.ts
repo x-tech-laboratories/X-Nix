@@ -104,6 +104,12 @@ describe("the switch", () => {
 
     expect(run_shell(command).status).toBe(1);
   });
+
+  it("runs post_switch as root under sudo, or as is without require_sudo", () => {
+    expect(switch_command(settings({ post_switch: "systemctl restart display-manager" })))
+      .toBe("sudo -n nixos-rebuild switch --flake /etc/nixos; rc=$?; sudo -n /bin/sh -c 'systemctl restart display-manager'; (exit $rc)");
+    expect(switch_command(settings({ require_sudo: false, post_switch: "true" }))).toBe("nixos-rebuild switch --flake /etc/nixos; rc=$?; true; (exit $rc)");
+  });
 });
 
 describe("the switch from the cache", () => {
@@ -115,6 +121,16 @@ describe("the switch from the cache", () => {
       `sudo -n nix-env -p /nix/var/nix/profiles/system --set ${current_closure}`,
       `sudo -n ${current_closure}/bin/switch-to-configuration switch`,
     ].join(" && "));
+  });
+
+  it("sets the system profile only in the modes that make a boot entry", () => {
+    const activate = (mode: "boot" | "test" | "dry-activate") => switch_from_cache_command(settings(from_cache), current_closure, mode);
+
+    expect(activate("boot")).toContain(`--set ${current_closure} && sudo -n ${current_closure}/bin/switch-to-configuration boot`);
+    expect(activate("test")).not.toContain("nix-env");
+    expect(activate("test")).toContain(`${current_closure} && sudo -n ${current_closure}/bin/switch-to-configuration test`);
+    expect(activate("dry-activate")).not.toContain("nix-env");
+    expect(activate("dry-activate").endsWith("switch-to-configuration dry-activate")).toBe(true);
   });
 
   it("runs inside the wrapper and keeps its exit status after post_switch", () => {
@@ -129,8 +145,9 @@ describe("the switch from the cache", () => {
     expect(() => switch_from_cache_command(settings(from_cache), "/nix/store/x; rm -rf /")).toThrow("not a store path");
   });
 
-  it("needs a cache_url", () => {
+  it("needs a cache_url, and activates on the switch agent's own host rather than a target_host", () => {
     expect(() => settings({ switch_from_cache: true })).toThrow(ConfigError);
+    expect(() => settings({ ...from_cache, target_host: "root@odin" })).toThrow(/target_host/);
   });
 });
 

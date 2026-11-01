@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { AgentError } from "../src/server/agents/agent.ts";
-import { latest_slot } from "../src/server/deployment.ts";
+import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
+import { deployment_settings } from "../src/server/config.ts";
+import { Deployment, latest_slot } from "../src/server/deployment.ts";
+import { Store } from "../src/server/store.ts";
 import {
-  clock, collect, current_closure, cycle, eval_output, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result, rewind_drift,
+  clock, collect, current_closure, cycle, eval_output, FakeAgent, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result, rewind_drift,
   rewind_evaluation, rewind_schedule, status_of, target_closure,
 } from "./fake_agent.ts";
 
@@ -493,6 +495,116 @@ describe("switch from cache", () => {
 
     expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
   });
+
+  it("activates boot and test from the cache too, refusing them before an evaluation", async () => {
+    const harness = make_deployment(from_cache);
+    expect(harness.deployment.action_refusal("boot")).toContain("successful evaluation");
+    await collect(harness);
+
+    await harness.deployment.act("boot");
+    const boot = harness.deployment.running_job()!;
+    harness.agent.end(harness.agent.last_run("switch-to-configuration")!, "", 0);
+    await cycle(harness);
+    await harness.deployment.act("test");
+
+    expect(boot.command).toContain(`--set ${target_closure} && sudo -n ${target_closure}/bin/switch-to-configuration boot`);
+    expect(harness.deployment.running_job()!.command).toContain(`${target_closure}/bin/switch-to-configuration test`);
+    expect(harness.deployment.running_job()!.command).not.toContain("nixos-rebuild");
+  });
+
+  it("guards a switch from the cache on the host's own agent, which confirms it, and runs post_switch as root", async () => {
+    const harness = make_deployment({ ...from_cache, host: "host", pre_switch_checks: ["true"], magic_rollback: true, post_switch: "systemctl restart greetd" });
+    await collect(harness);
+
+    await harness.deployment.act("switch");
+    const run = harness.agent.last_run("x-nix-switch")!;
+    harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
+    await cycle(harness);
+
+    expect(run.command).toContain("mark phase pre-switch-checks");
+    expect(run.command).toContain(`copy --from https://cache.example/fleet ${target_closure}`);
+    expect(run.command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
+    expect(run.command).toContain("sudo -n /bin/sh -c 'systemctl restart greetd'");
+    expect(run.command).toContain("The switch from the cache failed with status");
+    expect(run.command).not.toContain("nixos-rebuild");
+    expect(harness.agent.commands.some((command) => /^sh -c 'touch \/tmp\/x-nix-switch-[0-9a-f]+\/confirmed'$/.test(command))).toBe(true);
+  });
+
+  it("keeps the host awake through the whole switch with inhibit_sleep", async () => {
+    const harness = make_deployment({ ...from_cache, inhibit_sleep: true });
+    await collect(harness);
+
+    await harness.deployment.act("switch");
+
+    const command = harness.deployment.running_job()!.command;
+    expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
+    expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("copy --from"));
+  });
+
+  it("rolls back to an earlier generation on the host's own agent", async () => {
+    const harness = make_deployment({ ...from_cache, inhibit_sleep: true });
+    harness.agent.answers.push(["profiles/system-*-link", result(0, [
+      "current\t/nix/store/b-system", "profile\tsystem-2-link",
+      "generation\tsystem-1-link\t1700000000\t/nix/store/a-system\t26.05", "generation\tsystem-2-link\t1700100000\t/nix/store/b-system\t26.11",
+    ].join("\n"))]);
+
+    expect((await harness.deployment.roll_back(1, "the new kernel panics")).ok).toBe(true);
+
+    const job = harness.deployment.running_job()!;
+    expect(job.agent).toBeNull();
+    expect(job.command).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1 && sudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
+    expect(job.command).toContain("systemd-inhibit");
+  });
+});
+
+// ── Small host fed by the server ─────────────────────────────────────────────
+
+describe("a small host evaluated and built elsewhere", () => {
+  it("evaluates and builds on the server, then its own agent switches from the cache by itself", async () => {
+    const server = new FakeAgent();
+    const pi = new FakeAgent();
+    const agents = new AgentPool("server", server);
+    agents.add("pi", pi);
+    const store = new Store(":memory:");
+    const settings = deployment_settings({
+      id: "pi", host: "pi", flake: "github:example/nixos-config", configuration: "pi", eval_agent: "server", build_agent: "server",
+      build_root_dir: "/var/lib/x-nix/build-roots", cache_url: "https://attic.example/fleet", switch_from_cache: true, auto_switch: true,
+      auto_switch_after: "30m", magic_rollback: true, inhibit_sleep: true, post_switch: "systemctl restart greetd",
+    });
+    const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
+
+    await deployment.cycle();
+    const evaluation = server.last_run("@@x-nix-eval")!;
+    server.end(evaluation, eval_output(result(0, `${target_closure}\n`), metadata()), 0);
+    await deployment.cycle();
+    expect(evaluation.command).toContain("nixosConfigurations.\\\"pi\\\".config.system.build.toplevel");
+    expect(pi.runs).toHaveLength(0);
+    expect(deployment.cached_target()).toBe(target_closure);
+
+    await deployment.act("build");
+    const build = server.last_run("build")!;
+    expect(build.command).toContain("--out-link /var/lib/x-nix/build-roots/pi");
+    expect(build.command).toContain("path-info --store https://attic.example/fleet");
+    server.end(build, `${target_closure}\n`, 0);
+    await deployment.cycle();
+    expect(pi.runs).toHaveLength(0);
+
+    const drifting = deployment.evaluation();
+    drifting.drift_since_epoch = clock.now - 1801;
+    store.save_evaluation(deployment.id, drifting);
+    await deployment.cycle();
+    await deployment.cycle();
+
+    const switching = pi.last_run("switch-to-configuration")!;
+    expect(deployment.running_job()).toMatchObject({ kind: "switch", agent: "pi", trigger: "automatic" });
+    expect(switching.command).toContain(`copy --from https://attic.example/fleet ${target_closure}`);
+    expect(switching.command).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+    expect(switching.command).toContain("x-nix-watchdog");
+    expect(switching.command).toContain("systemd-inhibit");
+    expect(switching.command).toContain("sudo -n /bin/sh -c ");
+    expect(switching.command).not.toContain("nixos-rebuild");
+    expect(server.runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
+  });
 });
 
 // ── Automatic switch ─────────────────────────────────────────────────────────
@@ -714,12 +826,11 @@ describe("daily jobs", () => {
     expect(() => make_deployment({ build_at: "half past two" })).toThrow(/build_at/);
   });
 
-  it("refuse a switch from the cache that would skip the guarded switch", () => {
+  it("take a switch from the cache with the guarded switch's checks, but not with a target_host", () => {
     const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
 
-    expect(() => make_deployment({ ...from_cache, magic_rollback: true })).toThrow(/switch_from_cache/);
-    expect(() => make_deployment({ ...from_cache, health_commands: ["true"] })).toThrow(/switch_from_cache/);
-    expect(() => make_deployment(from_cache)).not.toThrow();
+    expect(() => make_deployment({ ...from_cache, magic_rollback: true, pre_switch_checks: ["true"], health_commands: ["true"] })).not.toThrow();
+    expect(() => make_deployment({ ...from_cache, target_host: "root@host" })).toThrow(/target_host/);
   });
 
   it("take the latest slot, never one in the future", () => {

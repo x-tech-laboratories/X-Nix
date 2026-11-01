@@ -235,6 +235,7 @@ export interface Deployment {
     health_urls: string[];
     health_period: number;
     health_timeout: number;
+    inhibit_sleep: boolean;
   };
 }
 

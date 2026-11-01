@@ -184,7 +184,8 @@ function safety_text(deployment: Deployment): string {
   const health = safety.health_commands.length + safety.health_urls.length;
   if (health > 0) parts.push(`${health} health check${health === 1 ? "" : "s"} every ${safety.health_period}s for up to ${safety.health_timeout}s`);
   if (safety.magic_rollback) parts.push(`rolled back unless confirmed within ${safety.confirm_timeout}s of an activation that takes up to ${safety.activation_timeout}s`);
-  return parts.length === 0 ? "none; nixos-rebuild runs alone" : parts.join("; ");
+  if (safety.inhibit_sleep) parts.push("the host is kept awake while it switches");
+  return parts.length === 0 ? "none; the switch runs alone" : parts.join("; ");
 }
 
 // ── What a switch changes ────────────────────────────────────────────────────

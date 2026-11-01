@@ -1,21 +1,23 @@
 // Safer switches: checks before a switch, health checks after it, and a watchdog on the activated host that rolls it
 // back, plus the system profile's generations and a rollback to any of them.
 //
-// A guarded switch is one long run. It runs the pre-switch checks where the switch activates and refuses on the first
-// that fails, before anything changes. When the mode activates the new system and magic_rollback or a health check is
-// set, it then starts a watchdog on that host, detached into its own session so it outlives the run, the agent and any
-// lost connection, and runs nixos-rebuild. Once activated it runs the health commands every health_period until they
-// all pass or health_timeout passes, then prints a line asking X-Nix to confirm. X-Nix runs the HTTP checks and confirms
-// by touching a file in the watchdog's folder. The watchdog rolls back to the previous system when told to, when the
+// A switch activates either with nixos-rebuild or, with switch_from_cache, by fetching the evaluated store path from the
+// cache and running its switch-to-configuration; both run plain or guarded alike. A guarded switch is one long run. It
+// runs the pre-switch checks where the switch activates and refuses on the first that fails, before anything changes.
+// When the mode activates the new system and magic_rollback or a health check is set, it then starts a watchdog on that
+// host, detached into its own session so it outlives the run, the agent and any lost connection, and activates. Once
+// activated it runs the health commands every health_period until they all pass or health_timeout passes, then prints
+// a line asking X-Nix to confirm. X-Nix runs the HTTP checks and confirms by touching a file in the watchdog's folder. The watchdog rolls back to the previous system when told to, when the
 // activation outlasts activation_timeout, or, with magic_rollback, when no confirmation arrives within confirm_timeout
 // (plus health_timeout when there are health checks). The run ends by printing the watchdog's outcome on a marker line,
-// which the server reads to say why a switch was refused or rolled back.
+// which the server reads to say why a switch was refused or rolled back. With inhibit_sleep, a sleep inhibitor on the
+// activated host lasts exactly as long as the run, since it reads a pipe that only the run's own shell holds open.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { DeploymentSettings } from "../config.ts";
 import { format_duration } from "../durations.ts";
-import { shell_quote, switch_command, type SwitchMode } from "./commands.ts";
+import { shell_quote, switch_command, switch_from_cache_command, type SwitchMode } from "./commands.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -102,12 +104,18 @@ function privileged(settings: DeploymentSettings): string {
 
 // ── Switch ───────────────────────────────────────────────────────────────────
 
-// The command a switch job runs: nixos-rebuild alone, or wrapped in the checks and watchdog its settings ask for.
-export function switch_job_command(settings: DeploymentSettings, mode: SwitchMode, token: string): string {
-  return is_guarded(settings, mode) ? guarded_switch_command(settings, mode, token) : switch_command(settings, mode);
+// The command a switch job runs: the activation alone, or wrapped in the checks and watchdog its settings ask for.
+export function switch_job_command(settings: DeploymentSettings, mode: SwitchMode, token: string, store_path: string | null = null): string {
+  const command = is_guarded(settings, mode) ? guarded_switch_command(settings, mode, token, store_path) : activation_command(settings, mode, store_path);
+  return kept_awake(settings, command);
 }
 
-export function guarded_switch_command(settings: DeploymentSettings, mode: SwitchMode, token: string): string {
+// What activates the new system: nixos-rebuild, or the store path fetched from the cache when one is given.
+function activation_command(settings: DeploymentSettings, mode: SwitchMode, store_path: string | null): string {
+  return store_path === null ? switch_command(settings, mode) : switch_from_cache_command(settings, store_path, mode);
+}
+
+export function guarded_switch_command(settings: DeploymentSettings, mode: SwitchMode, token: string, store_path: string | null = null): string {
   const folder = watch_folder(token);
   const host = (command: string) => on_host(settings, command);
   const lines = [`mark() { echo "${switch_mark} $*"; }`];
@@ -133,14 +141,15 @@ export function guarded_switch_command(settings: DeploymentSettings, mode: Switc
   }
 
   lines.push(`mark phase ${mode}`);
-  lines.push(`${switch_command(settings, mode)}; rc=$?`);
+  lines.push(`${activation_command(settings, mode, store_path)}; rc=$?`);
   if (!watching) {
     lines.push("exit $rc");
     return lines.join("\n");
   }
 
   lines.push("failure=''");
-  lines.push(`if [ $rc -ne 0 ]; then failure="nixos-rebuild ${mode} failed with status $rc"; signal_rollback "$failure"; else`);
+  const activation = store_path === null ? `nixos-rebuild ${mode}` : `The ${mode} from the cache`;
+  lines.push(`if [ $rc -ne 0 ]; then failure="${activation} failed with status $rc"; signal_rollback "$failure"; else`);
   lines.push(`  ${host(`touch ${folder}/activated`)} || true`);
   lines.push("  mark activated");
   if (settings.health_commands.length > 0) {
@@ -227,7 +236,7 @@ export function watchdog_script(settings: DeploymentSettings, mode: SwitchMode):
   ].join("\n");
 }
 
-// What X-Nix runs, on the agent that runs the switch, to confirm it still reaches the activated host.
+// What X-Nix runs on the agent that runs the switch to confirm it still reaches the activated host, or that agent itself.
 export function confirm_command(settings: DeploymentSettings, token: string): string {
   return on_host(settings, `touch ${watch_folder(token)}/confirmed`);
 }
@@ -302,7 +311,31 @@ export function rollback_command(settings: DeploymentSettings, generation: numbe
   if (!Number.isInteger(generation) || generation < 1) throw new Error(`${generation} is not a generation number`);
   const raise = privileged(settings);
   const inner = `${raise}nix-env -p ${system_profile} --switch-generation ${generation} && ${raise}${system_profile}/bin/switch-to-configuration switch`;
-  return `echo ${shell_quote(`Rolling back to generation ${generation}: ${reason}`)}\n${on_host(settings, inner)}`;
+  return kept_awake(settings, `echo ${shell_quote(`Rolling back to generation ${generation}: ${reason}`)}\n${on_host(settings, inner)}`);
+}
+
+// ── Keeping the host awake ───────────────────────────────────────────────────
+
+// The words that hold off idle and sleep on the activated host until the inhibitor's stdin closes.
+export function inhibitor_words(settings: DeploymentSettings): string {
+  return `${privileged(settings)}systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat`;
+}
+
+// Runs the command with inhibit_sleep's inhibitor held through a pipe only this shell keeps open, so it ends with the run.
+export function kept_awake(settings: DeploymentSettings, command: string): string {
+  if (!settings.inhibit_sleep) return command;
+  const warning = shell_quote("Could not keep the host awake during the switch; switching anyway");
+  return [
+    'if hold=$(mktemp -d) && mkfifo "$hold/pipe"; then',
+    `  { ${on_host(settings, inhibitor_words(settings))} > /dev/null || echo ${warning}; } < "$hold/pipe" &`,
+    '  exec 9> "$hold/pipe"',
+    '  rm -rf "$hold"',
+    "else",
+    `  echo ${warning}`,
+    "fi",
+    // The switch runs without the pipe, so nothing it leaves running, such as the watchdog, holds the inhibitor.
+    `sh -c ${shell_quote(command)} 9>&-`,
+  ].join("\n");
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
