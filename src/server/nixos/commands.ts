@@ -206,6 +206,12 @@ export function is_store_path(value: string): boolean {
 }
 
 // Fetches the evaluated closure from the cache and activates it in the mode asked, so the host neither evaluates nor builds.
+// Exits 0 only when the cache already holds the store path, so a switch from it can fetch it.
+export function cache_holds_command(settings: DeploymentSettings, store_path: string): string {
+  if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
+  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} ${shell_quote(store_path)} >/dev/null`;
+}
+
 export function switch_from_cache_command(settings: DeploymentSettings, store_path: string, mode: SwitchMode = "switch"): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const path = shell_quote(store_path);

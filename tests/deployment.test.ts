@@ -496,6 +496,26 @@ describe("switch from cache", () => {
     expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
   });
 
+  it("waits for the cache to hold the new system before switching automatically", async () => {
+    const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
+    const missing: [string, ReturnType<typeof result>] = ["path-info --store https://cache.example/fleet", result(1, "", "path is not valid")];
+    harness.agent.answers.push(missing);
+    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    await collect(harness);
+
+    await cycle(harness);
+    await collect(harness);
+
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(messages_of(harness).some((text) => text.includes("once the cache holds the new system"))).toBe(true);
+
+    harness.agent.answers.splice(0);
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+  });
+
   it("activates boot and test from the cache too, refusing them before an evaluation", async () => {
     const harness = make_deployment(from_cache);
     expect(harness.deployment.action_refusal("boot")).toContain("successful evaluation");

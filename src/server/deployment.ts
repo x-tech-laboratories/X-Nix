@@ -29,7 +29,7 @@ import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import { closure_command, diff_command, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
-  build_command, can_update, eval_command, reboot_command, split_eval_output, switch_modes,
+  build_command, cache_holds_command, can_update, eval_command, reboot_command, split_eval_output, switch_modes,
   timed_out_exit_code, update_command, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
@@ -142,6 +142,7 @@ const diff_timeout_in_seconds = 300;
 const closure_timeout_in_seconds = 120;
 // How long confirming a switch or telling its watchdog to roll back may take.
 const signal_timeout_in_seconds = 60;
+const cache_check_timeout_in_seconds = 60;
 // How long one health check's URL may take to answer.
 const http_check_timeout_in_milliseconds = 10_000;
 
@@ -166,6 +167,8 @@ export class Deployment {
   private force_eval = false;
   // The target an automatic switch is due for on the next cycle.
   private auto_switch_due: string | null = null;
+  // The target an automatic switch from the cache waits on until the cache holds it.
+  private cache_wait_target: string | null = null;
   // Cycles and actions run one at a time.
   private queue: Promise<unknown> = Promise.resolve();
   private readonly http_check: (url: string) => Promise<string | null>;
@@ -539,11 +542,19 @@ export class Deployment {
       return [{ level: "info", text: `Switching automatically once the drift has lasted ${format_duration(this.settings.auto_switch_after)}` }];
     }
     this.auto_switch_due = target;
+    if (this.cache_wait_target === target) return [{ level: "info", text: "Switching automatically once the cache holds the new system" }];
     return [{ level: "warning", text: `Drift has lasted ${format_age(waited)}; switching automatically` }];
   }
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
+    // A switch from the cache before the build reaches it would fail, so it waits and every cycle checks again.
+    if (this.settings.switch_from_cache && !(await this.cache_holds(target))) {
+      if (this.cache_wait_target !== target) this.store.add_event(this.id, this.now(), "info", `Waiting for ${target} to reach the cache before switching automatically`);
+      this.cache_wait_target = target;
+      return;
+    }
+    this.cache_wait_target = null;
     const command = this.command_for("switch");
     const launched = await this.launch("switch", command, "automatic", false);
     // A host that never answered started nothing, so a later cycle may try again.
@@ -556,6 +567,11 @@ export class Deployment {
     this.store.save_evaluation(this.id, evaluation);
     if (launched.job_id === null) this.record_failed_launch("switch", command, "automatic", launched.error);
     else this.store.add_event(this.id, this.now(), "info", "Automatic switch started");
+  }
+
+  private async cache_holds(target: string): Promise<boolean> {
+    const result = await this.agents.get(this.agent_for("switch")).run(cache_holds_command(this.settings, target), cache_check_timeout_in_seconds);
+    return result.exit_code === 0;
   }
 
   // ── Daily jobs ───────────────────────────────────────────────────────────

@@ -43,7 +43,9 @@ successful evaluation, which may run on `eval_agent`, and fetches it with `nix c
 with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
 activating on the switch agent's own host, so it takes no `target_host`. The closure must already be in the cache,
 built and pushed by a cache's Build or Build all (or anything else that pushes, such as `attic watch-store`), and
-signed by a key the host trusts; `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
+signed by a key the host trusts; `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. An automatic
+switch waits until the cache holds the new closure, checking again every cycle, so drift seen before the nightly
+build reaches the cache switches once it does.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
