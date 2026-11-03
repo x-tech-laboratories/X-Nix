@@ -345,7 +345,9 @@ connected.
 
 A host listed under `wake_on_lan` is woken before an operation on it when its agent is not connected:
 X-Nix sends a magic packet from the server and waits for the agent to dial in, then starts the
-operation. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's
+operation. A job appears at once with the progress `Waking <host>` and starts its run once the agent
+is back, or fails with the reason when it does not come back within `timeout`; Reboot, Set next boot
+and a download wait for the host instead. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's
 Build, Push and Build all, an install or media build run by that host, and a build product's download
 all wake it, whether started by hand, on a schedule or by a fleet run. The periodic read, evaluation
 and cache check never do, so a sleeping host reads as unreachable until something wakes it. Each

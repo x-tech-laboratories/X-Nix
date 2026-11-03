@@ -43,7 +43,7 @@ import {
   type Collection, type StoreReading,
 } from "./nixos/garbage.ts";
 import { parse_probe, probe_script, reboot_required, type ProbeFields } from "./nixos/probe.ts";
-import { follow, type Followed, type Translate } from "./runs.ts";
+import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -707,14 +707,20 @@ export class Deployment {
   private async launch(kind: JobKind, command: string, trigger: string, announce: boolean): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const agent = this.agent_for(kind);
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for any job but the periodic evaluation, which would keep it from ever sleeping.
-      await (kind === "eval" ? this.agents.get(agent) : await this.agents.awake(agent)).start(run_id, command);
+      ({ waking } = await start_run(this.agents, agent, run_id, command, null, kind !== "eval"));
     } catch (error) {
       const unreachable = error instanceof AgentError && error.unreachable;
       return { job_id: null, error: (error as Error).message, unreachable };
     }
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent, run_id, trigger, started_epoch: this.now() });
+    if (waking !== null) {
+      track_wake(this.store, job_id, agent ?? this.agents.own_host, waking, this.now, (error) => {
+        this.store.add_event(this.id, this.now(), "error", `Could not start the ${job_noun(kind)}: ${error}`);
+      });
+    }
     if (announce) this.store.add_event(this.id, this.now(), "info", `${capitalise(job_noun(kind))} started`);
     return { job_id, error: "", unreachable: false };
   }

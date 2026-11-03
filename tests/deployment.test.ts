@@ -1024,3 +1024,43 @@ describe("live build progress", () => {
     expect(JSON.parse(job.live!).activities["5"].name).toBe("hello-2.12");
   });
 });
+
+// ── Sleeping host ────────────────────────────────────────────────────────────
+
+describe("a sleeping host that can be woken", () => {
+  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout }]]);
+
+  it("gets its job at once as waking, and the run starts once its agent dials in", async () => {
+    const pi = new FakeAgent();
+    let wakes = 0;
+    const agents = new AgentPool("server", new FakeAgent(), async () => void wakes++);
+    agents.set_wake(wake(60));
+    const store = new Store(":memory:");
+    const deployment = new Deployment(deployment_settings({ id: "pi", host: "pi" }), { store, agents, now: () => clock.now });
+
+    const outcome = await deployment.act("update");
+    await deployment.cycle();
+    expect(outcome.ok).toBe(true);
+    expect(wakes).toBe(1);
+    expect(store.job(outcome.job_id!)).toMatchObject({ state: "running", progress: "Waking pi" });
+
+    agents.add("pi", pi);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pi.runs).toHaveLength(1);
+    expect(store.job(outcome.job_id!)?.run_id).toBe(pi.runs[0].run_id);
+  });
+
+  it("fails the job with why once the host does not wake in time", async () => {
+    const agents = new AgentPool("server", new FakeAgent(), async () => {});
+    agents.set_wake(wake(0.02));
+    const store = new Store(":memory:");
+    const deployment = new Deployment(deployment_settings({ id: "pi", host: "pi" }), { store, agents, now: () => clock.now });
+
+    const outcome = await deployment.act("update");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The job could not be started" });
+    expect(store.job(outcome.job_id!)?.output).toMatch(/did not connect within/);
+    expect(deployment.running_job()).toBeNull();
+  });
+});

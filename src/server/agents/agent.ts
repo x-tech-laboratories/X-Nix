@@ -66,6 +66,8 @@ export class AgentPool {
   private wake_settings = new Map<string, WakeSettings>();
   // Who waits on each host's agent to dial in after waking it.
   private readonly waiting = new Map<string, Set<() => void>>();
+  // The long runs waiting on their host to wake before they start.
+  private readonly starting = new Set<string>();
 
   constructor(own_host: string, own_agent: Agent, send_wake: SendWake = send_magic_packet) {
     this.own_host = own_host;
@@ -120,5 +122,24 @@ export class AgentPool {
 
     if (!(await arrived)) return new MissingAgent(name, `${name} was sent a wake-on-LAN packet, but its agent did not connect within ${format_duration(settings.timeout)}`);
     return this.get(name);
+  }
+
+  // Whether a host's agent is away and the host can be woken.
+  can_wake(host: string | null): boolean {
+    const name = host ?? this.own_host;
+    return !this.agents.has(name) && this.wake_settings.has(name);
+  }
+
+  // Wakes a host and starts a long run on it, counting the run as starting until then; rejects with why it did not start.
+  start_when_awake(host: string | null, run_id: string, command: string, stdin: string | null = null): Promise<void> {
+    this.starting.add(run_id);
+    return this.awake(host)
+      .then(async (agent) => void (await agent.start(run_id, command, stdin)))
+      .finally(() => this.starting.delete(run_id));
+  }
+
+  // Whether a long run waits on its host to wake before it starts.
+  is_starting(run_id: string | null): boolean {
+    return run_id !== null && this.starting.has(run_id);
   }
 }

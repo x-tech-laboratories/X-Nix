@@ -20,6 +20,8 @@ export type Translate = (job: Job, chunk: string, ended: boolean) => string;
 export async function follow(
   store: Store, agents: AgentPool, job: Job, now: () => number, describe: (exit_code: number) => string | null = () => null, translate: Translate | null = null,
 ): Promise<Followed> {
+  // A run still waiting on its host to wake has nothing to read yet.
+  if (agents.is_starting(job.run_id)) return { outcome: "running", error: "" };
   const agent = agents.get(job.agent);
   let offset = job.output_offset;
   let poll;
@@ -43,4 +45,28 @@ export async function follow(
   store.finish_job(job.id, error === null ? "succeeded" : "failed", poll.exit_code, error, now());
   await agent.forget(job.run_id!);
   return { outcome: "ended", error: error ?? "" };
+}
+
+// ── Starting ─────────────────────────────────────────────────────────────────
+
+// Starts a job's long run at once, or, for a sleeping host that can be woken, answers with the wake that starts it later.
+export async function start_run(
+  agents: AgentPool, host: string | null, run_id: string, command: string, stdin: string | null = null, wake = true,
+): Promise<{ waking: Promise<void> | null }> {
+  if (wake && agents.can_wake(host)) return { waking: agents.start_when_awake(host, run_id, command, stdin) };
+  await agents.get(host).start(run_id, command, stdin);
+  return { waking: null };
+}
+
+// Shows a job as waking its host until its run starts, and fails it with why when the run never does.
+export function track_wake(
+  store: Store, job_id: number, host: string, waking: Promise<void>, now: () => number, on_failure: (error: string) => void = () => {},
+): void {
+  store.set_progress(job_id, `Waking ${host}`);
+  waking.catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    store.append_output(job_id, `${message}\n`);
+    store.finish_job(job_id, "failed", null, "The job could not be started", now());
+    on_failure(message);
+  });
 }

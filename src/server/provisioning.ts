@@ -19,7 +19,7 @@ import {
   parse_media_record,
   type InstallRecord, type InstallRequest, type MediaFormat,
 } from "./nixos/provision.ts";
-import { follow } from "./runs.ts";
+import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, ProvisionedAgent, Store } from "./store.ts";
 import { generate_agent_key, key_fingerprint } from "../shared/agent_keys.ts";
 
@@ -197,12 +197,19 @@ export class Provisioner {
 
   private async launch(owner: string, kind: JobKind, agent: string | null, command: string, stdin: string | null, run_id?: string): Promise<{ job_id: number | null; error: string }> {
     const id = run_id ?? `${owner}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    let waking: Promise<void> | null;
     try {
-      await (await this.agents.awake(agent)).start(id, command, stdin);
+      ({ waking } = await start_run(this.agents, agent, id, command, stdin));
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
     }
-    return { job_id: this.store.create_job({ deployment_id: owner, kind, command, agent, run_id: id, trigger: "manual", started_epoch: this.now() }), error: "" };
+    const job_id = this.store.create_job({ deployment_id: owner, kind, command, agent, run_id: id, trigger: "manual", started_epoch: this.now() });
+    if (waking !== null) {
+      track_wake(this.store, job_id, agent ?? this.agents.own_host, waking, this.now, (error) => {
+        this.store.add_event(owner, this.now(), "error", `Could not start the ${kind}: ${error}`);
+      });
+    }
+    return { job_id, error: "" };
   }
 
   private serial<Answer>(work: () => Promise<Answer>): Promise<Answer> {

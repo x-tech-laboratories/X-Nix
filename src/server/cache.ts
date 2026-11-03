@@ -20,7 +20,7 @@ import {
 } from "./nixos/attic.ts";
 import { timed_out_exit_code } from "./nixos/commands.ts";
 import { parse_metadata } from "./nixos/flake.ts";
-import { follow } from "./runs.ts";
+import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, JobWithOutput, Store } from "./store.ts";
 import { format_duration } from "./durations.ts";
 
@@ -290,13 +290,20 @@ export class Cache {
 
   private async launch(kind: JobKind, command: string): Promise<{ job_id: number | null; error: string }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for a build or push, but not for the periodic check.
-      await (kind === "check" ? this.agents.get(this.settings.host) : await this.agents.awake(this.settings.host)).start(run_id, command);
+      ({ waking } = await start_run(this.agents, this.settings.host, run_id, command, null, kind !== "check"));
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
     }
     const trigger = kind === "check" ? "schedule" : "manual";
-    return { job_id: this.store.create_job({ deployment_id: this.id, kind, command, agent: this.settings.host, run_id, trigger, started_epoch: this.now() }), error: "" };
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
+    if (waking !== null) {
+      track_wake(this.store, job_id, this.settings.host ?? this.agents.own_host, waking, this.now, (error) => {
+        this.store.add_event(this.id, this.now(), "error", `Could not start the ${kind}: ${error}`);
+      });
+    }
+    return { job_id, error: "" };
   }
 }
