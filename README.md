@@ -23,19 +23,49 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 | `HOST`              | `127.0.0.1`   | The address the server listens on.       |
 | `PORT`              | `7720`        | The port the server listens on.          |
 | `X_NIX_PASSWORD_HASH_FILE` | required | The login password's hash, from `npm run hash-password`. |
-| `X_NIX_CONFIG`      | none          | The config file naming the deployments.  |
+| `X_NIX_CONFIG`      | none          | The config file naming the flakes, deployments and caches. |
 | `X_NIX_STATE_DIR`   | `state`       | Where the database and job output live.  |
 | `X_NIX_SERVER_NAME` | the hostname  | What the page calls the server's machine. |
 | `X_NIX_WEBHOOK_SECRET_FILE` | none  | The push webhook's shared secret; the webhook is off without it. |
-| `X_NIX_WEBHOOK_DEBOUNCE` | `10s`    | How long after the last push to a deployment its evaluation starts. |
+| `X_NIX_WEBHOOK_DEBOUNCE` | `10s`    | How long after the last push to a deployment or flake it is evaluated or read. |
+
+## Flakes
+
+The config file lists `flakes`, each a flake X-Nix reads and updates once for every deployment and
+cache that names it by its id in `flake`; see `config.example.json`. Every `interval` the flake's
+host reads `nix flake metadata`, and the Flakes page shows its revision, when it last changed and
+each locked input with its age. Update runs as a long run on that host: a local checkout's lock is
+written in place (with `sudo -n` under `require_sudo`), and a `github:` flake with a `push_ssh_key`
+is cloned unprivileged, updated, committed and pushed back over SSH, with github.com's host key
+taken from the system's known hosts. Once an update ends well, every deployment and cache naming
+the flake evaluates afresh. A flake reference no flake declares still works for evaluation, build
+and switch, but has no page and no Update.
+
+| Setting          | Default                       | Meaning                                                    |
+| ---------------- | ----------------------------- | ---------------------------------------------------------- |
+| `id`             | required                      | Letters, digits, `-` and `_`, unique among flakes, deployments and caches. |
+| `name`           | the id                        | What the page calls it.                                    |
+| `url`            | required                      | The flake reference, such as `github:owner/config` or `/etc/nixos`. |
+| `host`           | the server's own host         | The host that reads and updates it; a local checkout's own host. |
+| `interval`       | `1h`                          | How often its metadata is read.                            |
+| `timeout`        | `2m`                          | How long one read may take.                                |
+| `job_poll`       | `30s`                         | How often a running update is read.                        |
+| `max_input_age`  | none                          | Warn once the oldest locked input is older than this.      |
+| `update_at`      | none                          | Update daily at this local time, such as `02:00`.          |
+| `push_ssh_key`   | none                          | The key a `github:` flake's update pushes with.            |
+| `commit_author`  | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
+| `commit_message` | `chore(flake): update inputs` | The update commit's message.                               |
+| `require_sudo`   | `true`                        | Update a local checkout under `sudo -n`.                   |
+| `nix_bin`        | `nix`                         | The nix program.                                           |
+| `nix_args`       | the experimental features     | Arguments before nix's subcommand.                         |
 
 ## Deployments
 
 The config file lists `deployments`, each a NixOS host and the flake that describes it; see
 `config.example.json`. Every `interval` X-Nix reads the host's running system, and every
 `eval_interval` it evaluates `<flake>#nixosConfigurations.<configuration>.config.system.build.toplevel`
-and compares the two store paths. Update, build, switch, garbage collection and evaluation run as
-long runs that survive a restart of X-Nix; each lands in the job history with its output.
+and compares the two store paths. Build, switch, garbage collection and evaluation run as long runs
+that survive a restart of X-Nix; each lands in the job history with its output.
 
 With `switch_from_cache`, a switch never evaluates or builds on the host: it takes the store path of the latest
 successful evaluation, which may run on `eval_agent`, and fetches it with `nix build`, so the host's Nix daemon
@@ -59,17 +89,16 @@ whose agent is not connected reads as unreachable.
 | `id`                | required                          | Letters, digits, `-` and `_`.                                        |
 | `name`              | the id                            | What the page calls it.                                              |
 | `host`              | the server's own host             | The host that is read, rebooted, and by default runs every job.      |
-| `flake`             | `/etc/nixos`                      | The flake reference.                                                 |
+| `flake`             | `/etc/nixos`                      | The id of a flake under `flakes`, or a flake reference of its own.   |
 | `configuration`     | the host's hostname               | The `nixosConfigurations` attribute.                                 |
 | `interval`          | `5m`                              | How often the host is read.                                          |
 | `eval_interval`     | `1h`                              | How often the flake is evaluated.                                    |
 | `retry_interval`    | `15m`                             | How soon a failed evaluation is tried again.                         |
 | `eval_timeout`      | `10m`                             | How long an evaluation may run.                                      |
 | `job_poll`          | `30s`                             | How often a running job is read.                                     |
-| `max_input_age`     | none                              | Warn once the oldest locked input is older than this.                |
 | `drift_status`      | `warning`                         | The status drift raises.                                             |
 | `reboot_status`     | `warning`                         | The status a needed reboot raises.                                   |
-| `require_sudo`      | `true`                            | Run update, switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
+| `require_sudo`      | `true`                            | Run switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
 | `nix_bin`           | `nix`                             | The nix program.                                                     |
 | `rebuild_bin`       | `nixos-rebuild`                   | The nixos-rebuild program.                                           |
 | `nix_args`          | flakes enabled                    | Arguments before every nix command.                                  |
@@ -80,13 +109,12 @@ whose agent is not connected reads as unreachable.
 | `build_args`        | `--keep-going --print-build-logs` | Arguments for Build.                                                 |
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
-| `switch_agent`      | the host                          | The host that runs update and switch.                                |
+| `switch_agent`      | the host                          | The host that runs switch.                                           |
 | `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
 | `inhibit_sleep`     | `false`                           | Keep the activated host from idling or sleeping while a switch or rollback runs. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
-| `update_at`         | none                              | Update the flake daily at this local time, such as `02:00`.          |
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command the switch runs inside, outside sudo.                      |
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`, which keeps the switch's status. |
@@ -99,9 +127,6 @@ whose agent is not connected reads as unreachable.
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
 | `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |
 | `build_progress`    | `true`                            | Read Build's structured log into counts of what builds and downloads. |
-| `push_ssh_key`      | none                              | The key a `github:` flake's update pushes with.                      |
-| `commit_author`     | `X-Nix <x-nix@localhost>`         | The update commit's author.                                          |
-| `commit_message`    | `chore(flake): update inputs`     | The update commit's message.                                         |
 | `gc`                | the defaults below                | How the host's Nix store is watched, or `false` to leave it alone.   |
 | `boot`              | `true`                            | Read the host's boot entries, and let the Boot page set the next boot. |
 | `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
@@ -114,7 +139,7 @@ builds and switches `github:owner/repo?rev=<commit>` (or `?ref=<tag>`), and for 
 `git+https://…?rev=<commit>&allRefs=1` (or `?ref=refs/tags/<tag>`); a plain checkout such as
 `/etc/nixos` is read as `git+file://`. A `path:` or tarball flake cannot be pinned. The deployment's
 page shows the pin and sets another, follows the branch head again, or goes back to the settings'
-`pin`. Update Flake still updates the branch, and a pinned deployment ignores pushes.
+`pin`. The flake's Update still updates the branch, and a pinned deployment ignores pushes.
 
 ### Switches
 
@@ -188,7 +213,7 @@ unprivileged.
 
 ## Fleet
 
-The Fleet page runs Update, Build, Switch or Reboot across many deployments at once. Pick them by
+The Fleet page runs Build, Switch or Reboot across many deployments at once. Pick them by
 checkbox, or with a selector of space-separated terms, each a glob on the id or name (`web-*`) or a
 tag (`@canary`); any term matching picks the deployment. No more than `parallel` run at once. Each
 host's part is an ordinary job whose trigger names the fleet run, and the run itself is kept in the
@@ -211,7 +236,7 @@ sync (an evaluation running or due). The config file's `fleet` object sets:
 
 With `X_NIX_WEBHOOK_SECRET_FILE` set, `POST /api/webhook` takes push deliveries without a login and
 evaluates every deployment whose flake follows the pushed repository and branch at once, instead of
-waiting for `eval_interval`. A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or
+waiting for `eval_interval`, and reads every such flake again. A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or
 `git+ssh://` one, follows its repository; a flake naming no branch follows the default branch, and a
 pinned one follows nothing. Pushes to one deployment within `X_NIX_WEBHOOK_DEBOUNCE` start one
 evaluation, and an address sending ten unsigned deliveries is turned away for five minutes.
@@ -436,7 +461,7 @@ needs nothing beyond enabling the module: nixos-rebuild in each mode with `--fla
 `git+` switch included), a switch from the cache (`nix-env -p /nix/var/nix/profiles/system --set
 /nix/store/*` and `/nix/store/*-nixos-system-*/bin/switch-to-configuration` in each mode), rollback
 and the watchdog (`nix-env ... --switch-generation *` and the system profile's
-`switch-to-configuration switch`), Update Flake on a local checkout (`nix ... flake update --flake
+`switch-to-configuration switch`), a flake's Update on a local checkout (`nix ... flake update --flake
 *`), `systemctl reboot`, `nix-collect-garbage`, the boot loader's reads and one-shot setters
 (`bootctl list --json=short`, `cat /boot/grub/grub.cfg`, `grub-editenv list`, `bootctl
 set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`), the `inhibit_sleep` inhibitor,

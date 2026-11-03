@@ -6,9 +6,12 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AgentPool } from "../src/server/agents/agent.ts";
 import { build_app } from "../src/server/app.ts";
 import { hash_password } from "../src/server/auth.ts";
+import { flake_settings } from "../src/server/config.ts";
 import type { Deployment } from "../src/server/deployment.ts";
+import { Flake } from "../src/server/flake.ts";
 import { normalize_repository, repository_of } from "../src/server/nixos/flake.ts";
 import { Poller } from "../src/server/poller.ts";
 import { Store } from "../src/server/store.ts";
@@ -122,6 +125,24 @@ describe("the webhook", () => {
     expect(evaluated).toEqual(["followed"]);
     expect(followed.deployment.due_for_evaluation()).toBe(true);
     expect(store.events("followed")[0].message).toContain("Push to main");
+  });
+
+  it("reads every flake following the pushed branch again", () => {
+    const store = new Store(":memory:");
+    const agents = new AgentPool("host", new FakeAgent());
+    const followed = new Flake(flake_settings({ id: "config", url: "github:owner/config" }), { store, agents });
+    const other = new Flake(flake_settings({ id: "other", url: "github:owner/other" }), { store, agents });
+    const read: string[] = [];
+    const webhook = new Webhook({
+      secret, debounce_in_seconds: 0, store, deployments: new Map(), evaluate: () => {},
+      flakes: new Map([[followed.id, followed], [other.id, other]]), read: (flake: Flake) => read.push(flake.id),
+    });
+    const body = push_payload();
+
+    webhook.receive("192.0.2.1", { "x-github-event": "push", "x-hub-signature-256": sign(body) }, Buffer.from(body));
+
+    expect(read).toEqual(["config"]);
+    expect(store.events("config")[0].message).toContain("reading the flake again");
   });
 
   it("answers a ping, ignores other events, and turns away an address after ten unsigned deliveries", () => {

@@ -1,7 +1,7 @@
 // A scripted agent and deployment for the tests: the probe answers what a test sets, and long runs end when it says.
 
 import { AgentError, AgentPool, type Agent, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
-import { deployment_settings } from "../src/server/config.ts";
+import { deployment_settings, type FlakeSettings } from "../src/server/config.ts";
 import { Deployment } from "../src/server/deployment.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
 import { probe_script } from "../src/server/nixos/probe.ts";
@@ -159,12 +159,13 @@ export interface Harness {
 }
 
 export function make_deployment(
-  values: Record<string, unknown> = {}, existing: { store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null> } = {},
+  values: Record<string, unknown> = {},
+  existing: { store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings> } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
-  const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...values });
+  const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...values }, 0, existing.flakes);
   const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check });
   return { deployment, agent, store, agents };
 }
@@ -208,7 +209,7 @@ export function rewind_drift(harness: Harness, seconds: number): void {
 }
 
 // Moves a daily job's handled slot some days back, as if its slots since had passed unrun.
-export function rewind_schedule(harness: Harness, kind: "update" | "build", days = 1): void {
+export function rewind_schedule(harness: Harness, kind: "build", days = 1): void {
   const evaluation = harness.deployment.evaluation();
   evaluation.scheduled[kind]! -= days * 86400;
   harness.store.save_evaluation(harness.deployment.id, evaluation);

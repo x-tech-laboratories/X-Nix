@@ -15,9 +15,12 @@ import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } f
 import type { CacheServerReading } from "./cache_server.ts";
 import { fleet_settings, type DeploymentSettings, type TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
+import type { Flake, FlakeReading, UpdateOutcome } from "./flake.ts";
 import { Fleet, type FleetRequest, type FleetRun } from "./fleet.ts";
 import type { Poller } from "./poller.ts";
 import { build_link, targets } from "./nixos/attic.ts";
+import { pushes_to_github } from "./nixos/commands.ts";
+import { github_repository } from "./nixos/flake.ts";
 import { collect_command } from "./nixos/garbage.ts";
 import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
@@ -84,11 +87,41 @@ export interface ActionView {
   confirm: string | null;
 }
 
+// What names a flake: a deployment or a cache.
+export interface FlakeUser {
+  id: string;
+  name: string;
+}
+
+export interface FlakeView {
+  id: string;
+  name: string;
+  host: string | null;
+  url: string;
+  interval: number;
+  // When the daily update runs, and the last slot handled.
+  update_at: string | null;
+  scheduled_update: number | null;
+  // Why Update cannot run now, or null when it can.
+  update_refusal: string | null;
+  // The repository an update pushes to, or null when it writes a local checkout or cannot update.
+  pushes_to: string | null;
+  commit_author: string;
+  commit_message: string;
+  max_input_age: number | null;
+  reading: FlakeReading | null;
+  last_update: UpdateOutcome | null;
+  running_job: Job | null;
+  deployments: FlakeUser[];
+  caches: FlakeUser[];
+}
+
 export interface DeploymentView {
   id: string;
   name: string;
   host: string | null;
   flake: string;
+  flake_id: string | null;
   configuration: string | null;
   tags: string[];
   // The commit or tag evaluation, build and switch use, or null for the branch head.
@@ -100,7 +133,7 @@ export interface DeploymentView {
   sync_pending: boolean;
   // The hosts other than the deployment's own that its jobs run on.
   agents: { eval: string | null; build: string | null; switch: string | null };
-  schedule: { update: string | null; build: string | null };
+  schedule: { build: string | null };
   auto_switch: boolean;
   // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
   switch_from_cache: boolean;
@@ -140,6 +173,7 @@ export interface CacheView {
   name: string;
   host: string | null;
   flake: string;
+  flake_id: string | null;
   cache_url: string;
   interval: number;
   can_push: boolean;
@@ -155,7 +189,7 @@ export interface CacheView {
 }
 
 const action_labels: Record<ActionId, string> = {
-  update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
+  build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
   boot: "Rebuild for next boot", test: "Rebuild and test", "dry-activate": "Dry activate",
 };
 
@@ -183,6 +217,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     name: settings.name,
     host: settings.host,
     flake: settings.flake,
+    flake_id: settings.flake_id,
     configuration: settings.configuration,
     tags: settings.tags,
     pin: deployment.pin(),
@@ -190,7 +225,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     pin_overridden: deployment.pin_overridden(),
     sync_pending: deployment.sync_pending(),
     agents: { eval: deployment.agent_for("eval"), build: deployment.agent_for("build"), switch: deployment.agent_for("switch") },
-    schedule: { update: clock(settings.update_at), build: clock(settings.build_at) },
+    schedule: { build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
     switch_from_cache: settings.switch_from_cache,
     gc: settings.gc === null ? null : {
@@ -223,6 +258,7 @@ function cache_view(cache: Cache): CacheView {
     name: settings.name,
     host: settings.host,
     flake: settings.flake,
+    flake_id: settings.flake_id,
     cache_url: settings.cache_url,
     interval: settings.interval,
     can_push: settings.push_command !== null,
@@ -235,6 +271,32 @@ function cache_view(cache: Cache): CacheView {
       name, installable, build_link: build_link(settings, name), kept_only_in_cache: settings.drop_pushed.includes(name),
       refusals: { build: cache.action_refusal("build", name), push: cache.action_refusal("push", name) },
     })),
+  };
+}
+
+function flake_view(flake: Flake, poller: Poller): FlakeView {
+  const settings = flake.settings;
+  const state = flake.state();
+  const users = (entries: Iterable<{ settings: { id: string; name: string; flake_id: string | null } }>) =>
+    [...entries].filter((entry) => entry.settings.flake_id === settings.id).map(({ settings: { id, name } }) => ({ id, name }));
+  return {
+    id: settings.id,
+    name: settings.name,
+    host: settings.host,
+    url: settings.url,
+    interval: settings.interval,
+    update_at: clock(settings.update_at),
+    scheduled_update: state.scheduled_update ?? null,
+    update_refusal: flake.update_refusal(),
+    pushes_to: pushes_to_github(settings) ? github_repository(settings.url)!.ssh_url : null,
+    commit_author: settings.commit_author,
+    commit_message: settings.commit_message,
+    max_input_age: settings.max_input_age,
+    reading: flake.reading(),
+    last_update: state.last_update ?? null,
+    running_job: flake.running_job(),
+    deployments: users(poller.deployments.values()),
+    caches: users(poller.caches.values()),
   };
 }
 
@@ -262,6 +324,42 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // Each host with a declared agent key, and whether its agent is connected.
   app.get("/api/agents", async () => options.hub?.statuses() ?? []);
+
+  // ── Flakes ───────────────────────────────────────────────────────────────
+
+  const find_flake = (id: string, reply: FastifyReply): Flake | null => {
+    const flake = poller.flakes.get(id) ?? null;
+    if (flake === null) void reply.code(404).send({ error: `No flake named '${id}'` });
+    return flake;
+  };
+
+  app.get("/api/flakes", async (): Promise<FlakeView[]> => [...poller.flakes.values()].map((flake) => flake_view(flake, poller)));
+
+  app.get<{ Params: { id: string } }>("/api/flakes/:id", async (request, reply) => {
+    const flake = find_flake(request.params.id, reply);
+    return flake === null ? reply : flake_view(flake, poller);
+  });
+
+  // Reads the flake's metadata now, unless an update is running.
+  app.post<{ Params: { id: string } }>("/api/flakes/:id/refresh", async (request, reply) => {
+    const flake = find_flake(request.params.id, reply);
+    if (flake === null) return reply;
+    await poller.refresh(flake);
+    return flake_view(flake, poller);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/flakes/:id/update", async (request, reply) => {
+    const flake = find_flake(request.params.id, reply);
+    if (flake === null) return reply;
+    const outcome = await flake.update();
+    if (outcome.ok) poller.soon(flake);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/flakes/:id/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
+    const flake = find_flake(request.params.id, reply);
+    return flake === null ? reply : store.events(flake.id);
+  });
 
   // ── Deployments ──────────────────────────────────────────────────────────
 

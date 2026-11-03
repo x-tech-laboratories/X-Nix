@@ -7,7 +7,7 @@ import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, toast } from "../ui.ts";
 import { fleet_host_badge, fleet_run_badge, fleet_status_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
 
-const action_labels: Record<FleetActionId, string> = { update: "Update flake", build: "Build", switch: "Rebuild and switch", reboot: "Reboot" };
+const action_labels: Record<FleetActionId, string> = { build: "Build", switch: "Rebuild and switch", reboot: "Reboot" };
 
 // ── Fleet ────────────────────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ export function fleet_view(): View {
     class: action === "reboot" ? "danger" : action === "switch" ? "accent solid" : null,
     disabled: true,
     onclick: () => {
-      if (action === "update" || action === "build") return void run(action);
+      if (action === "build") return void run(action);
       const names = deployments.filter((deployment) => selected.has(deployment.id)).map((deployment) => deployment.name).join(", ");
       const how = staged.checked ? "stage by stage, stopping at the first failure" : "up to the parallel limit at once";
       confirm_dialog(`${action_labels[action]} ${selected.size} deployments`, `${action_labels[action]} ${names}, ${how}?`, action_labels[action], () => run(action));
@@ -148,7 +148,7 @@ export function fleet_run_view(id: number): View {
     buttons.replaceChildren(run.state === "running" && !run.stop_requested ? h("button", { class: "danger", onclick: () => void stop() }, "Stop") : "");
     return [
       facts([
-        ["Action", action_labels[run.action]],
+        ["Action", run.action === "update" ? "Update flake" : action_labels[run.action]],
         ["State", fleet_run_badge(run.state)],
         ["Picked", run.selector],
         ["At once", run.parallel],

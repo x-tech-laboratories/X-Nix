@@ -1,11 +1,24 @@
 {
+  "flakes": [
+    {
+      "id": "workstation-config",
+      "url": "/etc/nixos",
+      "max_input_age": "14d"
+    },
+    {
+      "id": "fleet",
+      "name": "Fleet",
+      "url": "github:example/nixos-config",
+      "push_ssh_key": "/var/lib/x-nix/deploy_key",
+      "update_at": "02:00"
+    }
+  ],
   "deployments": [
     {
       "id": "workstation",
       "name": "Workstation",
-      "flake": "/etc/nixos",
+      "flake": "workstation-config",
       "configuration": "workstation",
-      "max_input_age": "14d",
       "build_at": "03:00",
       "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 },
       "tags": ["desktop"]
@@ -13,9 +26,7 @@
     {
       "id": "server",
       "host": "server",
-      "flake": "github:example/nixos-config",
-      "push_ssh_key": "/var/lib/x-nix/deploy_key",
-      "update_at": "02:00",
+      "flake": "fleet",
       "auto_switch": true,
       "auto_switch_after": "30m",
       "tags": ["canary", "servers"],
@@ -29,7 +40,7 @@
     {
       "id": "pi",
       "host": "pi",
-      "flake": "github:example/nixos-config",
+      "flake": "fleet",
       "configuration": "pi",
       "eval_agent": "server",
       "build_agent": "server",
@@ -51,7 +62,7 @@
     {
       "id": "fleet-cache",
       "name": "Fleet cache",
-      "flake": "github:example/nixos-config",
+      "flake": "fleet",
       "configurations": ["workstation", "server", "pi"],
       "cache_url": "https://attic.example/fleet",
       "build_root_dir": "/var/lib/x-nix/build-roots",

@@ -133,6 +133,17 @@ export interface FlakeMetadata {
   last_modified_epoch: number | null;
   oldest_input: string | null;
   inputs_last_modified_epoch: number | null;
+  // The flake's own inputs, as its lock holds them.
+  inputs: LockedInput[];
+}
+
+export interface LockedInput {
+  name: string;
+  // Where it comes from, such as github:NixOS/nixpkgs, or the input it follows, such as nixpkgs.
+  source: string | null;
+  follows: string | null;
+  revision: string | null;
+  last_modified_epoch: number | null;
 }
 
 export function parse_metadata(raw: string): FlakeMetadata | null {
@@ -146,7 +157,30 @@ export function parse_metadata(raw: string): FlakeMetadata | null {
     last_modified_epoch: number(data.lastModified) ?? number(locked.lastModified),
     oldest_input: oldest.name,
     inputs_last_modified_epoch: oldest.epoch,
+    inputs: root_inputs(as_object(data.locks) ?? {}),
   };
+}
+
+// The root's inputs in the lock, each with its locked source and revision, or the input it follows.
+function root_inputs(locks: Record<string, unknown>): LockedInput[] {
+  const nodes = as_object(locks.nodes) ?? {};
+  const root = as_object(nodes[text(locks.root) ?? "root"]);
+  const inputs = as_object(root?.inputs) ?? {};
+  return Object.entries(inputs).map(([name, target]): LockedInput => {
+    if (Array.isArray(target)) return { name, source: null, follows: target.join("/"), revision: null, last_modified_epoch: null };
+    const node = as_object(nodes[String(target)]);
+    const locked = as_object(node?.locked) ?? {};
+    const stamp = number(locked.lastModified);
+    return { name, source: source_of(locked), follows: null, revision: text(locked.rev), last_modified_epoch: stamp === null ? null : Math.floor(stamp) };
+  });
+}
+
+// A locked input's source in the short form a flake reference takes.
+function source_of(locked: Record<string, unknown>): string | null {
+  const type = text(locked.type);
+  if (type === "github" || type === "gitlab" || type === "sourcehut") return `${type}:${text(locked.owner) ?? "?"}/${text(locked.repo) ?? "?"}`;
+  if (type === "path") return `path:${text(locked.path) ?? "?"}`;
+  return text(locked.url) ?? type;
 }
 
 // The locked input updated least recently, which `nix flake update` would move furthest.

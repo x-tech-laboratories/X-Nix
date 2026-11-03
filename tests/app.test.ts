@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
-import { build_app, type CacheView, type DeploymentView, type HealthAnswer } from "../src/server/app.ts";
+import { build_app, type CacheView, type DeploymentView, type FlakeView, type HealthAnswer } from "../src/server/app.ts";
 import { hash_password } from "../src/server/auth.ts";
 import { Cache } from "../src/server/cache.ts";
-import { cache_settings } from "../src/server/config.ts";
+import { AgentPool } from "../src/server/agents/agent.ts";
+import { cache_settings, flake_settings } from "../src/server/config.ts";
+import { Flake } from "../src/server/flake.ts";
 import { Poller } from "../src/server/poller.ts";
-import { clock, make_deployment, result, type Harness } from "./fake_agent.ts";
+import { clock, FakeAgent, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -16,8 +18,9 @@ const password_hash = hash_password(password);
 let app: FastifyInstance | null = null;
 
 // The app, and a request helper carrying a logged-in session.
-async function start_app(harness: Harness = make_deployment(), caches: Cache[] = []) {
-  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", password_hash, store: harness.store, poller: new Poller([harness.deployment], null, caches) });
+async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = []) {
+  const poller = new Poller([harness.deployment], null, caches, [], flakes);
+  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", password_hash, store: harness.store, poller });
   const login = await app.inject({ method: "POST", url: "/api/login", payload: { password } });
   const cookie = String(login.headers["set-cookie"]).split(";")[0];
   const server = app;
@@ -48,6 +51,42 @@ describe("/api/health", () => {
   });
 });
 
+// ── Flakes ───────────────────────────────────────────────────────────────────
+
+describe("/api/flakes", () => {
+  const settings = (values: Record<string, unknown> = {}) => flake_settings({ id: "config", url: "github:owner/config", ...values });
+
+  function make_flake(harness: Harness, values: Record<string, unknown> = {}) {
+    const agent = new FakeAgent();
+    agent.answers.push(["flake metadata", metadata()]);
+    return new Flake(settings(values), { store: harness.store, agents: new AgentPool("host", agent), now: () => clock.now });
+  }
+
+  it("lists each flake with what names it and why it cannot update", async () => {
+    const harness = make_deployment({ flake: "config" }, { flakes: new Map([["config", settings()]]) });
+    const { inject } = await start_app(harness, [], [make_flake(harness)]);
+
+    const [flake] = (await inject("GET", "/api/flakes")).json<FlakeView[]>();
+
+    expect(flake).toMatchObject({ id: "config", url: "github:owner/config", pushes_to: null, deployments: [{ id: "host-deploy", name: "host-deploy" }] });
+    expect(flake.update_refusal).toContain("push_ssh_key");
+    expect((await inject("POST", "/api/flakes/config/update")).statusCode).toBe(409);
+  });
+
+  it("starts an update, reads the flake on refresh, and answers 404 for an unknown flake", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [make_flake(harness, { push_ssh_key: "/var/lib/x-nix/deploy_key" })]);
+
+    const started = await inject("POST", "/api/flakes/config/update");
+    const refreshed = (await inject("POST", "/api/flakes/config/refresh")).json<FlakeView>();
+
+    expect(started.statusCode).toBe(200);
+    expect(refreshed.pushes_to).toBe("git@github.com:owner/config.git");
+    expect(refreshed.running_job?.kind).toBe("update");
+    expect((await inject("GET", "/api/flakes/missing")).statusCode).toBe(404);
+  });
+});
+
 // ── Deployments ──────────────────────────────────────────────────────────────
 
 describe("/api/deployments", () => {
@@ -57,10 +96,9 @@ describe("/api/deployments", () => {
     const [deployment] = (await inject("GET", "/api/deployments")).json<DeploymentView[]>();
 
     expect(deployment.id).toBe("host-deploy");
-    expect(deployment.actions.map((action) => action.id)).toEqual(["update", "build", "switch", "reboot", "collect", "boot", "test", "dry-activate"]);
-    expect(deployment.actions[0].refusal).toContain("push_ssh_key");
-    expect(deployment.actions[3].confirm).toContain("Reboot");
-    expect(deployment.actions[4].confirm).toContain("Collect garbage");
+    expect(deployment.actions.map((action) => action.id)).toEqual(["build", "switch", "reboot", "collect", "boot", "test", "dry-activate"]);
+    expect(deployment.actions[2].confirm).toContain("Reboot");
+    expect(deployment.actions[3].confirm).toContain("Collect garbage");
     expect(deployment.gc?.command).toBe("sudo -n nix-collect-garbage --delete-older-than 7d");
   });
 

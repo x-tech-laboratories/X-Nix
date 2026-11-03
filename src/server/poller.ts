@@ -1,4 +1,4 @@
-// Runs each deployment's and cache's cycle on its own timer: every `interval`, or every `job_poll` while a long run is going.
+// Runs each flake's, deployment's and cache's cycle on its own timer: every `interval`, or every `job_poll` while a long run is going.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -6,8 +6,9 @@ import type { FastifyBaseLogger } from "fastify";
 
 import type { Cache } from "./cache.ts";
 import type { Deployment } from "./deployment.ts";
+import type { Flake } from "./flake.ts";
 
-// What the poller drives; deployments and caches share one id space, so their timers never collide.
+// What the poller drives; flakes, deployments and caches share one id space, so their timers never collide.
 export interface Watched {
   readonly id: string;
   readonly settings: { interval: number; job_poll: number };
@@ -22,21 +23,23 @@ export interface Watched {
 export class Poller {
   readonly deployments: Map<string, Deployment>;
   readonly caches: Map<string, Cache>;
-  // Anything else that follows long runs, such as the provisioner, each with an id no deployment or cache can take.
+  readonly flakes: Map<string, Flake>;
+  // Anything else that follows long runs, such as the provisioner, each with an id no flake, deployment or cache can take.
   private readonly others: Watched[];
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly log: FastifyBaseLogger | null;
   private running = false;
 
-  constructor(deployments: Deployment[], log: FastifyBaseLogger | null = null, caches: Cache[] = [], others: Watched[] = []) {
+  constructor(deployments: Deployment[], log: FastifyBaseLogger | null = null, caches: Cache[] = [], others: Watched[] = [], flakes: Flake[] = []) {
     this.deployments = new Map(deployments.map((deployment) => [deployment.id, deployment]));
     this.caches = new Map(caches.map((cache) => [cache.id, cache]));
+    this.flakes = new Map(flakes.map((flake) => [flake.id, flake]));
     this.others = others;
     this.log = log;
   }
 
   private watched(): Watched[] {
-    return [...this.deployments.values(), ...this.caches.values(), ...this.others];
+    return [...this.flakes.values(), ...this.deployments.values(), ...this.caches.values(), ...this.others];
   }
 
   start(): void {

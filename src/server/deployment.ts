@@ -3,9 +3,10 @@
 // Every cycle reads the host's running system, booted system, generation and version with one cheap script. Every
 // `eval_interval` it also evaluates the host's toplevel from the flake and reads `nix flake metadata`, as one long run
 // that outlives a restart of the server; later cycles poll it and judge drift against the stored evaluation until it
-// ends. A failed evaluation is retried after `retry_interval`. Update, build and switch run as long runs on the agent
-// the settings name, one at a time, and every action lands in the job history with its output. With `auto_switch`, drift
-// lasting `auto_switch_after` starts a switch once per target closure, and `update_at` and `build_at` start a daily job.
+// ends. A failed evaluation is retried after `retry_interval`. Build and switch run as long runs on the agent the
+// settings name, one at a time, and every action lands in the job history with its output. With `auto_switch`, drift
+// lasting `auto_switch_after` starts a switch once per target closure, and `build_at` starts a daily build. Updating
+// the flake's lock is the flake's own job (see flake.ts).
 // Unless `gc` is false, every cycle also reads the host's Nix store and its garbage collection, judged apart from the
 // deployment's own status, and Collect Garbage runs the same collection the timer does. Unless `boot` is false, every
 // cycle also reads the boot loader's entries, and the next boot can be set to any of them once. A pin, from the settings
@@ -29,8 +30,7 @@ import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import { closure_command, diff_command, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
-  build_command, cache_holds_command, can_update, eval_command, reboot_command, split_eval_output, switch_modes,
-  timed_out_exit_code, update_command, type SwitchMode,
+  build_command, cache_holds_command, eval_command, reboot_command, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
   confirm_command, generations_script, parse_generations, rollback_command, rollback_signal_command, switch_job_command, switch_verdict, watch_token,
@@ -48,10 +48,10 @@ import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type ScheduledKind = "update" | "build";
-export type ActionId = "update" | "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
+export type ScheduledKind = "build";
+export type ActionId = "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
 
-export const action_ids: ActionId[] = ["update", "build", "switch", "reboot", "collect", "boot", "test", "dry-activate"];
+export const action_ids: ActionId[] = ["build", "switch", "reboot", "collect", "boot", "test", "dry-activate"];
 
 // The actions that run as a job of their own kind.
 type JobAction = Exclude<ActionId, "reboot">;
@@ -133,7 +133,7 @@ const empty_evaluation: Evaluation = {
   auto_switch_target: null, scheduled: {}, last_collection: null, last_diff: null,
 };
 
-// The jobs that hold the deployment's buttons; an evaluation runs beside them.
+// The jobs that hold the deployment's buttons, and any update still running under its id; an evaluation runs beside them.
 const main_job_kinds: JobKind[] = ["update", "build", "switch", "boot", "test", "dry-activate", "rollback", "collect"];
 
 const probe_timeout_in_seconds = 60;
@@ -221,9 +221,6 @@ export class Deployment {
 
   // Why an action cannot run now, or null when it can.
   action_refusal(action: ActionId): string | null {
-    if (action === "update" && !can_update(this.settings)) {
-      return `Cannot update ${this.settings.flake}: only a local checkout, or a github: flake with a push_ssh_key, has a lock file X-Nix can write`;
-    }
     if (action === "collect" && this.settings.gc === null) return "The store is not watched for this deployment; its gc is off";
     if (is_switch_kind(action) && this.settings.switch_from_cache && this.cached_target() === null) {
       return "Switching from the cache needs the store path of a successful evaluation; evaluate first";
@@ -416,21 +413,11 @@ export class Deployment {
       messages.push({ level: "info", text: `Flake last changed ${format_age(now - evaluation.flake_last_modified_epoch)}${at}` });
     }
     if (evaluation.inputs_last_modified_epoch !== null) {
-      const age = now - evaluation.inputs_last_modified_epoch;
-      const stale = this.settings.max_input_age !== null && age > this.settings.max_input_age;
-      if (stale) raise("warning");
-      messages.push({
-        level: stale ? "warning" : "info",
-        text: `Oldest locked input ${evaluation.oldest_input ?? "?"} is ${format_age(age)}${stale ? `, over the ${format_duration(this.settings.max_input_age!)} limit` : ""}`,
-      });
+      messages.push({ level: "info", text: `Oldest locked input ${evaluation.oldest_input ?? "?"} is ${format_age(now - evaluation.inputs_last_modified_epoch)}` });
     }
 
     // A schedule seen for the first time starts at its next slot, never at once.
     for (const [kind, at] of this.schedule()) evaluation.scheduled[kind] ??= latest_slot(at, now);
-    if (this.settings.update_at !== null && !can_update(this.settings)) {
-      raise("warning");
-      messages.push({ level: "warning", text: `Scheduled update never runs: ${this.settings.flake} has no lock file X-Nix can write` });
-    }
 
     const reboot = reboot_required(fields.booted_parts, fields.current_parts);
     if (reboot === true) {
@@ -577,16 +564,15 @@ export class Deployment {
   // ── Daily jobs ───────────────────────────────────────────────────────────
 
   private schedule(): [ScheduledKind, TimeOfDay][] {
-    const entries: [ScheduledKind, TimeOfDay | null][] = [["update", this.settings.update_at], ["build", this.settings.build_at]];
+    const entries: [ScheduledKind, TimeOfDay | null][] = [["build", this.settings.build_at]];
     return entries.filter((entry): entry is [ScheduledKind, TimeOfDay] => entry[1] !== null);
   }
 
-  // The first daily job whose latest slot is newer than the one last handled, update before build.
+  // The first daily job whose latest slot is newer than the one last handled.
   scheduled_due(): { kind: ScheduledKind; slot: number } | null {
     const handled = this.evaluation().scheduled;
     const now = this.now();
     for (const [kind, at] of this.schedule()) {
-      if (kind === "update" && !can_update(this.settings)) continue;
       const slot = latest_slot(at, now);
       const last = handled[kind];
       if (last !== undefined && slot > last) return { kind, slot };
@@ -680,7 +666,6 @@ export class Deployment {
   }
 
   private command_for(kind: JobAction): string {
-    if (kind === "update") return update_command(this.settings);
     if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
     if (kind === "build") return build_command(this.effective_settings(), this.attribute());
     const store_path = this.settings.switch_from_cache ? this.cached_target() : null;
@@ -696,7 +681,7 @@ export class Deployment {
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
-  // The host whose agent runs a job of this kind; the build may run apart from the switch and update.
+  // The host whose agent runs a job of this kind; the build may run apart from the switch.
   agent_for(kind: JobKind): string | null {
     if (kind === "eval") return this.settings.eval_agent ?? this.settings.host;
     if (kind === "build") return this.settings.build_agent ?? this.settings.host;

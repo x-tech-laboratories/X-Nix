@@ -1,4 +1,4 @@
-// Reads the config file: the deployments X-Nix watches, each a NixOS host and the flake that describes it.
+// Reads the config file: the flakes X-Nix updates, and the deployments and caches it watches, each naming a flake.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -42,12 +42,36 @@ export interface GcSettings {
   gc_args: string[];
 }
 
+// One flake whose lock X-Nix keeps up to date, which deployments and caches name instead of repeating its reference.
+export interface FlakeSettings {
+  id: string;
+  name: string;
+  url: string;
+  // The host whose agent reads and updates the flake; the server's own host when null.
+  host: string | null;
+  interval: number;
+  job_poll: number;
+  // The longest one read of the flake's metadata may take.
+  timeout: number;
+  max_input_age: number | null;
+  update_at: TimeOfDay | null;
+  push_ssh_key: string | null;
+  commit_author: string;
+  commit_message: string;
+  require_sudo: boolean;
+  nix_bin: string;
+  nix_args: string[];
+}
+
 export interface DeploymentSettings {
   id: string;
   name: string;
   // The host whose agent reads the running system and reboots it; the server's own host when null.
   host: string | null;
+  // The flake's reference, taken from the flake the deployment names when it names one.
   flake: string;
+  // The declared flake the deployment names, or null for a plain reference.
+  flake_id: string | null;
   // The nixosConfigurations attribute; the host's own hostname when null.
   configuration: string | null;
   interval: number;
@@ -56,7 +80,6 @@ export interface DeploymentSettings {
   retry_interval: number;
   eval_timeout: number;
   job_poll: number;
-  max_input_age: number | null;
   drift_status: Status;
   reboot_status: Status;
   require_sudo: boolean;
@@ -77,7 +100,6 @@ export interface DeploymentSettings {
   target_host: string | null;
   auto_switch: boolean;
   auto_switch_after: number;
-  update_at: TimeOfDay | null;
   build_at: TimeOfDay | null;
   switch_wrapper: string[];
   post_switch: string | null;
@@ -94,9 +116,6 @@ export interface DeploymentSettings {
   health_timeout: number;
   // Whether Build reads nix's structured log, so its job shows what is building and downloading.
   build_progress: boolean;
-  push_ssh_key: string | null;
-  commit_author: string;
-  commit_message: string;
   // Null when the store is not watched.
   gc: GcSettings | null;
   // Whether the host's boot entries are read, and its next boot may be picked.
@@ -124,6 +143,7 @@ export interface CacheSettings {
   // The host that evaluates, builds and pushes; the server's own host when null.
   host: string | null;
   flake: string;
+  flake_id: string | null;
   // nixosConfigurations names, tracked by their system toplevel.
   configurations: string[];
   // Any other derivation, as a name and its flake attribute.
@@ -178,6 +198,7 @@ export interface ProvisioningSettings {
 }
 
 export interface Config {
+  flakes: FlakeSettings[];
   deployments: DeploymentSettings[];
   caches: CacheSettings[];
   provisioning: ProvisioningSettings;
@@ -214,25 +235,64 @@ export function load_config(path: string): Config {
 }
 
 export function parse_config(raw: unknown): Config {
-  const deployments = (raw as { deployments?: unknown } | null)?.deployments ?? [];
-  if (!Array.isArray(deployments)) throw new ConfigError("`deployments` must be a list");
-  const caches = (raw as { caches?: unknown } | null)?.caches ?? [];
-  if (!Array.isArray(caches)) throw new ConfigError("`caches` must be a list");
-  const parsed = deployments.map((entry, index) => deployment_settings(entry, index));
-  const parsed_caches = caches.map((entry, index) => cache_settings(entry, index));
-  // Jobs and events are kept by id, so a cache may not share one with a deployment.
+  const list = (key: "flakes" | "deployments" | "caches"): unknown[] => {
+    const entries = (raw as Record<string, unknown> | null)?.[key] ?? [];
+    if (!Array.isArray(entries)) throw new ConfigError(`\`${key}\` must be a list`);
+    return entries;
+  };
+  const flakes = list("flakes").map((entry, index) => flake_settings(entry, index));
+  const by_id = new Map(flakes.map((flake) => [flake.id, flake]));
+  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id));
+  const parsed_caches = list("caches").map((entry, index) => cache_settings(entry, index, by_id));
+  // Jobs and events are kept by id, so no two flakes, deployments or caches may share one.
   const seen = new Set<string>();
-  for (const { id } of [...parsed, ...parsed_caches]) {
-    if (seen.has(id)) throw new ConfigError(`Two deployments or caches are named '${id}'`);
+  for (const { id } of [...flakes, ...parsed, ...parsed_caches]) {
+    if (seen.has(id)) throw new ConfigError(`Two flakes, deployments or caches are named '${id}'`);
     seen.add(id);
   }
   return {
-    deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
+    flakes, deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
     agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
     wake_on_lan: wake_settings((raw as { wake_on_lan?: unknown } | null)?.wake_on_lan),
     fleet: fleet_settings((raw as { fleet?: unknown } | null)?.fleet),
   };
 }
+
+// The reference and id of the flake an entry names: a declared flake by its id, or any other text as a reference of its own.
+function resolve_flake(named: string, flakes: Map<string, FlakeSettings>): { flake: string; flake_id: string | null } {
+  const flake = flakes.get(named);
+  return flake === undefined ? { flake: named, flake_id: null } : { flake: flake.url, flake_id: flake.id };
+}
+
+export function flake_settings(entry: unknown, index = 0): FlakeSettings {
+  if (typeof entry !== "object" || entry === null) throw new ConfigError(`Flake ${index + 1} must be an object`);
+  const values = entry as Record<string, unknown>;
+  const read = new Reader(values, `flake ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
+  const id = read.text("id");
+  if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Flake ${index + 1} needs an \`id\` of letters, digits, - and _`);
+  const url = read.text("url");
+  if (url === null) throw new ConfigError(`Flake '${id}' needs the \`url\` of its flake reference`);
+  return {
+    id,
+    name: read.text("name") ?? id,
+    url,
+    host: read.text("host"),
+    interval: read.duration("interval", "1h"),
+    job_poll: read.duration("job_poll", "30s"),
+    timeout: read.duration("timeout", "2m"),
+    max_input_age: read.optional_duration("max_input_age"),
+    update_at: read.time_of_day("update_at"),
+    push_ssh_key: read.text("push_ssh_key"),
+    commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
+    commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
+    require_sudo: read.flag("require_sudo", true),
+    nix_bin: read.text("nix_bin") ?? "nix",
+    nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
+  };
+}
+
+// The settings that describe the flake rather than the host, which only a flake under flakes takes.
+const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"];
 
 export function provisioning_settings(entry: unknown): ProvisioningSettings {
   if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) throw new ConfigError("`provisioning` must be an object");
@@ -303,7 +363,7 @@ function wake_settings(raw: unknown): Map<string, WakeSettings> {
   return settings;
 }
 
-export function cache_settings(entry: unknown, index = 0): CacheSettings {
+export function cache_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): CacheSettings {
   if (typeof entry !== "object" || entry === null) throw new ConfigError(`Cache ${index + 1} must be an object`);
   const values = entry as Record<string, unknown>;
   const read = new Reader(values, `cache ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
@@ -318,7 +378,7 @@ export function cache_settings(entry: unknown, index = 0): CacheSettings {
     id,
     name: read.text("name") ?? id,
     host: read.text("host"),
-    flake: read.text("flake") ?? "/etc/nixos",
+    ...resolve_flake(read.text("flake") ?? "/etc/nixos", flakes),
     configurations,
     installables,
     cache_url,
@@ -350,18 +410,20 @@ function default_info_url(cache_url: string): string | null {
   return /^https?:\/\//.test(cache_url) ? `${cache_url.replace(/\/+$/, "")}/nix-cache-info` : null;
 }
 
-export function deployment_settings(entry: unknown, index = 0): DeploymentSettings {
+export function deployment_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): DeploymentSettings {
   if (typeof entry !== "object" || entry === null) throw new ConfigError(`Deployment ${index + 1} must be an object`);
   const values = entry as Record<string, unknown>;
   const read = new Reader(values, `deployment ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
   const id = read.text("id");
   if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Deployment ${index + 1} needs an \`id\` of letters, digits, - and _`);
+  const moved = flake_only_keys.find((key) => values[key] !== undefined && values[key] !== null);
+  if (moved !== undefined) throw new ConfigError(`\`${moved}\` of ${read.owner} belongs to its flake: declare the flake under flakes and name its id in \`flake\``);
   const switch_agent = read.text("switch_agent");
   const eval_interval = read.duration("eval_interval", "1h");
   const cache_url = read.text("cache_url");
   const switch_from_cache = read.flag("switch_from_cache", false);
   if (switch_from_cache && cache_url === null) throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which needs a \`cache_url\` to fetch from`);
-  const flake = read.text("flake") ?? "/etc/nixos";
+  const { flake, flake_id } = resolve_flake(read.text("flake") ?? "/etc/nixos", flakes);
   const tags = read.list("tags", []);
   const bad_tag = tags.find((tag) => !/^[A-Za-z0-9_.-]+$/.test(tag));
   if (bad_tag !== undefined) throw new ConfigError(`Tag ${JSON.stringify(bad_tag)} of ${read.owner} must be letters, digits, ., - and _`);
@@ -373,6 +435,7 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     name: read.text("name") ?? id,
     host: read.text("host"),
     flake,
+    flake_id,
     configuration: read.text("configuration"),
     interval: read.duration("interval", "5m"),
     eval_agent: read.text("eval_agent"),
@@ -380,7 +443,6 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     retry_interval: Math.min(read.duration("retry_interval", "15m"), eval_interval),
     eval_timeout: read.duration("eval_timeout", "10m"),
     job_poll: read.duration("job_poll", "30s"),
-    max_input_age: read.optional_duration("max_input_age"),
     drift_status: read.status("drift_status", "warning"),
     reboot_status: read.status("reboot_status", "warning"),
     require_sudo: read.flag("require_sudo", true),
@@ -399,7 +461,6 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     target_host: read.text("target_host"),
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),
-    update_at: read.time_of_day("update_at"),
     build_at: read.time_of_day("build_at"),
     switch_wrapper: read.list("switch_wrapper", []),
     post_switch: read.text("post_switch"),
@@ -412,9 +473,6 @@ export function deployment_settings(entry: unknown, index = 0): DeploymentSettin
     health_period: Math.max(1, read.duration("health_period", "5s")),
     health_timeout: read.duration("health_timeout", "2m"),
     build_progress: read.flag("build_progress", true),
-    push_ssh_key: read.text("push_ssh_key"),
-    commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
-    commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     gc: gc_settings(values.gc, read.owner),
     boot: read.flag("boot", true),
     tags,
@@ -449,7 +507,7 @@ function gc_settings(entry: unknown, owner: string): GcSettings | null {
   };
 }
 
-// Reads one deployment's values, naming the deployment and key in every error.
+// Reads one entry's values, naming the entry and key in every error.
 class Reader {
   private readonly values: Record<string, unknown>;
   readonly owner: string;

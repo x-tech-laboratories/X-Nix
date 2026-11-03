@@ -4,7 +4,7 @@ import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheAc
 import { age, bytes, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
-import { duration, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile, type View } from "./shared.ts";
+import { duration, events_list, flake_link, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tile, type View } from "./shared.ts";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
@@ -199,7 +199,7 @@ function details(cache: Cache): HTMLElement {
   const code = (text: string) => h("code", {}, text);
   const rows: Parameters<typeof facts>[0] = [
     ["Builds on", cache.host ?? "this server"],
-    ["Flake", code(cache.flake)],
+    ["Flake", flake_link(cache.flake_id, cache.flake)],
     ["Cache", code(cache.cache_url)],
     ["Checked every", `${Math.round(cache.interval / 60)} minutes`],
     ["Last checked", cache.reading ? h("span", { title: stamp(cache.reading.checked_epoch) }, age(cache.reading.checked_epoch)) : "—"],

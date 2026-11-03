@@ -1,8 +1,8 @@
-// The shell commands a deployment's jobs run: evaluation, flake update, build, switch, switch from cache and reboot.
+// The shell commands a deployment's and a flake's jobs run: evaluation, build, switch, switch from cache, reboot, and the flake's update.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import type { DeploymentSettings } from "../config.ts";
+import type { DeploymentSettings, FlakeSettings } from "../config.ts";
 import type { RunResult } from "../agents/agent.ts";
 import { github_repository, local_path } from "./flake.ts";
 
@@ -19,18 +19,18 @@ function escape_double_quoted(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$");
 }
 
-// ── Flake ────────────────────────────────────────────────────────────────────
+// ── Metadata and update ──────────────────────────────────────────────────────
 
-// Whether Update Flake can write the flake's lock: a local checkout, or a github: flake it may push to.
-export function can_update(settings: DeploymentSettings): boolean {
-  return local_path(settings.flake) !== null || pushes_to_github(settings);
+// Whether Update can write the flake's lock: a local checkout, or a github: flake it may push to.
+export function can_update(settings: FlakeSettings): boolean {
+  return local_path(settings.url) !== null || pushes_to_github(settings);
 }
 
-export function pushes_to_github(settings: DeploymentSettings): boolean {
-  return local_path(settings.flake) === null && github_repository(settings.flake) !== null && settings.push_ssh_key !== null;
+export function pushes_to_github(settings: FlakeSettings): boolean {
+  return local_path(settings.url) === null && github_repository(settings.url) !== null && settings.push_ssh_key !== null;
 }
 
-function nix(settings: DeploymentSettings): string {
+function nix(settings: Pick<DeploymentSettings, "nix_bin" | "nix_args">): string {
   return [settings.nix_bin, ...settings.nix_args.map(shell_quote)].join(" ");
 }
 
@@ -39,7 +39,7 @@ function refresh_args(settings: DeploymentSettings): string[] {
   return local_path(settings.flake) === null ? ["--refresh"] : [];
 }
 
-export function sudo(settings: DeploymentSettings): string {
+export function sudo(settings: Pick<DeploymentSettings, "require_sudo">): string {
   return settings.require_sudo ? "sudo -n " : "";
 }
 
@@ -107,16 +107,22 @@ export function split_eval_output(output: string, missing: string): Record<"eval
   return results;
 }
 
-// ── Update ───────────────────────────────────────────────────────────────────
+// ── Flake ────────────────────────────────────────────────────────────────────
 
-export function update_command(settings: DeploymentSettings): string {
-  if (!pushes_to_github(settings)) return `${sudo(settings)}${nix(settings)} flake update --flake ${shell_quote(settings.flake)}`;
+// Reads the flake's metadata and lock, fetching a remote flake afresh, under `timeout`.
+export function metadata_command(settings: FlakeSettings): string {
+  const refresh = local_path(settings.url) === null ? "--refresh" : null;
+  return `timeout ${settings.timeout} ${words(nix(settings), "flake metadata --json --no-write-lock-file", refresh, shell_quote(settings.url))}`;
+}
+
+export function update_command(settings: FlakeSettings): string {
+  if (!pushes_to_github(settings)) return `${sudo(settings)}${nix(settings)} flake update --flake ${shell_quote(settings.url)}`;
   return github_update_command(settings);
 }
 
 // Clones the flake's repository, updates its lock and pushes a commit back, as the agent's user rather than root.
-function github_update_command(settings: DeploymentSettings): string {
-  const repository = github_repository(settings.flake)!;
+function github_update_command(settings: FlakeSettings): string {
+  const repository = github_repository(settings.url)!;
   const [name, email = ""] = settings.commit_author.split("<", 2);
   const identity = `-c user.name=${shell_quote(name.trim())} -c user.email=${shell_quote(email.replace(/>\s*$/, "").trim())}`;
   const branch = repository.branch ? `--branch ${shell_quote(repository.branch)} ` : "";

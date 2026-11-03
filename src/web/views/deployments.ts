@@ -5,8 +5,8 @@ import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import {
-  action_button, deployment_card, diff_view, drift_state, events_list, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision, tag_chips,
-  tile,
+  action_button, deployment_card, diff_view, drift_state, events_list, flake_link, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision,
+  tag_chips, tile,
   type View,
 } from "./shared.ts";
 
@@ -148,7 +148,7 @@ function details(deployment: Deployment): HTMLElement {
   const code = (text: string | null | undefined) => (text ? h("code", {}, text) : "—");
   const rows: [string, ReturnType<typeof when> | string, string?][] = [
     ["Host", deployment.host ?? "this server"],
-    ["Flake", code(deployment.flake)],
+    ["Flake", flake_link(deployment.flake_id, deployment.flake)],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
     ["Tags", deployment.tags.length === 0 ? "—" : tag_chips(deployment.tags)],
     ["NixOS version", reading?.version ?? "—"],
@@ -163,10 +163,8 @@ function details(deployment: Deployment): HTMLElement {
   if (deployment.agents.eval !== deployment.host) rows.push(["Evaluates on", deployment.agents.eval ?? "this server"]);
   if (deployment.agents.build !== deployment.host) rows.push(["Builds on", deployment.agents.build ?? "this server"]);
   if (deployment.agents.switch !== deployment.host) rows.push(["Switches from", deployment.agents.switch ?? "this server"]);
-  for (const kind of ["update", "build"] as const) {
-    const at = deployment.schedule[kind];
-    if (at !== null) rows.push([`Daily ${kind}`, h("span", {}, `at ${at}, last slot `, when(evaluation.scheduled[kind]))]);
-  }
+  const build_at = deployment.schedule.build;
+  if (build_at !== null) rows.push(["Daily build", h("span", {}, `at ${build_at}, last slot `, when(evaluation.scheduled.build))]);
   if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
   if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
   rows.push(["Switch safety", safety_text(deployment)]);

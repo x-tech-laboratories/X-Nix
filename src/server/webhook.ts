@@ -1,9 +1,9 @@
 // The push webhook: a forge such as GitHub or Forgejo posts each push here, and every deployment whose flake follows the
-// pushed repository and branch evaluates at once instead of waiting for its `eval_interval`.
+// pushed repository and branch evaluates at once instead of waiting for its `eval_interval`, as every such flake is read again.
 //
 // The request proves it knows the shared secret, read from a file: by GitHub's X-Hub-Signature-256 HMAC of the body,
 // Gitea's and Forgejo's own signature headers, an `Authorization: Bearer` token, or GitLab's X-Gitlab-Token. Pushes are
-// debounced per deployment, so a burst of pushes starts one evaluation, and an address that keeps failing to sign is
+// debounced per deployment and flake, so a burst of pushes starts one evaluation, and an address that keeps failing to sign is
 // turned away for a while.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -14,6 +14,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import type { FastifyInstance } from "fastify";
 
 import type { Deployment } from "./deployment.ts";
+import type { Flake } from "./flake.ts";
 import { normalize_repository, repository_of } from "./nixos/flake.ts";
 import type { Store } from "./store.ts";
 
@@ -28,6 +29,9 @@ export interface WebhookOptions {
   store: Store;
   // Starts the deployment's evaluation now.
   evaluate: (deployment: Deployment) => unknown;
+  flakes?: Map<string, Flake>;
+  // Reads the flake again now.
+  read?: (flake: Flake) => unknown;
   now?: () => number;
 }
 
@@ -133,8 +137,12 @@ export function read_push(payload: unknown): Push | null {
 
 // Whether the push moved the branch the deployment's flake follows; a flake naming no branch follows the default one.
 export function push_matches(push: Push, deployment: Deployment): boolean {
-  if (deployment.pin() !== null) return false;
-  const followed = repository_of(deployment.settings.flake);
+  return deployment.pin() === null && follows_push(push, deployment.settings.flake);
+}
+
+// Whether the push moved the branch a flake reference follows.
+export function follows_push(push: Push, flake: string): boolean {
+  const followed = repository_of(flake);
   if (followed === null || !push.repositories.has(followed.repository)) return false;
   if (followed.branch !== null) return followed.branch === push.branch;
   return push.default_branch === null || push.default_branch === push.branch;
@@ -174,25 +182,33 @@ export class Webhook {
     const push = read_push(parse_payload(body, headers["content-type"]));
     if (push === null) return { status: 202, body: { message: "Not a push to a branch", matched: [] } };
     const matched = [...this.options.deployments.values()].filter((deployment) => push_matches(push, deployment));
-    for (const deployment of matched) this.schedule(deployment, push);
+    for (const deployment of matched) {
+      this.options.store.add_event(deployment.id, this.now(), "info", `Push to ${push.branch} received; evaluating the flake`);
+      deployment.request_evaluation();
+      this.schedule(deployment.id, () => this.options.evaluate(deployment));
+    }
+    const flakes = [...(this.options.flakes?.values() ?? [])].filter((flake) => follows_push(push, flake.settings.url));
+    for (const flake of flakes) {
+      this.options.store.add_event(flake.id, this.now(), "info", `Push to ${push.branch} received; reading the flake again`);
+      this.schedule(flake.id, () => this.options.read?.(flake));
+    }
     const names = matched.map((deployment) => deployment.id);
     return { status: 202, body: { message: names.length === 0 ? "No deployment follows that branch" : `Evaluating ${names.join(", ")}`, matched: names } };
   }
 
-  private schedule(deployment: Deployment, push: Push): void {
-    this.options.store.add_event(deployment.id, this.now(), "info", `Push to ${push.branch} received; evaluating the flake`);
-    deployment.request_evaluation();
-    clearTimeout(this.timers.get(deployment.id));
+  // Runs the work once the debounce after the last push for this id ends.
+  private schedule(id: string, work: () => unknown): void {
+    clearTimeout(this.timers.get(id));
     if (this.options.debounce_in_seconds <= 0) {
-      this.options.evaluate(deployment);
+      work();
       return;
     }
     const timer = setTimeout(() => {
-      this.timers.delete(deployment.id);
-      this.options.evaluate(deployment);
+      this.timers.delete(id);
+      work();
     }, this.options.debounce_in_seconds * 1000);
     timer.unref();
-    this.timers.set(deployment.id, timer);
+    this.timers.set(id, timer);
   }
 
   close(): void {

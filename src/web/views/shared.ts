@@ -99,6 +99,12 @@ export function fleet_run_badge(state: FleetRunState): HTMLElement {
 
 // ── Parts ────────────────────────────────────────────────────────────────────
 
+// A flake reference, linked to the declared flake's page when it names one.
+export function flake_link(flake_id: string | null, reference: string): HTMLElement {
+  if (flake_id === null) return h("code", {}, reference);
+  return h("span", {}, h("a", { href: link(["flakes", flake_id]) }, flake_id), " ", h("code", { class: "muted small" }, reference));
+}
+
 export function tile(label: string, value: Child, class_name: string | null = null): HTMLElement {
   return h("div", { class: `tile${class_name ? ` ${class_name}` : ""}` }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value));
 }
@@ -230,6 +236,7 @@ const provision_job_kinds = new Set<Job["kind"]>(["install", "media"]);
 // The page a job's owner is shown on.
 export function job_owner_link(job: Job): string {
   if (provision_job_kinds.has(job.kind)) return link(["provision"]);
+  if (job.kind === "update") return link(["flakes", job.deployment_id]);
   return link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]);
 }
 

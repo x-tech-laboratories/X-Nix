@@ -22,6 +22,7 @@ let
   credentials_directory = "/run/credentials/x-nix.service";
 
   config_file = json.generate "x-nix.json" {
+    flakes = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.flakes;
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
     inherit (cfg) agents provisioning fleet;
@@ -68,13 +69,28 @@ in
       description = "A file holding the login password's hash, written by `npm run hash-password`; read at runtime, never copied to the store.";
     };
 
+    flakes = mkOption {
+      type = types.attrsOf json.type;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          fleet = {
+            url = "github:example/nixos-config";
+            update_at = "02:00";
+            push_ssh_key = "/var/lib/x-nix/deploy_key";
+          };
+        }
+      '';
+      description = "The flakes X-Nix reads and updates, by id, each with the settings README.md lists; deployments and caches name one by its id in `flake`.";
+    };
+
     deployments = mkOption {
       type = types.attrsOf json.type;
       default = { };
       example = lib.literalExpression ''
         {
           workstation = {
-            flake = "github:example/nixos-config";
+            flake = "fleet";
             configuration = "workstation";
             eval_interval = "6h";
           };
@@ -95,7 +111,7 @@ in
           };
         }
       '';
-      description = "The Attic caches to watch, by id, each with the settings README.md lists; ids are shared with deployments.";
+      description = "The Attic caches to watch, by id, each with the settings README.md lists; ids are shared with flakes and deployments.";
     };
 
     agents = mkOption {

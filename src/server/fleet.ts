@@ -15,9 +15,9 @@ import type { Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type FleetActionId = "update" | "build" | "switch" | "reboot";
+export type FleetActionId = "build" | "switch" | "reboot";
 
-export const fleet_action_ids: FleetActionId[] = ["update", "build", "switch", "reboot"];
+export const fleet_action_ids: FleetActionId[] = ["build", "switch", "reboot"];
 
 // Verifying is a switched host waiting to read as in sync before a staged rollout moves on.
 export type FleetHostState = "queued" | "running" | "verifying" | "succeeded" | "failed" | "skipped";

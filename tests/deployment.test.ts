@@ -172,16 +172,6 @@ describe("flake metadata", () => {
     expect(harness.deployment.reading()?.up_to_date).toBe(true);
     expect(status_of(harness)).toBe("unavailable");
   });
-
-  it("warns about stale inputs only when max_input_age is set", async () => {
-    const limited = make_deployment({ max_input_age: "7d" });
-    await collect(limited, { evaluation: matching, metadata: metadata({ inputs: { nixpkgs: clock.now - 30 * 86400 } }) });
-    expect(status_of(limited)).toBe("warning");
-
-    const unlimited = make_deployment();
-    await collect(unlimited, { evaluation: matching, metadata: metadata({ inputs: { nixpkgs: clock.now - 365 * 86400 } }) });
-    expect(status_of(unlimited)).toBe("online");
-  });
 });
 
 // ── Evaluation timing ────────────────────────────────────────────────────────
@@ -301,33 +291,6 @@ describe("actions", () => {
     const job = harness.deployment.running_job()!;
     expect(job.kind).toBe("switch");
     expect(job.command).toContain("nixos-rebuild switch --flake /etc/nixos");
-  });
-
-  it("starts an update as an update job", async () => {
-    const harness = make_deployment();
-
-    await harness.deployment.act("update");
-
-    expect(harness.deployment.running_job()?.kind).toBe("update");
-  });
-
-  it("refuses to update a flake whose lock it cannot write", async () => {
-    const remote = make_deployment({ flake: "git+https://example.com/config" });
-    const refused = await remote.deployment.act("update");
-    expect(refused.ok).toBe(false);
-    expect(refused.message).toContain("github: flake");
-    expect(remote.deployment.running_job()).toBeNull();
-
-    const keyless = make_deployment({ flake: "github:owner/config" });
-    expect((await keyless.deployment.act("update")).message).toContain("push_ssh_key");
-  });
-
-  it("updates a github: flake through a clone it pushes back", async () => {
-    const harness = make_deployment({ flake: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" });
-
-    expect((await harness.deployment.act("update")).ok).toBe(true);
-
-    expect(harness.deployment.running_job()?.command).toContain("push origin HEAD");
   });
 
   it("switches a remote flake", async () => {
@@ -752,7 +715,7 @@ describe("automatic switch", () => {
 
 describe("daily jobs", () => {
   it("never start as soon as they are set", async () => {
-    const harness = make_deployment({ update_at: "02:00", build_at: "02:30" });
+    const harness = make_deployment({ build_at: "02:30" });
 
     await collect(harness);
 
@@ -769,21 +732,6 @@ describe("daily jobs", () => {
     const job = harness.deployment.running_job()!;
     expect([job.kind, job.trigger]).toEqual(["build", "schedule"]);
     expect(job.command).toContain("build --no-link");
-  });
-
-  it("run the update before the build", async () => {
-    const harness = make_deployment({ update_at: "02:00", build_at: "02:30" });
-    await collect(harness);
-    rewind_schedule(harness, "update");
-    rewind_schedule(harness, "build");
-
-    await cycle(harness);
-    expect(harness.deployment.running_job()?.kind).toBe("update");
-    harness.agent.end(harness.agent.last_run("flake update")!, "done\n", 0);
-    await cycle(harness);
-    await cycle(harness);
-
-    expect(harness.deployment.running_job()?.kind).toBe("build");
   });
 
   it("run several missed slots once, and not again after a restart", async () => {
@@ -828,18 +776,6 @@ describe("daily jobs", () => {
     await cycle(broken);
     expect(broken.deployment.scheduled_due()).toBeNull();
     expect(broken.store.jobs()[0].state).toBe("failed");
-  });
-
-  it("never update a flake X-Nix cannot write, and say so", async () => {
-    const harness = make_deployment({ flake: "github:owner/config", update_at: "02:00" });
-    await collect(harness);
-    rewind_schedule(harness, "update");
-
-    await collect(harness);
-
-    expect(harness.deployment.scheduled_due()).toBeNull();
-    expect(status_of(harness)).toBe("warning");
-    expect(messages_of(harness).some((text) => text.includes("Scheduled update never runs"))).toBe(true);
   });
 
   it("reject a time that is not a time of day", () => {
@@ -1038,7 +974,7 @@ describe("a sleeping host that can be woken", () => {
     const store = new Store(":memory:");
     const deployment = new Deployment(deployment_settings({ id: "pi", host: "pi" }), { store, agents, now: () => clock.now });
 
-    const outcome = await deployment.act("update");
+    const outcome = await deployment.act("switch");
     await deployment.cycle();
     expect(outcome.ok).toBe(true);
     expect(wakes).toBe(1);
@@ -1056,7 +992,7 @@ describe("a sleeping host that can be woken", () => {
     const store = new Store(":memory:");
     const deployment = new Deployment(deployment_settings({ id: "pi", host: "pi" }), { store, agents, now: () => clock.now });
 
-    const outcome = await deployment.act("update");
+    const outcome = await deployment.act("switch");
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The job could not be started" });

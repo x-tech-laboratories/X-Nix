@@ -27,7 +27,7 @@ export type JobKind =
   | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
   | "build-all" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
-export type ActionId = "update" | "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
+export type ActionId = "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
 
 export interface Message {
   level: EventLevel;
@@ -111,7 +111,7 @@ export interface Evaluation {
   oldest_input: string | null;
   inputs_last_modified_epoch: number | null;
   drift_since_epoch: number | null;
-  scheduled: Partial<Record<"update" | "build", number>>;
+  scheduled: Partial<Record<"build", number>>;
   last_collection: Collection | null;
   last_diff: ClosureDiff | null;
 }
@@ -209,6 +209,7 @@ export interface Deployment {
   name: string;
   host: string | null;
   flake: string;
+  flake_id: string | null;
   configuration: string | null;
   tags: string[];
   pin: string | null;
@@ -216,7 +217,7 @@ export interface Deployment {
   pin_overridden: boolean;
   sync_pending: boolean;
   agents: { eval: string | null; build: string | null; switch: string | null };
-  schedule: { update: string | null; build: string | null };
+  schedule: { build: string | null };
   auto_switch: boolean;
   switch_from_cache: boolean;
   gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
@@ -239,7 +240,7 @@ export interface Deployment {
   };
 }
 
-export type FleetActionId = "update" | "build" | "switch" | "reboot";
+export type FleetActionId = "build" | "switch" | "reboot";
 export type FleetHostState = "queued" | "running" | "verifying" | "succeeded" | "failed" | "skipped";
 export type FleetRunState = "running" | "succeeded" | "failed" | "stopped";
 
@@ -256,7 +257,8 @@ export interface FleetHost {
 
 export interface FleetRun {
   id: number;
-  action: FleetActionId;
+  // Runs kept in the history may be updates.
+  action: FleetActionId | "update";
   selector: string;
   staged: boolean;
   stages: string[];
@@ -330,6 +332,7 @@ export interface Cache {
   name: string;
   host: string | null;
   flake: string;
+  flake_id: string | null;
   cache_url: string;
   interval: number;
   can_push: boolean;
@@ -339,6 +342,53 @@ export interface Cache {
   server: CacheServerReading | null;
   running_job: Job | null;
   targets: { name: string; installable: string; build_link: string | null; kept_only_in_cache: boolean; refusals: Record<CacheActionId, string | null> }[];
+}
+
+export interface LockedInput {
+  name: string;
+  source: string | null;
+  follows: string | null;
+  revision: string | null;
+  last_modified_epoch: number | null;
+}
+
+export interface FlakeReading {
+  status: Status;
+  checked_epoch: number;
+  messages: Message[];
+  revision: string | null;
+  last_modified_epoch: number | null;
+  oldest_input: string | null;
+  inputs_last_modified_epoch: number | null;
+  inputs: LockedInput[];
+  metadata_error: string | null;
+}
+
+export interface UpdateOutcome {
+  job_id: number;
+  succeeded: boolean;
+  finished_epoch: number;
+  summary: string;
+}
+
+export interface Flake {
+  id: string;
+  name: string;
+  host: string | null;
+  url: string;
+  interval: number;
+  update_at: string | null;
+  scheduled_update: number | null;
+  update_refusal: string | null;
+  pushes_to: string | null;
+  commit_author: string;
+  commit_message: string;
+  max_input_age: number | null;
+  reading: FlakeReading | null;
+  last_update: UpdateOutcome | null;
+  running_job: Job | null;
+  deployments: { id: string; name: string }[];
+  caches: { id: string; name: string }[];
 }
 
 export interface BuildProduct {

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ConfigError, deployment_settings } from "../src/server/config.ts";
-import { build_command, cache_holds_command, eval_command, split_eval_output, switch_command, switch_from_cache_command, update_command } from "../src/server/nixos/commands.ts";
+import { ConfigError, deployment_settings, flake_settings, parse_config } from "../src/server/config.ts";
+import {
+  build_command, cache_holds_command, eval_command, metadata_command, split_eval_output, switch_command, switch_from_cache_command, update_command,
+} from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
 import { current_closure } from "./fake_agent.ts";
@@ -14,6 +16,10 @@ import { current_closure } from "./fake_agent.ts";
 
 function settings(values: Record<string, unknown> = {}) {
   return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...values });
+}
+
+function flake(values: Record<string, unknown> = {}) {
+  return flake_settings({ id: "config", url: "/etc/nixos", ...values });
 }
 
 // A folder of stand-in programs, each a shell script.
@@ -227,14 +233,14 @@ describe("the build", () => {
 // ── Update ───────────────────────────────────────────────────────────────────
 
 describe("the update", () => {
-  const github = { flake: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" };
+  const github = { url: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" };
 
   it("updates a local flake in place", () => {
-    expect(update_command(settings())).toContain("flake update --flake /etc/nixos");
+    expect(update_command(flake())).toContain("sudo -n nix --extra-experimental-features 'nix-command flakes' flake update --flake /etc/nixos");
   });
 
   it("updates a github: flake unprivileged, pushing over SSH with pinned host keys", () => {
-    const command = update_command(settings(github));
+    const command = update_command(flake(github));
 
     expect(command).not.toContain("sudo");
     expect(command).toContain("git@github.com:owner/config.git");
@@ -244,7 +250,7 @@ describe("the update", () => {
   });
 
   it("clones the flake's branch and commits as the configured author", () => {
-    const command = update_command(settings({ ...github, flake: "github:owner/config/dev", commit_author: "Bot <bot@example.com>", commit_message: "build: bump inputs" }));
+    const command = update_command(flake({ ...github, url: "github:owner/config/dev", commit_author: "Bot <bot@example.com>", commit_message: "build: bump inputs" }));
 
     expect(command).toContain("--branch dev");
     expect(command).toContain("user.name=Bot");
@@ -259,11 +265,44 @@ describe("the update", () => {
       git: 'case "$*" in clone*) eval mkdir -p "\\${$#}";; esac\nexit 0',
     });
 
-    const run = run_shell(update_command(settings({ ...github, nix_bin: join(programs, "nix"), nix_args: [] })), programs);
+    const run = run_shell(update_command(flake({ ...github, nix_bin: join(programs, "nix"), nix_args: [] })), programs);
 
     expect(run.status).toBe(expected);
     expect(run.stdout.split("Updated input 'nixpkgs'").length - 1).toBe(1);
     expect(run.stdout.includes("Every input is already current")).toBe(status === 0);
+  });
+});
+
+// ── Flake metadata ───────────────────────────────────────────────────────────
+
+describe("the flake's metadata read", () => {
+  it("fetches a remote flake afresh under its own timeout, and reads a local one from disk", () => {
+    expect(metadata_command(flake({ url: "github:owner/config", timeout: "1m" }))).toMatch(/^timeout 60 nix .* flake metadata --json --no-write-lock-file --refresh github:owner\/config$/);
+    expect(metadata_command(flake())).not.toContain("--refresh");
+  });
+});
+
+// ── Flakes in the config ─────────────────────────────────────────────────────
+
+describe("a flake in the config", () => {
+  it("is named by id from deployments and caches, which take its reference", () => {
+    const config = parse_config({
+      flakes: [{ id: "fleet", url: "github:owner/config" }],
+      deployments: [{ id: "odin", flake: "fleet", pin: "v1" }, { id: "own", flake: "github:owner/own" }],
+      caches: [{ id: "cache", flake: "fleet", configurations: ["odin"], cache_url: "https://attic.example/fleet" }],
+    });
+
+    expect(config.deployments.map(({ flake, flake_id }) => [flake, flake_id])).toEqual([["github:owner/config", "fleet"], ["github:owner/own", null]]);
+    expect([config.caches[0].flake, config.caches[0].flake_id]).toEqual(["github:owner/config", "fleet"]);
+  });
+
+  it("needs a url and an id no deployment or cache takes", () => {
+    expect(() => flake_settings({ id: "fleet" })).toThrow(ConfigError);
+    expect(() => parse_config({ flakes: [{ id: "odin", url: "/etc/nixos" }], deployments: [{ id: "odin" }] })).toThrow(/Two flakes, deployments or caches/);
+  });
+
+  it.each(["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"])("takes %s, which a deployment refuses", (key) => {
+    expect(() => deployment_settings({ id: "odin", [key]: key === "update_at" ? "02:00" : "7d" })).toThrow(/belongs to its flake/);
   });
 });
 
