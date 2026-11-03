@@ -7,8 +7,8 @@ import type { KeyObject } from "node:crypto";
 
 import { sign_challenge } from "../shared/agent_keys.ts";
 import { encode_message, parse_server_message, protocol_version, type AgentMessage, type PullReport, type RequestMessage } from "../shared/agent_protocol.ts";
-import { run_command } from "./commands.ts";
 import type { LongRuns } from "./long_runs.ts";
+import { run_operation } from "./run.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -106,9 +106,9 @@ export class AgentSession {
   private async value_for(message: RequestMessage): Promise<unknown> {
     switch (message.type) {
       case "run":
-        return run_command(message.command, { timeout_in_seconds: message.timeout_in_seconds, stdin: message.stdin });
+        return run_operation(message.operation, { timeout_in_seconds: message.timeout_in_seconds, stdin: message.stdin });
       case "start":
-        return this.runs.start(message.run_id, message.command, message.stdin);
+        return this.runs.start(message.run_id, message.operation, message.stdin);
       case "poll":
         return this.runs.poll(message.run_id, message.offset);
       case "stop":

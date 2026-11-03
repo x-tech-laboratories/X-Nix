@@ -13,7 +13,7 @@ import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { level_of_status, worse, type FlakeSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
 import { format_age, format_duration } from "./durations.ts";
-import { can_update, metadata_command, timed_out_exit_code, update_command } from "./nixos/commands.ts";
+import { can_update, metadata_operation, update_operation } from "./nixos/commands.ts";
 import { parse_metadata, short_revision, type LockedInput } from "./nixos/flake.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, Store } from "./store.ts";
@@ -68,8 +68,6 @@ export interface FlakeOptions {
 }
 
 const flake_job_kinds: Job["kind"][] = ["update"];
-
-const metadata_grace_in_seconds = 30;
 
 // ── Flake ────────────────────────────────────────────────────────────────────
 
@@ -141,10 +139,10 @@ export class Flake {
 
   // Reads the metadata and lock, keeping the last good values when the read fails.
   private async read(): Promise<void> {
-    const result = await this.agents.get(this.settings.host).run(metadata_command(this.settings), this.settings.timeout + metadata_grace_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(metadata_operation(this.settings), this.settings.timeout);
     const metadata = result.exit_code === 0 ? parse_metadata(result.stdout) : null;
     const previous = this.reading();
-    const timed_out = result.exit_code === timed_out_exit_code ? `Timed out after ${format_duration(this.settings.timeout)}` : null;
+    const timed_out = result.exit_code === -1 && result.stderr.startsWith("Timed out") ? `Timed out after ${format_duration(this.settings.timeout)}` : null;
     const error = metadata !== null ? null : timed_out ?? (clip(result.stderr || result.stdout, 400) || `nix flake metadata exited ${result.exit_code}`);
     this.save_reading({
       status: "online",
@@ -246,16 +244,16 @@ export class Flake {
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   private async launch(trigger: string): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
-    const command = update_command(this.settings);
+    const operation = update_operation(this.settings);
     const run_id = `${this.id}-update-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
-      ({ waking } = await start_run(this.agents, this.settings.host, run_id, command));
+      ({ waking } = await start_run(this.agents, this.settings.host, run_id, operation));
     } catch (error) {
       const unreachable = error instanceof AgentError && error.unreachable;
       return { job_id: null, error: (error as Error).message, unreachable };
     }
-    const job_id = this.store.create_job({ deployment_id: this.id, kind: "update", command, agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: this.id, kind: "update", command: JSON.stringify(operation), agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
       track_wake(this.store, job_id, this.settings.host ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(this.id, this.now(), "error", `Could not start the update: ${error}`);
@@ -267,7 +265,7 @@ export class Flake {
   // Keeps an update that could not start in the history, with why.
   private record_failed_launch(trigger: string, error: string): number {
     const job_id = this.store.create_job({
-      deployment_id: this.id, kind: "update", command: update_command(this.settings), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
+      deployment_id: this.id, kind: "update", command: JSON.stringify(update_operation(this.settings)), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
     });
     this.store.append_output(job_id, `${error}\n`);
     this.store.finish_job(job_id, "failed", null, "The job could not be started", this.now());

@@ -1,10 +1,10 @@
-// Long runs: commands that keep going on their own, in their own process group, so they outlive the connection that
-// started them and the agent itself. Each writes its output and exit code into its own folder under the state
-// directory, which is all a later agent needs to report on it, follow it, or stop it.
+// Long runs: operations that keep going on their own in a runner process with its own process group, so they outlive
+// the connection that started them and the agent itself. Each writes its output and exit code into its own folder under
+// the state directory, which is all a later agent needs to report on it, follow it, or stop it.
 //
-// A run's folder holds `run.json` (its pid and when the process began), `out` (stdout and stderr together), `exit`
-// once it has ended, and `stopped` once it has been asked to stop. Its stdin, which carries a passphrase, is handed
-// over through a pipe and never written down.
+// A run's folder holds `operation.json` (what the runner performs), `run.json` (its pid and when the process began),
+// `out` (everything it printed), `exit` once it has ended, and `stopped` once it has been asked to stop. Its stdin,
+// which may carry a key, is handed over through a pipe and never written down.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -14,9 +14,11 @@ import { open } from "node:fs/promises";
 import { constants } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import { is_run_id, type LongRun, type LongRunPoll, type LongRunState } from "../shared/agent_protocol.ts";
-import { type CommandStream, kill_grace_in_milliseconds, signal_group } from "./commands.ts";
+import type { Operation } from "../shared/operations.ts";
+import { kill_grace_in_milliseconds, signal_group } from "./programs.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -26,8 +28,25 @@ export const poll_limit_in_bytes = 1024 * 1024;
 // A followed run is read in pieces of this size.
 const tail_chunk_in_bytes = 64 * 1024;
 
-// The outer shell runs the command with its output in the run's folder, then writes the exit code in one rename.
-const wrapper = 'sh -c "$2" > "$1/out" 2>&1; echo $? > "$1/exit.part"; mv -f "$1/exit.part" "$1/exit"';
+const runner_program = fileURLToPath(new URL("./runner.ts", import.meta.url));
+
+// What the agent leaves in the run's folder for the runner.
+export interface RunPlan {
+  operation: Operation;
+  // Whether the operation's stdin arrives on the runner's.
+  stdin: boolean;
+}
+
+export const plan_file = "operation.json";
+
+// A followed run's output as it comes.
+export interface CommandStream {
+  stdout: Readable;
+  // Settles once the run has ended and its output has been read to the end.
+  done: Promise<{ exit_code: number; stderr: string }>;
+  // Stops following it.
+  stop: () => void;
+}
 
 export interface LongRunOptions {
   kill_grace_in_milliseconds?: number;
@@ -68,25 +87,27 @@ export class LongRuns {
 
   // ── Starting ─────────────────────────────────────────────────────────────
 
-  start(run_id: string, command: string, stdin: string | null): LongRun {
+  start(run_id: string, operation: Operation, stdin: string | null): LongRun {
     const folder = this.folder(run_id);
     if (existsSync(folder)) throw new LongRunError(`A run named '${run_id}' already exists.`);
     mkdirSync(folder, { mode: 0o700 });
     writeFileSync(join(folder, "out"), "", { mode: 0o600 });
+    const plan: RunPlan = { operation, stdin: stdin !== null };
+    writeFileSync(join(folder, plan_file), JSON.stringify(plan), { mode: 0o600 });
 
-    const child = spawn("sh", ["-c", wrapper, "x-nix-run", folder, command], {
+    const child = spawn(process.execPath, [runner_program, folder], {
       detached: true,
       stdio: [stdin === null ? "ignore" : "pipe", "ignore", "ignore"],
     });
     if (child.pid === undefined) {
       rmSync(folder, { recursive: true, force: true });
-      throw new LongRunError("Could not start sh.");
+      throw new LongRunError("Could not start the runner.");
     }
     if (stdin !== null) {
       child.stdin!.on("error", () => {});
       child.stdin!.end(stdin);
     }
-    // A wrapper killed before it could write its exit code is given the shell's code for that signal.
+    // A runner killed before it could write its exit code is given the shell's code for that signal.
     child.on("exit", (code, signal) => {
       this.children.delete(run_id);
       const exit_file = join(folder, "exit");

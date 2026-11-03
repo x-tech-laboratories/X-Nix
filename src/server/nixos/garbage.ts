@@ -1,6 +1,6 @@
 // Garbage collection on a deployment's host: whether its Nix store is actually being reclaimed.
 //
-// One cheap script reads the store's filesystem and path count, every profile's generation links, the collection unit
+// One cheap read on the host gathers the store's filesystem and path count, every profile's generation links, the collection unit
 // and timer, and the last collection's own summary line from the journal, so a collection that stopped running, failed,
 // or was never scheduled reads as a failure rather than as a slowly filling disk. The last collection is kept between
 // cycles, so a journal that has since rotated past it does not erase what was already seen, and a manual collection
@@ -11,7 +11,10 @@
 import { level_of_status, worse, type GcSettings, type Status } from "../config.ts";
 import type { Message } from "../deployment.ts";
 import { format_age, format_duration } from "../durations.ts";
-import { shell_quote } from "./commands.ts";
+import { read_facts, type GcFields, type Profile } from "../../shared/facts.ts";
+import { show_argv, type Argv, type Operation } from "../../shared/operations.ts";
+
+export type { GcFields, Profile } from "../../shared/facts.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -22,32 +25,6 @@ export interface Collection {
   deleted: number | null;
   freed_bytes: number | null;
   error: string | null;
-}
-
-export interface Profile {
-  path: string;
-  // The generation the profile points at.
-  generation: number | null;
-  count: number;
-  oldest_epoch: number | null;
-}
-
-export interface GcFields {
-  hostname: string | null;
-  // `size used avail target` in bytes, as df prints it.
-  df: string;
-  paths: number | null;
-  roots: number | null;
-  svc_state: string;
-  svc_result: string;
-  svc_exit: string;
-  timer_load: string;
-  timer_state: string;
-  timer_next: string;
-  summary: string;
-  outcome: string;
-  error: string;
-  profiles: Profile[];
 }
 
 // What the last cycle read of the host's store and made of it.
@@ -91,79 +68,14 @@ const size_units: Record<string, number> = {
 
 // ── Probe ────────────────────────────────────────────────────────────────────
 
-export function gc_probe_script(gc: GcSettings): string {
-  const [unit, timer, store] = [gc.unit, gc.timer, gc.store].map(shell_quote);
-  return [
-    'echo "hostname=$(uname -n)"',
-    `echo "df=$(df -B1 --output=size,used,avail,target ${store} 2>/dev/null | tail -1)"`,
-    `echo "paths=$(ls -U ${store} 2>/dev/null | wc -l)"`,
-    'echo "roots=$(ls -U /nix/var/nix/gcroots/auto 2>/dev/null | wc -l)"',
-    `echo "svc_state=$(systemctl show ${unit} -p ActiveState --value 2>/dev/null)"`,
-    `echo "svc_result=$(systemctl show ${unit} -p Result --value 2>/dev/null)"`,
-    `echo "svc_exit=$(systemctl show ${unit} --timestamp=unix -p InactiveEnterTimestamp --value 2>/dev/null)"`,
-    `echo "timer_load=$(systemctl show ${timer} -p LoadState --value 2>/dev/null)"`,
-    `echo "timer_state=$(systemctl show ${timer} -p ActiveState --value 2>/dev/null)"`,
-    `echo "timer_next=$(systemctl show ${timer} --timestamp=unix -p NextElapseUSecRealtime --value 2>/dev/null)"`,
-    `echo "summary=$(journalctl -u ${unit} -o short-unix --no-pager -n 1 -g 'store paths deleted' 2>/dev/null | tail -1)"`,
-    `echo "outcome=$(journalctl -u ${unit} -o short-unix --no-pager -n 1 -g 'Finished |Failed with result' 2>/dev/null | tail -1)"`,
-    `echo "error=$(journalctl -u ${unit} -o short-unix --no-pager -n 1 -g 'error:' 2>/dev/null | tail -1)"`,
-    // A profile is a link to its own generation link, which rules out /nix/var/nix/profiles/default: it points at another
-    // profile and would be counted twice.
-    "for prof in /nix/var/nix/profiles/* /nix/var/nix/profiles/per-user/*/*; do",
-    '  [ -L "$prof" ] || continue',
-    '  target=$(readlink "$prof"); base=${prof##*/}',
-    '  case "$target" in "$base"-*-link) ;; *) continue ;; esac',
-    "  count=0; oldest=",
-    '  for link in "$prof"-*-link; do',
-    '    [ -L "$link" ] || continue',
-    "    count=$((count + 1))",
-    '    stamp=$(stat -c %Y "$link" 2>/dev/null)',
-    '    if [ -n "$stamp" ] && { [ -z "$oldest" ] || [ "$stamp" -lt "$oldest" ]; }; then oldest=$stamp; fi',
-    "  done",
-    '  generation=${target#"$base"-}',
-    '  echo "profile=$prof|${generation%-link}|$count|$oldest"',
-    "done",
-  ].join("\n");
+export function store_probe_operation(gc: GcSettings): Operation {
+  return { kind: "store_probe", unit: gc.unit, timer: gc.timer, store: gc.store };
 }
 
-export function parse_gc_probe(stdout: string): GcFields {
-  const values = new Map<string, string>();
-  const profiles: Profile[] = [];
-  for (const line of stdout.split("\n")) {
-    const separator = line.indexOf("=");
-    if (separator === -1) continue;
-    const key = line.slice(0, separator);
-    const value = line.slice(separator + 1).trim();
-    if (key !== "profile") values.set(key, value);
-    else {
-      const profile = profile_of(value);
-      if (profile !== null) profiles.push(profile);
-    }
-  }
-  const text = (key: string) => values.get(key) ?? "";
-  return {
-    hostname: text("hostname") || null,
-    df: text("df"),
-    paths: whole(text("paths")),
-    roots: whole(text("roots")),
-    svc_state: text("svc_state"),
-    svc_result: text("svc_result"),
-    svc_exit: text("svc_exit"),
-    timer_load: text("timer_load"),
-    timer_state: text("timer_state"),
-    timer_next: text("timer_next"),
-    summary: text("summary"),
-    outcome: text("outcome"),
-    error: text("error"),
-    profiles,
-  };
-}
-
-// One `path|generation|count|oldest` probe line.
-function profile_of(raw: string): Profile | null {
-  const parts = raw.split("|");
-  if (parts.length !== 4 || parts[0] === "") return null;
-  return { path: parts[0], generation: whole(parts[1]), count: whole(parts[2]) ?? 0, oldest_epoch: whole(parts[3]) };
+// The store's facts, or null when the read printed none.
+export function parse_gc_probe(stdout: string): GcFields | null {
+  const fields = read_facts<GcFields>(stdout);
+  return fields !== null && Array.isArray(fields.profiles) ? fields : null;
 }
 
 // ── Last collection ──────────────────────────────────────────────────────────
@@ -227,8 +139,17 @@ export function finished_collection(output: string, succeeded: boolean, error: s
 // ── Command ──────────────────────────────────────────────────────────────────
 
 // The same collection the timer runs.
+export function collect_argv(gc: GcSettings, require_sudo: boolean): Argv {
+  return [...(require_sudo ? ["sudo", "-n"] : []), gc.gc_bin, ...gc.gc_args];
+}
+
+export function collect_operation(gc: GcSettings, require_sudo: boolean): Operation {
+  return { kind: "programs", steps: [{ argv: collect_argv(gc, require_sudo) }] };
+}
+
+// The collection as a line a person reads.
 export function collect_command(gc: GcSettings, require_sudo: boolean): string {
-  return [require_sudo ? "sudo -n" : "", gc.gc_bin, ...gc.gc_args.map(shell_quote)].filter(Boolean).join(" ");
+  return show_argv(collect_argv(gc, require_sudo));
 }
 
 // ── Judging ──────────────────────────────────────────────────────────────────
@@ -243,7 +164,7 @@ export function assess_store(gc: GcSettings, fields: GcFields, last: Collection 
   };
   const note = (text: string) => messages.push({ level: "info", text });
 
-  const [size, used, avail] = fields.df.split(/\s+/).slice(0, 3).map(whole);
+  const [size, used, avail] = [fields.size_bytes, fields.used_bytes, fields.avail_bytes];
   let used_percent: number | null = null;
   if (size != null && used != null && avail != null) {
     used_percent = size > 0 ? (used / size) * 100 : 0;
@@ -289,7 +210,7 @@ export function assess_store(gc: GcSettings, fields: GcFields, last: Collection 
 
   return {
     status, checked_epoch: now, messages, store: gc.store,
-    size_bytes: size ?? null, used_bytes: used ?? null, avail_bytes: avail ?? null, used_percent,
+    size_bytes: size, used_bytes: used, avail_bytes: avail, used_percent,
     paths: fields.paths, roots: fields.roots, profiles: fields.profiles, generations, oldest_generation_epoch: oldest,
     collecting, timer_loaded, timer_active, next_epoch,
   };

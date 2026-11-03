@@ -6,12 +6,12 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { DeploymentSettings } from "../config.ts";
-import { shell_quote } from "./commands.ts";
+import { diff_mark, type Operation } from "../../shared/operations.ts";
+import { nix } from "./commands.ts";
+
+export { diff_mark, is_store_path } from "../../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
-
-// Starts each line the diff script prints for the server, naming the section that follows.
-export const diff_mark = "@@x-nix-diff";
 
 export interface PackageChange {
   name: string;
@@ -56,40 +56,11 @@ export interface ClosureTree {
   paths: ClosurePath[];
 }
 
-// A store path as nix prints it, which is safe to pass on.
-const store_path_pattern = /^\/nix\/store\/[0-9a-z]{32}-[0-9A-Za-z+._?=-]+$/;
-
-export function is_store_path(value: string): boolean {
-  return store_path_pattern.test(value);
-}
-
 // ── Diff ─────────────────────────────────────────────────────────────────────
 
-function nix(settings: DeploymentSettings): string {
-  return [settings.nix_bin, ...settings.nix_args.map(shell_quote)].join(" ");
-}
-
 // Compares two system closures on the host; a missing new closure is reported rather than fetched.
-export function diff_command(settings: DeploymentSettings, from: string, to: string): string {
-  const [a, b] = [shell_quote(from), shell_quote(to)];
-  return [
-    `if ! ${nix(settings)} path-info ${b} >/dev/null 2>&1; then echo "${diff_mark} missing"; exit 0; fi`,
-    `echo "${diff_mark} closures"`,
-    `changes=$(${nix(settings)} store diff-closures ${a} ${b} 2>&1); rc=$?`,
-    `printf '%s\\n' "$changes"`,
-    `[ $rc -eq 0 ] || echo "${diff_mark} failed $rc"`,
-    `echo "${diff_mark} sizes"`,
-    `${nix(settings)} path-info -S --json ${a} ${b} 2>/dev/null`,
-    `echo "${diff_mark} derivations"`,
-    // nix-diff only has something to add when the packages are the same, and needs both derivations in the store.
-    `if [ $rc -eq 0 ] && [ ${a} != ${b} ] && [ -z "$changes" ]; then`,
-    `  if ! command -v nix-diff >/dev/null 2>&1; then echo "${diff_mark} note nix-diff is not installed on the host, so the derivations cannot be compared";`,
-    `  else from_drv=$(nix-store -q --deriver ${a} 2>/dev/null); to_drv=$(nix-store -q --deriver ${b} 2>/dev/null)`,
-    `    if [ -e "$from_drv" ] && [ -e "$to_drv" ]; then nix-diff --color never "$from_drv" "$to_drv" 2>&1 | head -c 200000;`,
-    `    else echo "${diff_mark} note The derivations of both closures are not in the host's store, so they cannot be compared"; fi`,
-    "  fi",
-    "fi",
-  ].join("\n");
+export function diff_operation(settings: DeploymentSettings, from: string, to: string): Operation {
+  return { kind: "closure_diff", nix: nix(settings), from, to };
 }
 
 export function parse_diff(output: string, from: string, to: string, checked_epoch: number, job_id: number | null): ClosureDiff {
@@ -167,8 +138,8 @@ function closure_sizes(json: string): Map<string, number> {
 // ── Closure graph ────────────────────────────────────────────────────────────
 
 // Prints every path of the closure with its own size, its closure size and its references.
-export function closure_command(settings: DeploymentSettings, path: string): string {
-  return `${nix(settings)} path-info --recursive --size --closure-size --json ${shell_quote(path)}`;
+export function closure_operation(settings: DeploymentSettings, path: string): Operation {
+  return { kind: "programs", steps: [{ argv: [...nix(settings), "path-info", "--recursive", "--size", "--closure-size", "--json", path] }] };
 }
 
 export function parse_closure(json: string, root: string): ClosureTree {

@@ -3,14 +3,15 @@
 // When a Build, a cache target's Build or a Build all ends, each target it built is recorded with the job that holds its
 // log. A built store path is read once for Hydra's `nix-support/hydra-build-products`, and each product that is a
 // regular file inside that store path is recorded with its size. Such a file can be downloaded through the agent that
-// built it, which checks again that it lies inside the store path and sends it in base64 pieces over its `run` request.
+// built it, which checks again that it lies inside the store path and sends it in base64 pieces, one `piece` run each.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { Readable } from "node:stream";
 
 import type { Agent, AgentPool } from "./agents/agent.ts";
-import { is_store_path, shell_quote } from "./nixos/commands.ts";
+import { read_facts, type LocatedFile } from "../shared/facts.ts";
+import { is_store_path, type Operation } from "../shared/operations.ts";
 import type { BuildRecord, BuildProduct, Job, Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -21,9 +22,6 @@ export interface BuiltTarget {
   store_path: string | null;
   succeeded: boolean;
 }
-
-// Starts every line the products script prints, so nothing else is read as a product.
-const product_mark = "@@x-nix-product";
 
 const products_timeout_in_seconds = 60;
 
@@ -48,29 +46,13 @@ export function built_store_path(output: string): string | null {
 // ── Products ─────────────────────────────────────────────────────────────────
 
 // Lists the store path's Hydra build products, each with its size when it is a regular file inside the store path.
-export function products_script(store_path: string): string {
-  return [
-    `out=${shell_quote(store_path)}`,
-    'list="$out/nix-support/hydra-build-products"',
-    '[ -f "$list" ] || exit 0',
-    'while read -r type subtype path rest; do',
-    '  path=${path#\\"}; path=${path%\\"}',
-    "  size=",
-    '  real=$(realpath -e -- "$path" 2>/dev/null) && case "$real" in "$out"/*) [ -f "$real" ] && size=$(stat -c %s -- "$real") ;; esac',
-    `  printf '${product_mark}\\t%s\\t%s\\t%s\\t%s\\n' "$type" "$subtype" "$path" "$size"`,
-    'done < "$list"',
-  ].join("\n");
+export function products_operation(store_path: string): Operation {
+  return { kind: "products", store_path };
 }
 
 export function parse_products(output: string): BuildProduct[] {
-  const products: BuildProduct[] = [];
-  for (const line of output.split("\n")) {
-    const parts = line.split("\t");
-    if (parts[0] !== product_mark || parts.length < 5) continue;
-    const [, type, subtype, path, size] = parts;
-    products.push({ type, subtype, path, name: path.split("/").pop() ?? path, size_bytes: /^\d+$/.test(size.trim()) ? Number(size.trim()) : null });
-  }
-  return products;
+  const products = read_facts<BuildProduct[]>(output);
+  return Array.isArray(products) ? products : [];
 }
 
 // ── Recording ────────────────────────────────────────────────────────────────
@@ -81,7 +63,7 @@ export async function record_builds(store: Store, agents: AgentPool, job: Job, b
   for (const entry of built) {
     let products: BuildProduct[] = [];
     if (entry.succeeded && entry.store_path !== null && is_store_path(entry.store_path)) {
-      const result = await agent.run(products_script(entry.store_path), products_timeout_in_seconds);
+      const result = await agent.run(products_operation(entry.store_path), products_timeout_in_seconds);
       products = parse_products(result.stdout);
     }
     store.add_build({
@@ -102,27 +84,21 @@ export function download_refusal(build: BuildRecord, product: BuildProduct | und
 }
 
 // Answers the product's real path and size, after checking it is still a regular file inside the build's store path.
-export function locate_script(store_path: string, path: string): string {
-  return [
-    `out=${shell_quote(store_path)}`,
-    `real=$(realpath -e -- ${shell_quote(path)} 2>/dev/null) || { echo "It is no longer in the store" >&2; exit 2; }`,
-    'case "$real" in "$out"/*) ;; *) echo "It is not inside the build\'s store path" >&2; exit 3 ;; esac',
-    '[ -f "$real" ] || { echo "It is not a regular file" >&2; exit 4; }',
-    'printf "%s\\t%s\\n" "$(stat -c %s -- "$real")" "$real"',
-  ].join("\n");
+export function locate_operation(store_path: string, path: string): Operation {
+  return { kind: "locate", store_path, path };
 }
 
 // Reads one piece of a file, as base64 so it travels as text.
-export function piece_command(path: string, block: number): string {
-  return `dd if=${shell_quote(path)} bs=${block_size_in_bytes} skip=${block} count=${blocks_per_piece} status=none | base64 -w 0`;
+export function piece_operation(path: string, block: number): Operation {
+  return { kind: "piece", path, offset: block * block_size_in_bytes, length: blocks_per_piece * block_size_in_bytes };
 }
 
 // Finds the product on the host that built it, answering its real path and size, or why it cannot be sent.
 export async function locate_product(agent: Agent, build: BuildRecord, product: BuildProduct): Promise<{ path: string; size: number } | { error: string }> {
-  const result = await agent.run(locate_script(build.store_path!, product.path), products_timeout_in_seconds);
-  const [size, path] = result.stdout.trim().split("\t");
-  if (result.exit_code !== 0 || path === undefined || !/^\d+$/.test(size)) return { error: result.stderr.trim() || `The host answered with status ${result.exit_code}` };
-  return { path, size: Number(size) };
+  const result = await agent.run(locate_operation(build.store_path!, product.path), products_timeout_in_seconds);
+  const located = result.exit_code === 0 ? read_facts<LocatedFile>(result.stdout) : null;
+  if (located === null || typeof located.path !== "string" || typeof located.size !== "number") return { error: result.stderr.trim() || `The host answered with status ${result.exit_code}` };
+  return { path: located.path, size: located.size };
 }
 
 // The file's bytes, read from its host one piece at a time as the reader asks for them.
@@ -135,7 +111,7 @@ export function product_stream(agent: Agent, path: string, size: number): Readab
         this.push(null);
         return;
       }
-      void agent.run(piece_command(path, block), piece_timeout_in_seconds).then((result) => {
+      void agent.run(piece_operation(path, block), piece_timeout_in_seconds).then((result) => {
         if (result.exit_code !== 0) {
           this.destroy(new Error(`Could not read ${path}: ${result.stderr.trim() || `status ${result.exit_code}`}`));
           return;

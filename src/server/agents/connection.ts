@@ -7,6 +7,7 @@ import {
   encode_message, parse_agent_message, type AgentMessage, type LongRun, type LongRunPoll, type PullReport, type RequestType, type Requests,
   type RunResult, type ServerMessage,
 } from "../../shared/agent_protocol.ts";
+import type { Operation } from "../../shared/operations.ts";
 import { AgentError, type Agent } from "./agent.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -71,16 +72,16 @@ export class AgentConnection implements Agent {
 
   // ── Agent ────────────────────────────────────────────────────────────────
 
-  async run(command: string, timeout_in_seconds: number): Promise<RunResult> {
+  async run(operation: Operation, timeout_in_seconds: number): Promise<RunResult> {
     try {
-      return await this.request("run", { command, stdin: null, timeout_in_seconds }, timeout_in_seconds * 1000 + run_reply_slack_in_milliseconds);
+      return await this.request("run", { operation, stdin: null, timeout_in_seconds }, timeout_in_seconds * 1000 + run_reply_slack_in_milliseconds);
     } catch (error) {
       return { exit_code: -1, stdout: "", stderr: (error as Error).message };
     }
   }
 
-  start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
-    return this.request("start", { run_id, command, stdin });
+  start(run_id: string, operation: Operation, stdin: string | null = null): Promise<LongRun> {
+    return this.request("start", { run_id, operation, stdin });
   }
 
   poll(run_id: string, offset: number): Promise<LongRunPoll> {

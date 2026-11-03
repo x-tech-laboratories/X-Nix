@@ -1,15 +1,20 @@
 // The messages the server and a host's agent exchange over the agent's WebSocket, shared by both sides; copied from
 // X-Backups, without its streams and health samples.
 //
-// Every message is one JSON text frame with a `type`. A request from the server carries an `id` the agent answers with
+// Every message is one JSON text frame with a `type`. A run or a long run carries an operation (see operations.ts), which
+// the agent performs itself rather than a command line. A request from the server carries an `id` the agent answers with
 // one `reply` or `failed` of the same id. Either side sends `ping` while idle and drops a connection that has been silent
 // too long. An agent logs in with its host's key: it names the host in the upgrade, the server's first message is a
 // `challenge`, and the agent's hello carries its signature of that nonce (see agent_keys.ts). After its hello, an agent
 // that deployed from Git on its own sends `pulls`, and the server answers with `pulls_received` naming those it kept.
 
+// ── Imports ──────────────────────────────────────────────────────────────────
+
+import { is_operation, type Operation } from "./operations.ts";
+
 // ── Version ──────────────────────────────────────────────────────────────────
 
-export const protocol_version = 1;
+export const protocol_version = 2;
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +55,7 @@ export interface PullReport {
   remote: string;
   branch: string;
   revision: string;
+  // The operation it ran, as JSON.
   command: string;
   started_epoch: number;
   finished_epoch: number | null;
@@ -63,8 +69,8 @@ export interface PullReport {
 
 // Each request the server makes and what its reply carries.
 export interface Requests {
-  run: { body: { command: string; stdin: string | null; timeout_in_seconds: number }; reply: RunResult };
-  start: { body: { run_id: string; command: string; stdin: string | null }; reply: LongRun };
+  run: { body: { operation: Operation; stdin: string | null; timeout_in_seconds: number }; reply: RunResult };
+  start: { body: { run_id: string; operation: Operation; stdin: string | null }; reply: LongRun };
   poll: { body: { run_id: string; offset: number }; reply: LongRunPoll };
   stop: { body: { run_id: string }; reply: LongRun };
   forget: { body: { run_id: string }; reply: null };
@@ -98,14 +104,14 @@ export type AgentMessage =
 
 // ── Checking ─────────────────────────────────────────────────────────────────
 
-type FieldKind = "string" | "number" | "string_or_null" | "array" | "any";
+type FieldKind = "string" | "number" | "string_or_null" | "array" | "operation" | "any";
 
 const id_fields = { id: "string" } as const;
 const run_fields = { ...id_fields, run_id: "string" } as const;
 
 const server_fields: Record<ServerMessage["type"], Record<string, FieldKind>> = {
-  run: { ...id_fields, command: "string", stdin: "string_or_null", timeout_in_seconds: "number" },
-  start: { ...run_fields, command: "string", stdin: "string_or_null" },
+  run: { ...id_fields, operation: "operation", stdin: "string_or_null", timeout_in_seconds: "number" },
+  start: { ...run_fields, operation: "operation", stdin: "string_or_null" },
   poll: { ...run_fields, offset: "number" },
   stop: run_fields,
   forget: run_fields,
@@ -127,6 +133,7 @@ const agent_fields: Record<AgentMessage["type"], Record<string, FieldKind>> = {
 
 function has_kind(value: unknown, kind: FieldKind): boolean {
   if (kind === "any") return value !== undefined;
+  if (kind === "operation") return is_operation(value);
   if (kind === "array") return Array.isArray(value);
   if (kind === "string_or_null") return value === null || typeof value === "string";
   if (kind === "number") return typeof value === "number" && Number.isFinite(value);

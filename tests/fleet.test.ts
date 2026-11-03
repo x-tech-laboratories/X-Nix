@@ -98,7 +98,7 @@ describe("a pinned flake", () => {
     await harness.deployment.set_pin(null);
     expect(harness.deployment.pin()).toBeNull();
     await harness.deployment.act("build");
-    expect(harness.agent.last_run("build")!.command).toContain('"github:owner/config#nixosConfigurations');
+    expect(harness.agent.last_run('"kind":"build"')!.operation).toMatchObject({ flake: "github:owner/config", attribute: "host" });
 
     await harness.deployment.set_pin(null, true);
     expect([harness.deployment.pin(), harness.deployment.pin_overridden()]).toEqual(["v1", false]);

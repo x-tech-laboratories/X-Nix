@@ -6,8 +6,9 @@ import { deployment_settings, host_settings, type FlakeSettings } from "../src/s
 import { Deployment } from "../src/server/deployment.ts";
 import { Host } from "../src/server/host.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
-import { probe_script } from "../src/server/nixos/probe.ts";
 import { Store } from "../src/server/store.ts";
+import type { GcFields, ProbeFields } from "../src/shared/facts.ts";
+import { innermost, operation_of, show_argv, type Operation } from "../src/shared/operations.ts";
 
 // ── Store paths ──────────────────────────────────────────────────────────────
 
@@ -34,24 +35,32 @@ interface ProbeOptions {
   kernels?: [booted: string, current: string];
 }
 
-// What the probe script prints on a NixOS host.
+// What the probe prints on a NixOS host.
 export function probe(options: ProbeOptions = {}): RunResult {
   const current = options.current ?? current_closure;
   const [booted_kernel, current_kernel] = options.kernels ?? [kernel, kernel];
-  const lines = [
-    "hostname=host",
-    `current=${current}`,
-    `booted=${current}`,
-    `switched=${options.switched_epoch ?? clock.now - 3600}`,
-    `profile=system-${options.generation ?? 210}-link`,
-    `profile_created=${options.created_epoch ?? clock.now - 3 * 86400}`,
-    "version=26.11.20260826.9fbb54b",
-    'version_json={"nixosVersion":"26.11.20260826.9fbb54b"}',
-  ];
-  for (const part of ["initrd", "kernel", "kernel-modules", "systemd"]) {
-    lines.push(`booted_part=${booted_kernel}/${part}`, `current_part=${current_kernel}/${part}`);
-  }
-  return result(0, `${lines.join("\n")}\n`);
+  const parts = ["initrd", "kernel", "kernel-modules", "systemd"];
+  const fields: ProbeFields = {
+    hostname: "host",
+    current,
+    booted: current,
+    switched_epoch: options.switched_epoch ?? clock.now - 3600,
+    profile_created_epoch: options.created_epoch ?? clock.now - 3 * 86400,
+    generation: options.generation ?? 210,
+    version: "26.11.20260826.9fbb54b",
+    booted_parts: parts.map((part) => `${booted_kernel}/${part}`),
+    current_parts: parts.map((part) => `${current_kernel}/${part}`),
+  };
+  return result(0, JSON.stringify(fields));
+}
+
+// What the store's read prints, with these facts over a healthy default.
+export function store_facts(fields: Partial<GcFields> = {}): RunResult {
+  const facts: GcFields = {
+    hostname: "host", size_bytes: null, used_bytes: null, avail_bytes: null, paths: null, roots: null, svc_state: "", svc_result: "", svc_exit: "",
+    timer_load: "", timer_state: "", timer_next: "", summary: "", outcome: "", error: "", profiles: [], ...fields,
+  };
+  return result(0, JSON.stringify(facts));
 }
 
 interface MetadataOptions {
@@ -83,10 +92,42 @@ export function eval_output(evaluation: RunResult, flake_metadata: RunResult): s
   return output;
 }
 
+// What the generations read prints for these generations, the newest the running and profile's one.
+export function generations_result(generations: { generation: number; path: string; version?: string; current?: boolean; profile?: boolean }[]): RunResult {
+  return result(0, JSON.stringify(generations.map((generation, index) => ({
+    generation: generation.generation, created_epoch: 1_700_000_000 + index * 100_000, path: generation.path, version: generation.version ?? null,
+    current: generation.current ?? false, booted: false, profile: generation.profile ?? false,
+  }))));
+}
+
 // ── Agent ────────────────────────────────────────────────────────────────────
+
+// A job's or a fake run's command as `shown` writes it.
+export function shown_command(command: string): string {
+  const operation = operation_of(command.split("\n")[0]);
+  return operation === null ? command : shown(operation);
+}
+
+// An operation as JSON, then each program it runs as a command line, so a test can look for either.
+export function shown(operation: Operation): string {
+  const lines = [JSON.stringify(operation)];
+  const walk = (value: unknown) => {
+    if (Array.isArray(value)) value.forEach(walk);
+    else if (typeof value === "object" && value !== null) {
+      const record = value as { argv?: unknown; post_switch?: unknown };
+      const argv = record.argv ?? record.post_switch;
+      if (Array.isArray(argv) && argv.every((word) => typeof word === "string")) lines.push(show_argv(argv));
+      Object.values(value).forEach(walk);
+    }
+  };
+  walk(operation);
+  return lines.join("\n");
+}
 
 interface FakeRun {
   run_id: string;
+  operation: Operation;
+  // The operation as `shown` writes it, which tests search for words.
   command: string;
   // What the run was handed on stdin.
   stdin: string | null;
@@ -101,27 +142,31 @@ export class FakeAgent implements Agent {
   gc_probe_result: RunResult = result(0);
   // What the boot entries' read answers; nothing at all unless a test sets it.
   boot_probe_result: RunResult = result(0);
-  // What any command other than the probe answers, such as a reboot.
+  // What any operation other than the reads answers, such as a reboot.
   command_result: RunResult = result(0);
   start_error: AgentError | null = null;
   poll_error: AgentError | null = null;
+  // Each operation run, as `shown` writes it.
   readonly commands: string[] = [];
+  readonly operations: Operation[] = [];
   readonly runs: FakeRun[] = [];
-  // Answers for commands holding some text, looked at before anything else.
+  // Answers for operations whose JSON holds some text, looked at before anything else.
   readonly answers: [needle: string, answer: RunResult][] = [];
 
-  async run(command: string): Promise<RunResult> {
+  async run(operation: Operation): Promise<RunResult> {
+    const command = shown(operation);
     this.commands.push(command);
+    this.operations.push(operation);
     const answer = this.answers.find(([needle]) => command.includes(needle));
     if (answer !== undefined) return answer[1];
-    if (command === probe_script()) return this.probe_result;
-    if (command.includes("bootctl list")) return this.boot_probe_result;
-    return command.includes("journalctl") ? this.gc_probe_result : this.command_result;
+    if (operation.kind === "probe") return this.probe_result;
+    if (operation.kind === "boot_probe") return this.boot_probe_result;
+    return operation.kind === "store_probe" ? this.gc_probe_result : this.command_result;
   }
 
-  async start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
+  async start(run_id: string, operation: Operation, stdin: string | null = null): Promise<LongRun> {
     if (this.start_error !== null) throw this.start_error;
-    this.runs.push({ run_id, command, stdin, output: "", exit_code: null, alive: true });
+    this.runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true });
     return { run_id, pid: 4242, started_epoch: clock.now, state: "running", exit_code: null };
   }
 
@@ -135,7 +180,12 @@ export class FakeAgent implements Agent {
 
   async forget(): Promise<void> {}
 
-  // The newest long run, optionally only those whose command holds some text.
+  // Whether any operation run so far ran this program, as a command line.
+  ran(line: string): boolean {
+    return this.commands.some((command) => command.split("\n").slice(1).includes(line));
+  }
+
+  // The newest long run, optionally only those whose operation's JSON holds some text.
   last_run(containing = ""): FakeRun | undefined {
     return this.runs.filter((run) => run.command.includes(containing)).pop();
   }
@@ -209,7 +259,7 @@ export function make_host(values: Record<string, unknown> = {}): HostHarness {
 export async function cycle(harness: Harness, options: { force_eval?: boolean } = {}): Promise<FakeRun | undefined> {
   const before = harness.agent.runs.length;
   await harness.deployment.cycle(options);
-  return harness.agent.runs.slice(before).find((run) => run.command.includes(eval_mark));
+  return harness.agent.runs.slice(before).find((run) => innermost(run.operation).kind === "evaluate");
 }
 
 interface CollectOptions {

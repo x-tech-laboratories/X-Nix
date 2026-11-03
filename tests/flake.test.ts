@@ -4,7 +4,7 @@ import { AgentPool } from "../src/server/agents/agent.ts";
 import { flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
 import { Store } from "../src/server/store.ts";
-import { clock, FakeAgent, metadata, result } from "./fake_agent.ts";
+import { clock, FakeAgent, metadata, result, shown_command } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ describe("the update", () => {
 
     const outcome = await flake.update();
     expect(outcome.ok).toBe(true);
-    expect(flake.running_job()?.command).toContain("flake update --flake /etc/nixos");
+    expect(shown_command(flake.running_job()?.command ?? "")).toContain("sudo -n nix --extra-experimental-features 'nix-command flakes' flake update --flake /etc/nixos");
     agent.end(agent.last_run("flake update")!, "• Updated input 'nixpkgs'\n", 0);
     await flake.cycle();
 
@@ -81,7 +81,7 @@ describe("the update", () => {
   it("pushes a github: flake back with its key, and refuses one without", async () => {
     const keyed = make_flake({ url: "github:owner/config", push_ssh_key: "/var/lib/x-nix/deploy_key" });
     expect((await keyed.flake.update()).ok).toBe(true);
-    expect(keyed.flake.running_job()?.command).toContain("push origin HEAD");
+    expect(JSON.parse(keyed.flake.running_job()!.command)).toMatchObject({ kind: "github_update", ssh_url: "git@github.com:owner/config.git" });
 
     const keyless = make_flake({ url: "github:owner/config" });
     const refused = await keyless.flake.update();

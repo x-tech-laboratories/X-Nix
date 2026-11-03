@@ -4,6 +4,7 @@
 
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
+import type { Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Following ────────────────────────────────────────────────────────────────
@@ -52,9 +53,9 @@ export async function follow(
 
 // Starts a job's long run, kept awake on a host that sleeps, at once or after a wake it answers with.
 export async function start_run(
-  agents: AgentPool, host: string | null, run_id: string, command: string, stdin: string | null = null, wake = true,
+  agents: AgentPool, host: string | null, run_id: string, operation: Operation, stdin: string | null = null, wake = true,
 ): Promise<{ waking: Promise<void> | null }> {
-  const running = agents.keeps_awake(host) ? kept_awake_job(command) : command;
+  const running = agents.keeps_awake(host) ? kept_awake_job(operation) : operation;
   if (wake && agents.can_wake(host)) return { waking: agents.start_when_awake(host, run_id, running, stdin) };
   await agents.get(host).start(run_id, running, stdin);
   return { waking: null };

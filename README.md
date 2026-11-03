@@ -122,11 +122,11 @@ whose agent is not connected reads as unreachable.
 | `cache_url`         | none                              | Without `cache`, the cache a build skips what it holds of, and a switch from the cache fetches from. |
 | `switch_agent`      | the host                          | The host that runs switch.                                           |
 | `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
-| `target_host`       | none                              | `--target-host` for the switch.                                      |
+| `target_host`       | none                              | `--target-host` for a plain switch; not with `pre_switch_checks`, health checks or `magic_rollback`, which run on the switch agent's own host. |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
 | `build_at`          | none                              | Build daily at this local time.                                      |
-| `switch_wrapper`    | none                              | A command the switch runs inside, outside sudo.                      |
+| `switch_wrapper`    | none                              | A command each program of the switch runs inside, outside sudo.      |
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`, which keeps the switch's status. |
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
@@ -163,8 +163,8 @@ browser: a generation's dependency tree with each path's own and closure size, a
 paths. A Build with `build_progress` shows what is building, downloading and done.
 
 A switch is guarded when `pre_switch_checks`, `health_commands`, `health_urls` or `magic_rollback`
-is set, and runs as one long run where it activates: on the switch agent, or over SSH on
-`target_host` as nixos-rebuild reaches it. The pre-switch checks run first, and the first to fail
+is set, and runs as one long run on the switch agent, which must be on the host it activates, so a
+guarded switch takes no `target_host`. The pre-switch checks run first, and the first to fail
 refuses the switch before anything changes. For `switch` and `test` it then starts a watchdog on
 that host in a session of its own, so it outlives the run, the agent and a lost connection. After
 the activation the health commands run every `health_period` until they pass, then X-Nix fetches
@@ -184,7 +184,7 @@ root through `sudo -n /bin/sh -c` when `require_sudo` is on, so it can restart a
 as a display manager; it runs on the switch agent's host and its status never changes the switch's.
 When the host sets `keep_awake`, a switch or rollback holds a `systemd-inhibit --what=idle:sleep --mode=block`
 inhibitor on the activated host from its first step, the download from the cache included, until
-the job ends however it ends: the inhibitor reads a pipe only the job's own shell holds open, so the
+the job ends however it ends: the inhibitor reads a pipe only the job's own runner holds open, so the
 job ending, failing or being stopped releases it, and nothing the switch leaves running keeps it.
 
 ## Hosts
@@ -403,15 +403,21 @@ against the public key line the config file declares as that host's `agent_key`:
 ```
 
 Make each key with `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>` and keep the private half
-only on its host. The agent runs commands and long runs for the server as the `x-nix-agent` user;
-long runs outlive the agent and are followed again once it reconnects. The protocol is X-Backups'
+only on its host. The agent performs operations and long runs for the server as the `x-nix-agent`
+user. The server never sends it a shell script: each operation, such as reading the host, evaluating,
+building or switching, names what to do as plain data, and the agent carries it out in TypeScript,
+running only programs with their arguments. The only shell left runs the commands written into the
+config, such as `pre_switch_checks`, `health_commands`, `post_switch` and `push_command`, each with
+`/bin/sh -c` exactly as written. A job's page shows its operation, and its output shows each program
+as it starts. Long runs run in a runner process of their own, outlive the agent and are followed
+again once it reconnects. The protocol is X-Backups'
 agent protocol without its streams. The Overview lists each declared host and whether its agent is
 connected.
 
 ### Wake-on-LAN
 
 A host with `wake_on_lan` is woken before an operation on it when its agent is not connected:
-X-Nix sends a magic packet, from the server or from the agent `via` names, and waits for the agent
+X-Nix sends a magic packet, from the server or from the agent `via` names, which sends it itself, and waits for the agent
 to dial in, then starts the operation. A job appears at once with the progress `Waking <host>` and starts its run once the agent
 is back, or fails with the reason when it does not come back within `timeout`; Reboot, Set next boot
 and a download wait for the host instead. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's

@@ -178,8 +178,6 @@ in
         # Installs new hosts from the Provision page, logging in to them over SSH.
         pkgs.nixos-anywhere
         pkgs.openssh
-        # Sends the wake-on-LAN packet for a host whose `via` names this one.
-        pkgs.wakeonlan
         # Build all evaluates every target of a cache with it.
         pkgs.nix-eval-jobs
         # Compares the derivations of two closures whose packages are the same, for the diff shown before a switch.

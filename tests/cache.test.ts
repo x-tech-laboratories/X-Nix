@@ -1,15 +1,11 @@
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
 import { parse_metrics, probe_cache_server, type Fetcher } from "../src/server/cache_server.ts";
 import { ConfigError, cache_settings, parse_config, type CacheSettings } from "../src/server/config.ts";
-import { build_all_expression, build_all_script, build_script, check_command, check_script, parse_report, push_script, report_mark } from "../src/server/nixos/attic.ts";
+import { build_all_expression, build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark } from "../src/server/nixos/attic.ts";
+import type { CacheCheckOperation } from "../src/shared/operations.ts";
 import { Store } from "../src/server/store.ts";
 import { clock, FakeAgent } from "./fake_agent.ts";
 
@@ -29,7 +25,7 @@ function settings(values: Record<string, unknown> = {}): CacheSettings {
   return cache_settings({ ...base, ...values });
 }
 
-// A report line, as the scripts print them.
+// A report line, as the operations print them.
 function line(name: string, key: string, value: string | number): string {
   return `${report_mark}\t${name}\t${key}\t${value}\n`;
 }
@@ -72,7 +68,7 @@ function make_cache(values: Record<string, unknown> = {}): Harness {
 // Launches a check and ends it with this output.
 async function check(harness: Harness, output: string, exit_code: number | null = 0): Promise<void> {
   await harness.cache.cycle();
-  harness.agent.end(harness.agent.last_run("--store")!, output, exit_code);
+  harness.agent.end(harness.agent.last_run("cache_check")!, output, exit_code);
   await harness.cache.cycle();
 }
 
@@ -80,223 +76,67 @@ function rows(harness: Harness) {
   return Object.fromEntries(harness.cache.reading()!.rows.map((row) => [row.name, row]));
 }
 
-// ── Scripts against a fake nix ───────────────────────────────────────────────
+// ── Operations ───────────────────────────────────────────────────────────────
 
-// Writes a nix that answers by a shell case over its arguments, and settings that use it.
-function fake_nix(cases: string, values: Record<string, unknown> = {}): { settings: CacheSettings; folder: string } {
-  const folder = mkdtempSync(join(tmpdir(), "x-nix-attic-"));
-  const nix = join(folder, "nix");
-  writeFileSync(nix, `#!/bin/sh\ncase "$*" in\n${cases}\nesac\n`);
-  chmodSync(nix, 0o755);
-  return { folder, settings: settings({ flake: "/f", configurations: ["Alpha"], installables: {}, nix_bin: nix, nix_args: [], ...values }) };
-}
-
-function run(command: string): { stdout: string; stderr: string; status: number | null } {
-  const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
-  return { stdout: result.stdout, stderr: result.stderr, status: result.status };
-}
-
-describe("check script", () => {
-  it("checks every target against the cache, refreshing a remote flake once", () => {
-    const text = check_script(settings());
-    expect(text).toContain(`check Alpha 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel'`);
-    expect(text).toContain("check kernel 'github:owner/fleet#packages.aarch64-linux.kernel'");
-    expect(text).toContain("--store https://cache.example/fleet");
-    expect(text).toContain("refresh=--refresh");
-    expect(check_command(settings())).toMatch(/^timeout 1800 sh -c /);
-    expect(check_script(settings({ flake: "/etc/nixos" }))).toContain("refresh=\n");
+describe("check operation", () => {
+  it("checks every target against the cache, refreshing a remote flake, under the timeout", () => {
+    const timed = check_operation(settings());
+    expect(timed).toMatchObject({ kind: "timed", seconds: 1800 });
+    const check = (timed as { operation: CacheCheckOperation }).operation;
+    expect(check.kind).toBe("cache_check");
+    expect(check.cache).toMatchObject({ cache_url: "https://cache.example/fleet", refresh: true, flake: "github:owner/fleet" });
+    expect(check.targets.map((target) => [target.name, target.installable])).toEqual([
+      ["Alpha", 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel'],
+      ["Beta", 'github:owner/fleet#nixosConfigurations."Beta".config.system.build.toplevel'],
+      ["kernel", "github:owner/fleet#packages.aarch64-linux.kernel"],
+    ]);
+    const local = (check_operation(settings({ flake: "/etc/nixos" })) as { operation: CacheCheckOperation }).operation;
+    expect(local.cache.refresh).toBe(false);
   });
 
-  it("leaves out paths an upstream cache signed", () => {
-    expect(check_script(settings({ upstream_keys: ["cache.nixos.org-1", "other-1"] }))).toContain('split("cache.nixos.org-1: other-1:", up, " ")');
-  });
-
-  it("reports targets, failures and metadata, copying nix's errors to the output", () => {
-    const { settings: fake } = fake_nix([
-      "  *eval*Broken*) echo 'error: no such attribute' >&2; exit 1 ;;",
-      `  *eval*) printf %s ${alpha} ;;`,
-      `  *'path-info --stdin'*) cat >/dev/null; echo '{"${alpha}":{"ca":null},"/nix/store/dddd-dep":null}' ;;`,
-      // nix pads the path column with spaces then a tab, so the widest path has only the tab.
-      `  *'path-info -r --sigs'*) printf '${alpha}      \\tultimate\\n/nix/store/dddd-dep\\tultimate\\n/nix/store/eeee-glibc   \\tcache.nixos.org-1:abc\\n' ;;`,
-      "  *path-info*) exit 0 ;;",
-      `  *metadata*) echo '{"revision":"abc"}' ;;`,
-    ].join("\n"), { installables: { Broken: "Broken" } });
-
-    const result = run(check_script(fake));
-
-    const report = parse_report(result.stdout);
-    expect(report.targets.get("Alpha")).toEqual({ target: alpha, built: "1", own: "2", missing: ["/nix/store/dddd-dep"] });
-    expect(report.targets.get("Broken")?.error).toBe("error: no such attribute");
-    expect(report.metadata).toBe('{"revision":"abc"}');
-    expect(result.stderr).toBe("error: no such attribute\n");
-  });
-});
-
-describe("kept only in the cache", () => {
-  const cases = (local: boolean, missing = "") => [
-    `  *eval*) printf %s ${alpha} ;;`,
-    `  *'path-info --stdin'*) cat >/dev/null; echo '{"${alpha}":{}${missing ? `,"${missing}":null` : ""}}' ;;`,
-    `  *'path-info -r'*) printf '${alpha}\\n/nix/store/dddd-dep\\n' ;;`,
-    `  *path-info*) exit ${local ? 0 : 1} ;;`,
-  ].join("\n");
-
-  function check_alpha(local: boolean, missing = "", link_to: string | null = alpha, list: string | null = null) {
-    const { settings: fake, folder } = fake_nix(cases(local, missing), { upstream_keys: [], build_root_dir: "/unused", drop_pushed: ["Alpha"] });
-    const link = join(folder, "alpha");
-    if (link_to !== null) symlinkSync(link_to, link);
-    if (list !== null) writeFileSync(`${link}.closure`, list);
-    const rooted = { ...fake, build_root_dir: folder, build_links: { Alpha: "alpha" } };
-    const facts = parse_report(run(check_script(rooted)).stdout).targets.get("Alpha")!;
-    return { facts, link, list_file: `${link}.closure` };
-  }
-
-  it("drops a fully pushed root once its closure list is written", () => {
-    const { facts, link, list_file } = check_alpha(true);
-    expect(facts.dropped).toBe("1");
-    expect(existsSync(link) || lstatSync(link, { throwIfNoEntry: false }) !== undefined).toBe(false);
-    expect(readFileSync(list_file, "utf8")).toBe(`${alpha}\n${alpha}\n/nix/store/dddd-dep\n`);
-  });
-
-  it("keeps a root with missing paths, or one for another closure", () => {
-    const missing = check_alpha(true, "/nix/store/dddd-dep");
-    expect(missing.facts.dropped).toBeUndefined();
-    expect(lstatSync(missing.link).isSymbolicLink()).toBe(true);
-    expect(existsSync(missing.list_file)).toBe(false);
-
-    const other = check_alpha(true, "", beta);
-    expect(other.facts.dropped).toBeUndefined();
-    expect(lstatSync(other.link).isSymbolicLink()).toBe(true);
-  });
-
-  it("judges a dropped target by its list, and an older list counts for nothing", () => {
-    const dropped = check_alpha(false, "/nix/store/dddd-dep", null, `${alpha}\n${alpha}\n/nix/store/dddd-dep\n`);
-    expect(dropped.facts).toEqual({ target: alpha, built: "1", local: "0", own: "2", missing: ["/nix/store/dddd-dep"] });
-
-    const older = check_alpha(false, "", null, `${beta}\n${beta}\n`);
-    expect(older.facts.built).toBe("0");
-    expect(older.facts.local).toBeUndefined();
+  it("passes the upstream keys whose paths are left out", () => {
+    const check = (check_operation(settings({ upstream_keys: ["cache.nixos.org-1", "other-1"] })) as { operation: CacheCheckOperation }).operation;
+    expect(check.cache.upstream_keys).toEqual(["cache.nixos.org-1", "other-1"]);
   });
 
   it("passes a root and list only for targets named in drop_pushed", () => {
-    const text = check_script(settings({ build_root_dir: "/roots", drop_pushed: ["Alpha"], build_links: { Alpha: "alpha-deploy" } }));
-    expect(text).toContain(`check Alpha 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel' /roots/alpha-deploy /roots/alpha-deploy.closure`);
-    expect(text).toContain(`check Beta 'github:owner/fleet#nixosConfigurations."Beta".config.system.build.toplevel'\n`);
+    const check = (check_operation(settings({ build_root_dir: "/roots", drop_pushed: ["Alpha"], build_links: { Alpha: "alpha-deploy" } })) as { operation: CacheCheckOperation }).operation;
+    expect(check.targets[0]).toMatchObject({ name: "Alpha", link: "/roots/alpha-deploy", list: "/roots/alpha-deploy.closure" });
+    expect(check.targets[1]).toMatchObject({ name: "Beta", link: "/roots/fleet-Beta", list: null });
   });
 });
 
-describe("build and push scripts", () => {
-  const quiet_nix = `  *'path-info --stdin'*) cat >/dev/null; echo '{}' ;;\n  *'path-info -r'*) echo ${alpha} ;;\n  *path-info*) exit 0 ;;`;
-
+describe("build and push operations", () => {
   it("build from the latest flake, rooted under its link", () => {
-    expect(build_script(settings(), "Alpha")).toContain(
-      `build --print-out-paths --no-link --keep-going --print-build-logs --refresh 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel'`);
+    const build = build_operation(settings(), "Alpha");
+    expect(build).toMatchObject({ kind: "cache_build", target: { installable: 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel', link: null } });
+    expect(build.cache).toMatchObject({ build_args: ["--keep-going", "--print-build-logs"], refresh: true });
     const rooted = settings({ build_root_dir: "/roots/", build_links: { Alpha: "alpha-deploy" } });
-    expect(build_script(rooted, "Alpha")).toContain("--out-link /roots/alpha-deploy ");
-    expect(build_script(rooted, "Beta")).toContain("--out-link /roots/fleet-Beta ");
-  });
-
-  it("report the built target, keeping a failed build's status", () => {
-    const { settings: fake } = fake_nix(quiet_nix, { upstream_keys: [], build_args: [] });
-    const command = build_script(fake, "Alpha").replace(/^out=\$\(.*\)$/m, `out=$(echo building >&2; echo ${alpha}; exit 1)`);
-    const result = run(command);
-    expect(result.status).toBe(1);
-    expect(parse_report(result.stdout).targets.get("Alpha")).toEqual({ target: alpha, built: "1", own: "1", missing: [] });
-  });
-
-  it("push what a build made before reporting, and fail the build when the push fails", () => {
-    const { settings: fake } = fake_nix(quiet_nix, { upstream_keys: [], push_command: `sh -c 'printf "pushed %s\\n" "$1" >&2; exit 1' push` });
-    const command = build_script(fake, "Alpha").replace(/^out=\$\(.*\)$/m, `out=$(echo ${alpha})`);
-    const result = run(command);
-    expect(result.stderr).toBe(`pushed ${alpha}\n`);
-    expect(result.status).toBe(1);
-    expect(parse_report(result.stdout).targets.get("Alpha")?.target).toBe(alpha);
-  });
-
-  it("push nothing when the build failed", () => {
-    const { settings: fake } = fake_nix(quiet_nix, { push_command: "echo pushed >&2" });
-    const command = build_script(fake, "Alpha").replace(/^out=\$\(.*\)$/m, "out=$(exit 1)");
-    const result = run(command);
-    expect(result.status).toBe(1);
-    expect(result.stderr).not.toContain("pushed");
+    expect(build_operation(rooted, "Alpha").target.link).toBe("/roots/alpha-deploy");
+    expect(build_operation(rooted, "Beta").target.link).toBe("/roots/fleet-Beta");
   });
 
   it("push the row's store path with push_command", () => {
-    expect(push_script(settings({ push_command: "attic push fleet" }), "Alpha", alpha)).toContain(`out=${alpha}\nattic push fleet "$out"`);
-  });
-
-  it("are plain sh, as the agent runs them", () => {
-    for (const script of [check_script(settings({ build_root_dir: "/r", drop_pushed: ["Alpha"] })), build_script(settings({ push_command: "attic push c" }), "Alpha"), push_script(settings({ push_command: "attic push c" }), "Alpha", alpha)]) {
-      expect(() => execFileSync("sh", ["-n", "-c", script])).not.toThrow();
-    }
+    expect(push_operation(settings({ push_command: "attic push fleet" }), "Alpha", alpha)).toMatchObject({
+      kind: "cache_push", path: alpha, cache: { push_command: "attic push fleet" }, target: { name: "Alpha" },
+    });
   });
 });
 
 // ── Build all ────────────────────────────────────────────────────────────────
 
 describe("build all", () => {
-  // A nix-eval-jobs that prints one line per target, the second one failing to evaluate.
-  function fake_eval_jobs(folder: string, lines: string[]): string {
-    const program = join(folder, "nix-eval-jobs");
-    writeFileSync(program, `#!/bin/sh\nprintf '%s\\n' "$*" > ${shell_quote_for_test(join(folder, "eval-args"))}\ncat <<'END'\n${lines.join("\n")}\nEND\n`);
-    chmodSync(program, 0o755);
-    return program;
-  }
-
-  function shell_quote_for_test(text: string): string {
-    return `'${text.replaceAll("'", `'"'"'`)}'`;
-  }
-
-  const builds_and_inspects = [
-    `  *'build --no-link'*bad*) echo 'error: builder failed' >&2; exit 1 ;;`,
-    `  *'build --no-link'*) echo "building $*" >&2; exit 0 ;;`,
-    `  *'path-info --stdin'*) cat >/dev/null; echo '{}' ;;`,
-    `  *'path-info -r'*) echo ${alpha} ;;`,
-    `  *path-info*${alpha}*) exit 0 ;;`,
-    "  *path-info*) exit 1 ;;",
-  ].join("\n");
-
   it("evaluates every target in one expression keyed by position", () => {
     expect(build_all_expression(settings({ flake: 'github:o/f"x' }))).toBe(
       'let flake = builtins.getFlake "github:o/f\\"x"; in { t0 = flake.nixosConfigurations."Alpha".config.system.build.toplevel; '
       + 't1 = flake.nixosConfigurations."Beta".config.system.build.toplevel; t2 = flake.packages.aarch64-linux.kernel; }');
   });
 
-  it("builds each evaluated target, reports how each ended and checks it", () => {
-    const { settings: fake, folder } = fake_nix(builds_and_inspects, { upstream_keys: [], build_args: [], configurations: ["Alpha", "Beta"], installables: { Broken: "x" } });
-    const eval_jobs_bin = fake_eval_jobs(folder, [
-      `{"attr":"t0","attrPath":["t0"],"drvPath":"/nix/store/aaaa-alpha.drv","name":"alpha","outputs":{"out":"${alpha}"},"system":"x86_64-linux"}`,
-      `{"attr":"t1","attrPath":["t1"],"drvPath":"/nix/store/bbbb-bad.drv","name":"beta","outputs":{"out":"${beta}"},"system":"x86_64-linux"}`,
-      `{"attr":"t2","attrPath":["t2"],"error":"error: attribute 'x' missing\\n at flake.nix:3"}`,
-    ]);
-
-    const result = run(build_all_script({ ...fake, eval_jobs_bin }));
-
-    expect(result.status).toBe(1);
-    const report = parse_report(result.stdout);
-    expect(report.targets.get("Alpha")).toMatchObject({ build: "ok", target: alpha, built: "1" });
-    expect(report.targets.get("Beta")).toMatchObject({ build: "failed", target: beta, built: "0" });
-    expect(report.targets.get("Broken")).toMatchObject({ build: "eval_failed", error: "error: attribute 'x' missing  at flake.nix:3" });
-    expect(report.targets.get("Alpha")?.build_seconds).toMatch(/^\d+$/);
-    expect(result.stdout).toContain(`Alpha: evaluated, building ${alpha}`);
-    expect(result.stderr).toContain("building build --no-link /nix/store/aaaa-alpha.drv^*");
-    expect(readFileSync(join(folder, "eval-args"), "utf8")).toContain("--impure --workers 4 --gc-roots-dir");
-  });
-
-  it("pushes each target it built, and fails a target whose push fails", () => {
-    const { settings: fake, folder } = fake_nix(builds_and_inspects, { upstream_keys: [], build_args: [], configurations: ["Alpha"], installables: {}, push_command: "false" });
-    const eval_jobs_bin = fake_eval_jobs(folder, [`{"attr":"t0","drvPath":"/nix/store/aaaa-alpha.drv","outputs":{"out":"${alpha}"}}`]);
-
-    expect(parse_report(run(build_all_script({ ...fake, eval_jobs_bin })).stdout).targets.get("Alpha")?.build).toBe("push_failed");
-  });
-
-  it("says plainly when nix-eval-jobs is missing", () => {
-    const result = run(build_all_script(settings({ eval_jobs_bin: "/nonexistent/nix-eval-jobs" })));
-    expect(result.status).toBe(127);
-    expect(result.stderr).toContain("/nonexistent/nix-eval-jobs is not installed on this host");
-  });
-
-  it("is plain sh, as the agent runs it", () => {
-    expect(() => execFileSync("sh", ["-n", "-c", build_all_script(settings({ build_root_dir: "/r", push_command: "attic push c" }))])).not.toThrow();
+  it("names nix-eval-jobs and every target in the order of the expression", () => {
+    const operation = build_all_operation(settings({ eval_jobs_bin: "/bin/nix-eval-jobs" }));
+    expect(operation).toMatchObject({ kind: "cache_build_all", eval_jobs: "/bin/nix-eval-jobs", eval_workers: 4 });
+    expect(operation.targets.map((target) => target.name)).toEqual(["Alpha", "Beta", "kernel"]);
+    expect(operation.expression).toBe(build_all_expression(settings()));
   });
 
   it("runs as one job and keeps each target's outcome", async () => {
@@ -404,7 +244,7 @@ describe("checks", () => {
     await check(harness, built("Alpha", alpha, 1));
     const before = harness.cache.reading();
     await harness.cache.cycle();
-    harness.agent.write(harness.agent.last_run("--store")!, line("Alpha", "target", alpha));
+    harness.agent.write(harness.agent.last_run("cache_check")!, line("Alpha", "target", alpha));
     await harness.cache.cycle();
     expect(harness.cache.reading()).toEqual(before);
     expect(harness.cache.running_job()?.progress).toBe("1 of 3 targets evaluated");
@@ -453,7 +293,7 @@ describe("actions", () => {
     const outcome = await harness.cache.act("build", "Alpha");
     expect(outcome).toMatchObject({ ok: true, message: "Build of Alpha started" });
     expect(harness.cache.running_job()?.kind).toBe("build-target");
-    expect(harness.store.jobs()[0].command).toContain("--print-out-paths");
+    expect(harness.store.jobs()[0].command).toContain("cache_build");
   });
 
   it("refuse an untracked target, a second job, and a push with nothing to push", async () => {
@@ -491,7 +331,7 @@ describe("actions", () => {
     const harness = await checked();
     const before = harness.cache.reading();
     await harness.cache.act("build", "Alpha");
-    harness.agent.end(harness.agent.last_run("--print-out-paths")!, "error: build failed\n", 1);
+    harness.agent.end(harness.agent.last_run("cache_build")!, "error: build failed\n", 1);
     await harness.cache.cycle();
     expect(harness.cache.reading()).toEqual(before);
     expect(harness.store.events("fleet")[0].message).toBe("Build failed: Exited with status 1");
@@ -579,7 +419,7 @@ describe("the daily Build all", () => {
     const harness = make_cache({ build_at: "04:00" });
     await harness.cache.cycle();
     expect(harness.cache.running_job()?.kind).toBe("check");
-    harness.agent.end(harness.agent.last_run("--store")!, "", 0);
+    harness.agent.end(harness.agent.last_run('"kind":"cache_check"')!, "", 0);
     await harness.cache.cycle();
 
     const handled = harness.store.evaluation<{ scheduled_build: number }>(harness.cache.id)!.scheduled_build;

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { start_agent, type RunningAgent } from "../src/agent/agent.ts";
 import { LongRuns } from "../src/agent/long_runs.ts";
-import { parse_ls_remote, parse_pull_settings, pull_switch_command, Puller, PullConfigError, type PullSettings } from "../src/agent/pull.ts";
+import { parse_ls_remote, parse_pull_settings, pull_switch_operation, Puller, PullConfigError, type PullSettings } from "../src/agent/pull.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { AgentHub } from "../src/server/agents/hub.ts";
 import { LocalAgent } from "../src/server/agents/local.ts";
@@ -43,9 +43,10 @@ describe("pull settings", () => {
 
   it("switch to the branch fixed at the revision, and read the head ls-remote prints", () => {
     const settings = parse_pull_settings({ remotes: ["https://git.example/config"], rebuild_args: ["--option", "x y"] }, "odin");
-    expect(pull_switch_command(settings, settings.remotes[0], first_revision)).toBe(
-      `sudo -n nixos-rebuild switch --flake 'git+https://git.example/config?ref=refs%2Fheads%2Fmain&rev=${first_revision}#odin' --option 'x y'`,
-    );
+    expect(pull_switch_operation(settings, settings.remotes[0], first_revision)).toEqual({
+      kind: "programs",
+      steps: [{ argv: ["sudo", "-n", "nixos-rebuild", "switch", "--flake", `git+https://git.example/config?ref=refs%2Fheads%2Fmain&rev=${first_revision}#odin`, "--option", "x y"] }],
+    });
     expect(parse_ls_remote(`${first_revision}\trefs/heads/main\n`, "main")).toBe(first_revision);
     expect(parse_ls_remote(`${first_revision}\trefs/heads/mainline\n`, "main")).toBeNull();
   });
@@ -70,7 +71,8 @@ describe("pull mode", () => {
       report: () => state.reports++,
       log: (line) => lines.push(line),
       now: () => state.now,
-      run: async (command) => {
+      run: async (operation) => {
+        const command = JSON.stringify(operation);
         asked.push(command);
         return [...remote_answers].find(([host]) => command.includes(host))?.[1] ?? result(128, "", "fatal: unable to access");
       },
@@ -193,7 +195,7 @@ describe("a reconnecting agent", () => {
     const state_directory = join(folder, "agent");
     // A switch an earlier run of the agent finished while the server was away.
     const runs = new LongRuns(state_directory);
-    runs.start("pull-1-abc", "echo switched", null);
+    runs.start("pull-1-abc", { kind: "programs", steps: [{ argv: ["echo", "switched"] }] }, null);
     while (runs.get("pull-1-abc").state === "running") await sleep(20);
     writeFileSync(join(state_directory, "pull.json"), JSON.stringify({
       revision: second_revision,
@@ -219,7 +221,7 @@ describe("a reconnecting agent", () => {
     });
     for (let tries = 0; tries < 100 && (received.length === 0 || JSON.parse(readFileSync(join(state_directory, "pull.json"), "utf8")).records.length > 0); tries++) await sleep(20);
 
-    expect(received).toMatchObject([{ run_id: "pull-1-abc", remote: "odin:https://git.example/config", exit_code: 0, output: "switched\n" }]);
+    expect(received).toMatchObject([{ run_id: "pull-1-abc", remote: "odin:https://git.example/config", exit_code: 0, output: "$ echo switched\nswitched\n" }]);
     expect(JSON.parse(readFileSync(join(state_directory, "pull.json"), "utf8")).records).toEqual([]);
   });
 });

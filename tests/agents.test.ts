@@ -14,6 +14,7 @@ import { register_agent_route } from "../src/server/agents/route.ts";
 import { ConfigError, parse_config } from "../src/server/config.ts";
 import { key_fingerprint, parse_private_key, parse_public_key, sign_challenge, verify_challenge } from "../src/shared/agent_keys.ts";
 import { encode_message, key_host_header, protocol_version } from "../src/shared/agent_protocol.ts";
+import type { Operation } from "../src/shared/operations.ts";
 
 const agent_main = join(import.meta.dirname, "../src/agent/main.ts");
 
@@ -111,19 +112,19 @@ describe("agent hub", () => {
   });
 
   it("joins a connected agent to the pool, which runs commands and long runs through it", async () => {
-    expect((await pool.get("odin").run("echo hi", 5)).exit_code).toBe(-1);
+    expect((await pool.get("odin").run(shell("echo hi"), 5)).exit_code).toBe(-1);
     start_test_agent();
     await connected();
 
     const remote: Agent = pool.get("odin");
-    expect((await remote.run("echo signed in", 5)).stdout).toBe("signed in");
-    await remote.start("odin-test-1", "echo started; exit 3");
+    expect((await remote.run({ kind: "programs", steps: [{ argv: ["echo", "signed in"] }] }, 5)).stdout).toBe("signed in");
+    await remote.start("odin-test-1", shell("echo started; exit 3"));
     let poll = await remote.poll("odin-test-1", 0);
     while (poll.alive) {
       await sleep(25);
       poll = await remote.poll("odin-test-1", 0);
     }
-    expect([poll.exit_code, poll.new_output]).toEqual([3, "started\n"]);
+    expect([poll.exit_code, poll.new_output]).toEqual([3, "$ /bin/sh -c 'echo started; exit 3'\nstarted\n"]);
     expect(hub.statuses()).toEqual([{ host: "odin", status: expect.objectContaining({ host: "odin", agent_version: "test" }) }]);
   });
 
@@ -136,7 +137,7 @@ describe("agent hub", () => {
   it("leaves the pool when the agent hangs up, and keeps a long run going for it to report on its return", async () => {
     start_test_agent();
     await connected();
-    await pool.get("odin").start("odin-sleep", "sleep 1; echo done");
+    await pool.get("odin").start("odin-sleep", shell("sleep 1; echo done"));
     const gone = new Promise((resolve) => hub.once("disconnect", resolve));
     await agent!.stop();
     await gone;
@@ -145,7 +146,7 @@ describe("agent hub", () => {
     start_test_agent();
     await connected();
     await sleep(1200);
-    expect((await pool.get("odin").poll("odin-sleep", 0)).new_output).toBe("done\n");
+    expect((await pool.get("odin").poll("odin-sleep", 0)).new_output).toMatch(/\ndone\n$/);
   });
 
   it("starts the agent process from its environment", async () => {
@@ -192,3 +193,8 @@ describe("agent hub", () => {
     expect(hub.is_connected("odin")).toBe(false);
   });
 });
+
+// A command line for a test, run by sh as a person's own command would be.
+function shell(command: string): Operation {
+  return { kind: "programs", steps: [{ argv: ["/bin/sh", "-c", command] }] };
+}

@@ -12,8 +12,9 @@ import { join } from "node:path";
 
 import type { PullReport, RunResult } from "../shared/agent_protocol.ts";
 import { parse_duration } from "../shared/durations.ts";
-import { run_command } from "./commands.ts";
+import type { Operation } from "../shared/operations.ts";
 import type { LongRuns } from "./long_runs.ts";
+import { run_operation } from "./run.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -67,8 +68,8 @@ export interface PullerOptions {
   // Asks the open session to send the reports not yet received.
   report: () => void;
   log: (line: string) => void;
-  // Runs a short command, which tests replace.
-  run?: (command: string, timeout_in_seconds: number) => Promise<RunResult>;
+  // Runs a short operation, which tests replace.
+  run?: (operation: Operation, timeout_in_seconds: number) => Promise<RunResult>;
   // The time in milliseconds, which tests set.
   now?: () => number;
 }
@@ -119,13 +120,7 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
   };
 }
 
-// ── Commands ─────────────────────────────────────────────────────────────────
-
-// Quotes a word for sh, leaving plain words as they are.
-function shell_quote(word: string): string {
-  if (word !== "" && /^[\w@%+=:,./-]+$/.test(word)) return word;
-  return `'${word.replaceAll("'", `'"'"'`)}'`;
-}
+// ── Operations ───────────────────────────────────────────────────────────────
 
 // The revision a remote's branch is at, from what `git ls-remote` prints.
 export function parse_ls_remote(stdout: string, branch: string): string | null {
@@ -136,8 +131,8 @@ export function parse_ls_remote(stdout: string, branch: string): string | null {
   return null;
 }
 
-export function ls_remote_command(settings: PullSettings, remote: PullRemote): string {
-  return `${shell_quote(settings.git_bin)} ls-remote --exit-code ${shell_quote(remote.url.replace(/^git\+/, ""))} ${shell_quote(`refs/heads/${remote.branch}`)}`;
+export function ls_remote_operation(settings: PullSettings, remote: PullRemote): Operation {
+  return { kind: "programs", steps: [{ argv: [settings.git_bin, "ls-remote", "--exit-code", remote.url.replace(/^git\+/, ""), `refs/heads/${remote.branch}`] }] };
 }
 
 // The flake reference of the branch fixed at the revision.
@@ -146,10 +141,10 @@ export function pulled_flake(remote: PullRemote, revision: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}ref=${encodeURIComponent(`refs/heads/${remote.branch}`)}&rev=${revision}`;
 }
 
-export function pull_switch_command(settings: PullSettings, remote: PullRemote, revision: string): string {
-  const sudo = settings.require_sudo ? "sudo -n " : "";
+export function pull_switch_operation(settings: PullSettings, remote: PullRemote, revision: string): Operation {
+  const sudo = settings.require_sudo ? ["sudo", "-n"] : [];
   const flake = `${pulled_flake(remote, revision)}#${settings.configuration}`;
-  return [`${sudo}${settings.rebuild_bin} switch --flake ${shell_quote(flake)}`, ...settings.rebuild_args.map(shell_quote)].join(" ");
+  return { kind: "programs", steps: [{ argv: [...sudo, settings.rebuild_bin, "switch", "--flake", flake, ...settings.rebuild_args] }] };
 }
 
 // ── Puller ───────────────────────────────────────────────────────────────────
@@ -159,7 +154,7 @@ export class Puller {
   private readonly runs: LongRuns;
   private readonly file: string;
   private readonly options: PullerOptions;
-  private readonly run: (command: string, timeout_in_seconds: number) => Promise<RunResult>;
+  private readonly run: (operation: Operation, timeout_in_seconds: number) => Promise<RunResult>;
   private readonly now: () => number;
   // Since when, in milliseconds, no session has been open; the agent's start counts as the first.
   private disconnected_since: number | null;
@@ -171,7 +166,7 @@ export class Puller {
     this.runs = runs;
     this.file = join(state_directory, "pull.json");
     this.options = options;
-    this.run = options.run ?? ((command, timeout_in_seconds) => run_command(command, { timeout_in_seconds }));
+    this.run = options.run ?? ((operation, timeout_in_seconds) => run_operation(operation, { timeout_in_seconds }));
     this.now = options.now ?? (() => Date.now());
     this.disconnected_since = this.now();
   }
@@ -256,7 +251,7 @@ export class Puller {
   // Asks each remote in turn for its branch's head, answering with the first that answers.
   private async latest(): Promise<{ remote: PullRemote; revision: string } | null> {
     for (const remote of this.settings.remotes) {
-      const result = await this.run(ls_remote_command(this.settings, remote), ls_remote_timeout_in_seconds);
+      const result = await this.run(ls_remote_operation(this.settings, remote), ls_remote_timeout_in_seconds);
       const revision = result.exit_code === 0 ? parse_ls_remote(result.stdout, remote.branch) : null;
       if (revision !== null) return { remote, revision };
       this.options.log(`Could not read ${remote.branch} from ${remote.url}: ${(result.stderr || result.stdout).trim().slice(0, 200) || `exit ${result.exit_code}`}`);
@@ -275,12 +270,13 @@ export class Puller {
       return;
     }
     if (state.revision === revision) return;
-    const command = pull_switch_command(this.settings, remote, revision);
+    const operation = pull_switch_operation(this.settings, remote, revision);
+    const command = JSON.stringify(operation);
     const run_id = `pull-${Math.floor(this.now() / 1000)}-${randomBytes(3).toString("hex")}`;
     // The revision counts as deployed once its switch starts, so a failing one is not tried again every interval.
     state.revision = revision;
     try {
-      this.runs.start(run_id, command, null);
+      this.runs.start(run_id, operation, null);
     } catch (error) {
       this.options.log(`Could not start the pull switch to ${revision}: ${(error as Error).message}`);
       this.save(state);
@@ -290,7 +286,7 @@ export class Puller {
       run_id, remote: remote.url, branch: remote.branch, revision, command, started_epoch: Math.floor(this.now() / 1000), finished_epoch: null, exit_code: null,
     });
     this.save(state);
-    this.options.log(`The server has been unreachable, so switching to ${revision} of ${remote.branch} from ${remote.url}: ${command}`);
+    this.options.log(`The server has been unreachable, so switching to ${revision} of ${remote.branch} from ${remote.url}`);
   }
 
   // ── Reporting ────────────────────────────────────────────────────────────

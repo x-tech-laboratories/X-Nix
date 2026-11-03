@@ -2,21 +2,26 @@ import { createSocket } from "node:dgram";
 
 import { describe, expect, it } from "vitest";
 
+import { perform } from "../src/agent/operations/index.ts";
+import { spawn_program, type Context } from "../src/agent/programs.ts";
 import { AgentPool, type Agent } from "../src/server/agents/agent.ts";
-import { kept_awake_job, magic_packet, send_magic_packet, type WakeSettings } from "../src/server/agents/wake.ts";
+import { job_inhibitor, kept_awake_job, magic_packet, send_magic_packet, wake_operation, type WakeSettings } from "../src/server/agents/wake.ts";
 import { start_run } from "../src/server/runs.ts";
 import { ConfigError, parse_config } from "../src/server/config.ts";
+import type { Operation } from "../src/shared/operations.ts";
 
 const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null };
 
-function fake_agent(name: string, commands: string[] = [], exit_code = 0): Agent {
+const plain: Operation = { kind: "probe" };
+
+function fake_agent(name: string, operations: Operation[] = [], exit_code = 0): Agent {
   return {
-    run: async (command) => {
-      commands.push(command);
+    run: async (operation) => {
+      operations.push(operation);
       return { exit_code, stdout: name, stderr: "" };
     },
-    start: async (run_id, command) => {
-      commands.push(command);
+    start: async (run_id, operation) => {
+      operations.push(operation);
       return { run_id, pid: 1, started_epoch: 0 } as never;
     },
     poll: async () => ({ alive: false, exit_code: 0, new_output: "", offset: 0 }) as never,
@@ -61,7 +66,7 @@ describe("waking a host through the pool", () => {
     const agent = await pool.awake("thor");
 
     expect(sent).toEqual([thor]);
-    expect((await agent.run("true", 5)).stdout).toBe("thor");
+    expect((await agent.run(plain, 5)).stdout).toBe("thor");
   });
 
   it("sends nothing to a host already connected, one it cannot wake, or the server's own", async () => {
@@ -75,7 +80,7 @@ describe("waking a host through the pool", () => {
     const missing = await pool.awake("odin");
 
     expect(sent).toBe(0);
-    expect((await missing.run("true", 5)).stderr).toMatch(/No agent named 'odin'/);
+    expect((await missing.run(plain, 5)).stderr).toMatch(/No agent named 'odin'/);
   });
 
   it("says so when the agent does not dial in in time, or the packet cannot be sent", async () => {
@@ -86,14 +91,14 @@ describe("waking a host through the pool", () => {
     });
     failing.set_wake(new Map([["thor", thor]]));
 
-    await expect((await quiet.awake("thor")).start("run", "true")).rejects.toMatchObject({ unreachable: true, message: expect.stringMatching(/did not connect within 1 second/) });
-    expect((await (await failing.awake("thor")).run("true", 5)).stderr).toBe("Could not wake thor: no route");
+    await expect((await quiet.awake("thor")).start("run", plain)).rejects.toMatchObject({ unreachable: true, message: expect.stringMatching(/did not connect within 1 second/) });
+    expect((await (await failing.awake("thor")).run(plain, 5)).stderr).toBe("Could not wake thor: no route");
   });
 });
 
 describe("waking through another host's agent", () => {
-  it("runs wakeonlan on that agent, and says so when it fails", async () => {
-    const sent: string[] = [];
+  it("has that agent send the packet, and says so when it fails", async () => {
+    const sent: Operation[] = [];
     const pool = new AgentPool("server", fake_agent("server"), async () => {
       throw new Error("the server sent it");
     });
@@ -106,8 +111,9 @@ describe("waking through another host's agent", () => {
     failing.add("heimdall", fake_agent("heimdall", [], 127));
     failing.set_wake(new Map([["thor", { ...thor, via: "heimdall" }]]));
 
-    expect(sent).toEqual(["wakeonlan -i 192.168.0.255 -p 9 aa:bb:cc:dd:ee:ff"]);
-    expect((await (await failing.awake("thor")).run("true", 5)).stderr).toMatch(/^Could not wake thor: heimdall could not send the packet/);
+    expect(sent).toEqual([{ kind: "wake", mac: "aa:bb:cc:dd:ee:ff", broadcast: "192.168.0.255", port: 9 }]);
+    expect(wake_operation(thor)).toEqual({ kind: "wake", mac: thor.mac, broadcast: thor.broadcast, port: thor.port });
+    expect((await (await failing.awake("thor")).run(plain, 5)).stderr).toMatch(/^Could not wake thor: heimdall could not send the packet/);
   });
 });
 
@@ -115,35 +121,33 @@ describe("waking through another host's agent", () => {
 
 describe("a job on a host that sleeps", () => {
   it("holds a sleep inhibitor for as long as the job runs, unless keep_awake is off", async () => {
-    const thor_commands: string[] = [];
-    const odin_commands: string[] = [];
+    const thor_operations: Operation[] = [];
+    const odin_operations: Operation[] = [];
     const pool = new AgentPool("server", fake_agent("server"));
-    pool.add("thor", fake_agent("thor", thor_commands));
-    pool.add("odin", fake_agent("odin", odin_commands));
+    pool.add("thor", fake_agent("thor", thor_operations));
+    pool.add("odin", fake_agent("odin", odin_operations));
     pool.set_wake(new Map([["thor", thor], ["odin", thor]]), new Set(["thor"]));
 
-    await start_run(pool, "thor", "run-1", "nix build");
-    await start_run(pool, "odin", "run-2", "nix build");
+    await start_run(pool, "thor", "run-1", plain);
+    await start_run(pool, "odin", "run-2", plain);
 
-    expect(thor_commands).toEqual([kept_awake_job("nix build")]);
-    expect(thor_commands[0]).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=job cat");
-    expect(thor_commands[0]).toMatch(/sh -c 'nix build' 9>&-$/);
-    expect(odin_commands).toEqual(["nix build"]);
+    expect(thor_operations).toEqual([kept_awake_job(plain)]);
+    expect(job_inhibitor).toEqual(["sudo", "-n", "systemd-inhibit", "--what=idle:sleep", "--mode=block", "--who=X-Nix", "--why=job", "cat"]);
+    expect(odin_operations).toEqual([plain]);
   });
 
-  it("still runs the command, and its exit status, when the inhibitor cannot be held", async () => {
-    const { execFileSync } = await import("node:child_process");
-    const run = (command: string) => {
-      try {
-        return { output: execFileSync("sh", ["-c", kept_awake_job(command).replace("sudo -n systemd-inhibit", "false")], { encoding: "utf8" }), status: 0 };
-      } catch (error) {
-        return { output: (error as { stdout: string }).stdout, status: (error as { status: number }).status };
-      }
+  it("still runs the job, and keeps its exit status, when the inhibitor cannot be held", async () => {
+    const run = async (command: string) => {
+      let output = "";
+      const sink = { write: (chunk: Buffer | string) => void (output += chunk.toString()) };
+      const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: false, stdin: null, program: spawn_program };
+      const job = { ...kept_awake_job({ kind: "programs", steps: [{ argv: ["/bin/sh", "-c", `sleep 0.2; ${command}`] }] }), inhibitor: { argv: ["false"] } };
+      return { status: await perform(context, job), output };
     };
 
-    expect(run("echo built")).toEqual({ output: expect.stringContaining("built\n"), status: 0 });
-    expect(run("exit 3").status).toBe(3);
-    expect(run("echo built").output).toContain("Could not keep the host awake");
+    expect(await run("echo built")).toEqual({ output: expect.stringContaining("built\n"), status: 0 });
+    expect((await run("exit 3")).status).toBe(3);
+    expect((await run("echo built")).output).toContain("Could not keep the host awake");
   });
 });
 

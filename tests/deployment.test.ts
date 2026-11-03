@@ -6,9 +6,10 @@ import { cache_settings, deployment_settings, host_settings } from "../src/serve
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { Store } from "../src/server/store.ts";
 import {
-  clock, collect, current_closure, cycle, eval_output, FakeAgent, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result, rewind_drift,
-  rewind_evaluation, rewind_schedule, status_of, target_closure,
+  clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
+  rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
 } from "./fake_agent.ts";
+import { innermost, type SwitchOperation } from "../src/shared/operations.ts";
 
 const matching = result(0, `${current_closure}\n`);
 const newer_closure = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-nixos-system-host-26.11";
@@ -291,7 +292,7 @@ describe("actions", () => {
     expect(outcome.ok).toBe(true);
     const job = harness.deployment.running_job()!;
     expect(job.kind).toBe("switch");
-    expect(job.command).toContain("nixos-rebuild switch --flake /etc/nixos");
+    expect(shown_command(job.command)).toContain("nixos-rebuild switch --flake /etc/nixos");
   });
 
   it("switches a remote flake", async () => {
@@ -329,10 +330,10 @@ describe("actions", () => {
     const outcome = await harness.deployment.act("reboot");
 
     expect(outcome.ok).toBe(true);
-    expect(harness.agent.commands).toContain("sudo -n systemctl reboot");
+    expect(harness.agent.ran("sudo -n systemctl reboot")).toBe(true);
     expect(harness.deployment.running_job()).toBeNull();
     const job = harness.store.jobs()[0];
-    expect([job.kind, job.state, job.command]).toEqual(["reboot", "succeeded", "sudo -n systemctl reboot"]);
+    expect([job.kind, job.state, shown_command(job.command).split("\n")[1]]).toEqual(["reboot", "succeeded", "sudo -n systemctl reboot"]);
   });
 
   it("reboots without sudo when require_sudo is off", async () => {
@@ -340,7 +341,7 @@ describe("actions", () => {
 
     await harness.deployment.act("reboot");
 
-    expect(harness.agent.commands).toContain("systemctl reboot");
+    expect(harness.agent.ran("systemctl reboot")).toBe(true);
   });
 
   it("keeps a failed reboot's output", async () => {
@@ -443,7 +444,7 @@ describe("switch from cache", () => {
 
     expect((await harness.deployment.act("switch")).ok).toBe(true);
 
-    const command = harness.deployment.running_job()!.command;
+    const command = shown_command(harness.deployment.running_job()!.command);
     expect(command).toContain(`build --no-link ${target_closure}`);
     expect(command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
     expect(command).not.toContain("nixos-rebuild");
@@ -457,12 +458,12 @@ describe("switch from cache", () => {
 
     await cycle(harness);
 
-    expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+    expect(shown_command(harness.deployment.running_job()?.command ?? "")).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
   });
 
   it("waits for the cache to hold the new system before switching automatically", async () => {
     const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
-    const missing: [string, ReturnType<typeof result>] = ["build --dry-run --no-link", result(1, "", "")];
+    const missing: [string, ReturnType<typeof result>] = ['"kind":"cache_holds"', result(1, "", "")];
     harness.agent.answers.push(missing);
     await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
     rewind_drift(harness, 1801);
@@ -477,7 +478,7 @@ describe("switch from cache", () => {
     harness.agent.answers.splice(0);
     await cycle(harness);
 
-    expect(harness.deployment.running_job()?.command).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+    expect(shown_command(harness.deployment.running_job()?.command ?? "")).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
   });
 
   it("activates boot and test from the cache too, refusing them before an evaluation", async () => {
@@ -491,9 +492,9 @@ describe("switch from cache", () => {
     await cycle(harness);
     await harness.deployment.act("test");
 
-    expect(boot.command).toContain(`--set ${target_closure} && sudo -n ${target_closure}/bin/switch-to-configuration boot`);
-    expect(harness.deployment.running_job()!.command).toContain(`${target_closure}/bin/switch-to-configuration test`);
-    expect(harness.deployment.running_job()!.command).not.toContain("nixos-rebuild");
+    expect(shown_command(boot.command)).toContain(`--set ${target_closure}\nsudo -n ${target_closure}/bin/switch-to-configuration boot`);
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain(`${target_closure}/bin/switch-to-configuration test`);
+    expect(shown_command(harness.deployment.running_job()!.command)).not.toContain("nixos-rebuild");
   });
 
   it("guards a switch from the cache on the host's own agent, which confirms it, and runs post_switch as root", async () => {
@@ -501,17 +502,18 @@ describe("switch from cache", () => {
     await collect(harness);
 
     await harness.deployment.act("switch");
-    const run = harness.agent.last_run("x-nix-switch")!;
+    const run = harness.agent.last_run('"pre_switch_checks":["true"]')!;
     harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
     await cycle(harness);
 
-    expect(run.command).toContain("mark phase pre-switch-checks");
+    const operation = innermost(run.operation) as SwitchOperation;
+    expect(operation.watch?.magic_rollback).toBe(true);
+    expect(operation.activation_name).toBe("The switch from the cache");
     expect(run.command).toContain(`build --no-link ${target_closure}`);
     expect(run.command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
     expect(run.command).toContain("sudo -n /bin/sh -c 'systemctl restart greetd'");
-    expect(run.command).toContain("The switch from the cache failed with status");
     expect(run.command).not.toContain("nixos-rebuild");
-    expect(harness.agent.commands.some((command) => /^sh -c 'touch \/tmp\/x-nix-switch-[0-9a-f]+\/confirmed'$/.test(command))).toBe(true);
+    expect(harness.agent.operations.some((sent) => sent.kind === "confirm_switch" && sent.token === operation.watch?.token)).toBe(true);
   });
 
   it("keeps the host awake through the whole switch with inhibit_sleep", async () => {
@@ -520,24 +522,24 @@ describe("switch from cache", () => {
 
     await harness.deployment.act("switch");
 
-    const command = harness.deployment.running_job()!.command;
+    const command = shown_command(harness.deployment.running_job()!.command);
     expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
     expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
   });
 
   it("rolls back to an earlier generation on the host's own agent", async () => {
     const harness = make_deployment({ ...from_cache, inhibit_sleep: true });
-    harness.agent.answers.push(["profiles/system-*-link", result(0, [
-      "current\t/nix/store/b-system", "profile\tsystem-2-link",
-      "generation\tsystem-1-link\t1700000000\t/nix/store/a-system\t26.05", "generation\tsystem-2-link\t1700100000\t/nix/store/b-system\t26.11",
-    ].join("\n"))]);
+    harness.agent.answers.push(['"kind":"generations"', generations_result([
+      { generation: 1, path: "/nix/store/a-system", version: "26.05" },
+      { generation: 2, path: "/nix/store/b-system", version: "26.11", current: true, profile: true },
+    ])]);
 
     expect((await harness.deployment.roll_back(1, "the new kernel panics")).ok).toBe(true);
 
     const job = harness.deployment.running_job()!;
     expect(job.agent).toBeNull();
-    expect(job.command).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1 && sudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
-    expect(job.command).toContain("systemd-inhibit");
+    expect(shown_command(job.command)).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1\nsudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
+    expect(shown_command(job.command)).toContain("systemd-inhibit");
   });
 
   // A cache on the server tracking the host's configuration, sharing the deployment's store and agent.
@@ -551,7 +553,7 @@ describe("switch from cache", () => {
     return { ...harness, cache };
   }
 
-  const lacking: [string, ReturnType<typeof result>] = ["build --dry-run --no-link", result(1)];
+  const lacking: [string, ReturnType<typeof result>] = ['"kind":"cache_holds"', result(1)];
 
   it("builds in the cache it names rather than on its own, unless pinned off the head the cache builds", async () => {
     const harness = with_cache({ cache: "fleet", cache_url: undefined });
@@ -578,7 +580,7 @@ describe("switch from cache", () => {
     expect(outcome).toMatchObject({ ok: true, message: "Building host in the Fleet cache first; the switch starts once it is pushed" });
     const job = harness.store.job(outcome.job_id!)!;
     expect(job).toMatchObject({ kind: "switch", state: "running", progress: "Building host in the Fleet cache" });
-    const build = harness.agent.last_run('nixosConfigurations."host"')!;
+    const build = harness.agent.last_run('"kind":"cache_build"')!;
     expect(harness.cache.running_job()?.kind).toBe("build-target");
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
     expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
@@ -593,7 +595,7 @@ describe("switch from cache", () => {
 
     const switching = harness.agent.last_run("switch-to-configuration")!;
     expect(switching.run_id).toBe(job.run_id);
-    expect(switching.command).toContain(`build --no-link ${target_closure}`);
+    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
     expect(harness.store.job(job.id)!.output).toContain("The cache holds the system; switching");
     expect(harness.deployment.evaluation().cache_build).toBeUndefined();
 
@@ -618,7 +620,7 @@ describe("switch from cache", () => {
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
 
     harness.agent.answers.splice(0);
-    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 0);
+    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 0);
     await harness.cache.cycle();
     await harness.deployment.cycle();
 
@@ -631,7 +633,7 @@ describe("switch from cache", () => {
     harness.agent.answers.push(lacking);
     const outcome = await harness.deployment.act("switch");
 
-    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 1);
+    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 1);
     await harness.cache.cycle();
     await harness.deployment.cycle();
 
@@ -646,7 +648,7 @@ describe("switch from cache", () => {
     harness.agent.answers.push(lacking);
     const outcome = await harness.deployment.act("switch");
 
-    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 0);
+    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 0);
     await harness.cache.cycle();
     await harness.deployment.cycle();
 
@@ -657,18 +659,18 @@ describe("switch from cache", () => {
   it("takes the system the cache built when the flake moved past the evaluation", async () => {
     const harness = with_cache();
     await collect(harness);
-    harness.agent.answers.push([`build --dry-run --no-link ${target_closure}`, result(1)]);
+    harness.agent.answers.push([`"store_path":"${target_closure}"`, result(1)]);
     const outcome = await harness.deployment.act("switch");
 
     const reported = [["target", newer_closure], ["built", "1"], ["own", "1"]].map(([key, value]) => `@@x-nix-cache\thost\t${key}\t${value}`).join("\n");
-    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, `${reported}\n`, 0);
+    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, `${reported}\n`, 0);
     await harness.cache.cycle();
     await harness.deployment.cycle();
 
     const switching = harness.agent.last_run("switch-to-configuration")!;
     expect(switching.command).toContain(`build --no-link ${newer_closure}`);
     expect(switching.command).not.toContain(target_closure);
-    expect(harness.store.job(outcome.job_id!)!.command).toBe(switching.command);
+    expect(shown_command(harness.store.job(outcome.job_id!)!.command)).toBe(switching.command);
     expect(harness.store.job(outcome.job_id!)!.output).toContain(`so this switch takes ${newer_closure}, which the cache built`);
     expect(harness.deployment.due_for_evaluation()).toBe(true);
   });
@@ -677,13 +679,13 @@ describe("switch from cache", () => {
     const harness = with_cache();
     await collect(harness);
     await harness.cache.cycle();
-    const check = harness.agent.last_run("--store")!;
+    const check = harness.agent.last_run('"kind":"cache_check"')!;
     harness.agent.answers.push(lacking);
 
     const outcome = await harness.deployment.act("switch");
 
     expect(harness.store.job(outcome.job_id!)!.progress).toBe("Waiting for the Fleet cache to finish its check");
-    expect(harness.agent.last_run('nixosConfigurations."host"')?.command ?? "").not.toContain("build --print-out-paths");
+    expect(harness.agent.last_run('"kind":"cache_build"')).toBeUndefined();
 
     harness.agent.end(check, "", 0);
     await harness.cache.cycle();
@@ -724,17 +726,16 @@ describe("a small host evaluated and built elsewhere", () => {
     const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
 
     await deployment.cycle();
-    const evaluation = server.last_run("@@x-nix-eval")!;
+    const evaluation = server.last_run('"kind":"evaluate"')!;
     server.end(evaluation, eval_output(result(0, `${target_closure}\n`), metadata()), 0);
     await deployment.cycle();
-    expect(evaluation.command).toContain("nixosConfigurations.\\\"pi\\\".config.system.build.toplevel");
+    expect(innermost(evaluation.operation)).toMatchObject({ kind: "evaluate", attribute: "pi", flake: "github:example/nixos-config", refresh: true });
     expect(pi.runs).toHaveLength(0);
     expect(deployment.cached_target()).toBe(target_closure);
 
     await deployment.act("build");
-    const build = server.last_run("build")!;
-    expect(build.command).toContain("--out-link /var/lib/x-nix/build-roots/pi");
-    expect(build.command).toContain("path-info --option narinfo-cache-negative-ttl 0 --store https://attic.example/fleet");
+    const build = server.last_run('"kind":"build"')!;
+    expect(build.operation).toMatchObject({ kind: "build", root_link: "/var/lib/x-nix/build-roots/pi", cache_url: "https://attic.example/fleet" });
     server.end(build, `${target_closure}\n`, 0);
     await deployment.cycle();
     expect(pi.runs).toHaveLength(0);
@@ -747,12 +748,12 @@ describe("a small host evaluated and built elsewhere", () => {
 
     const switching = pi.last_run("switch-to-configuration")!;
     expect(deployment.running_job()).toMatchObject({ kind: "switch", agent: "pi", trigger: "automatic" });
-    expect(switching.command).toContain(`build --no-link ${target_closure}`);
-    expect(switching.command).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
-    expect(switching.command).toContain("x-nix-watchdog");
-    expect(switching.command).toContain("systemd-inhibit");
-    expect(switching.command).toContain("sudo -n /bin/sh -c ");
-    expect(switching.command).not.toContain("nixos-rebuild");
+    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
+    expect(shown_command(switching.command)).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+    expect(switching.command).toContain('"magic_rollback":true');
+    expect(shown_command(switching.command)).toContain("systemd-inhibit");
+    expect(shown_command(switching.command)).toContain("sudo -n /bin/sh -c ");
+    expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
     expect(server.runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
   });
 });
@@ -797,7 +798,7 @@ describe("automatic switch", () => {
 
     const job = harness.deployment.running_job()!;
     expect([job.kind, job.trigger]).toEqual(["switch", "automatic"]);
-    expect(job.command).toContain("nixos-rebuild switch --flake /etc/nixos");
+    expect(shown_command(job.command)).toContain("nixos-rebuild switch --flake /etc/nixos");
   });
 
   it("never retries the same target", async () => {
@@ -898,7 +899,7 @@ describe("daily jobs", () => {
 
     const job = harness.deployment.running_job()!;
     expect([job.kind, job.trigger]).toEqual(["build", "schedule"]);
-    expect(job.command).toContain("build --no-link");
+    expect(JSON.parse(job.command)).toMatchObject({ kind: "build", root_link: null });
   });
 
   it("run several missed slots once, and not again after a restart", async () => {
@@ -906,7 +907,7 @@ describe("daily jobs", () => {
     await collect(harness);
     rewind_schedule(harness, "build", 3);
     await cycle(harness);
-    harness.agent.end(harness.agent.last_run("build --no-link")!, "done\n", 0);
+    harness.agent.end(harness.agent.last_run('"kind":"build"')!, "done\n", 0);
     await cycle(harness);
 
     expect(harness.deployment.scheduled_due()).toBeNull();
@@ -973,7 +974,7 @@ describe("safer switches", () => {
   async function awaiting(values: Record<string, unknown> = guarded, http_check: (url: string) => Promise<string | null> = async () => null) {
     const harness = make_deployment(values, { http_check });
     await harness.deployment.act("switch");
-    const run = harness.agent.last_run("x-nix-switch")!;
+    const run = harness.agent.last_run('"watch":{')!;
     harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
     return { harness, run };
   }
@@ -985,7 +986,8 @@ describe("safer switches", () => {
 
     const job = harness.deployment.running_job()!;
     expect(job.kind).toBe("dry-activate");
-    expect(job.command).toBe("sudo -n nixos-rebuild dry-activate --flake /etc/nixos");
+    expect(JSON.parse(job.command)).toMatchObject({ kind: "switch", mode: "dry-activate", watch: null, pre_switch_checks: [] });
+    expect(shown_command(job.command).split("\n").slice(1)).toEqual(["sudo -n nixos-rebuild dry-activate --flake /etc/nixos"]);
   });
 
   it("confirms a switch once its HTTP checks pass, and only once", async () => {
@@ -994,7 +996,7 @@ describe("safer switches", () => {
     await cycle(harness);
     await cycle(harness);
 
-    expect(harness.agent.commands.filter((command) => command.includes("/confirmed"))).toHaveLength(1);
+    expect(harness.agent.commands.filter((command) => command.includes('"kind":"confirm_switch"'))).toHaveLength(1);
     expect(harness.store.job(harness.deployment.running_job()!.id)!.output).toContain("confirmed the switch");
   });
 
@@ -1008,14 +1010,14 @@ describe("safer switches", () => {
     const { harness } = await awaiting(guarded, async () => "answered 502 Bad Gateway");
 
     await cycle(harness);
-    expect(harness.agent.commands.some((command) => command.includes("rollback.part"))).toBe(false);
+    expect(harness.agent.commands.some((command) => command.includes('"kind":"signal_rollback"'))).toBe(false);
     clock.now += 121;
     await cycle(harness);
     clock.now -= 121;
 
-    const signal = harness.agent.commands.find((command) => command.includes("rollback.part"))!;
+    const signal = harness.agent.commands.find((command) => command.includes('"kind":"signal_rollback"'))!;
     expect(signal).toContain("HTTP health check failed: https://host.example/health: answered 502 Bad Gateway");
-    expect(harness.agent.commands.some((command) => command.includes("/confirmed"))).toBe(false);
+    expect(harness.agent.commands.some((command) => command.includes('"kind":"confirm_switch"'))).toBe(false);
   });
 
   it("records why a switch was rolled back", async () => {
@@ -1032,7 +1034,7 @@ describe("safer switches", () => {
   it("records a refusal by a pre-switch check", async () => {
     const harness = make_deployment({ pre_switch_checks: ["test -d /boot"] });
     await harness.deployment.act("boot");
-    harness.agent.end(harness.agent.last_run("pre-switch")!, "@@x-nix-switch refused Pre-switch check 1 (test -d /boot) failed with status 1\n", 3);
+    harness.agent.end(harness.agent.last_run('"pre_switch_checks":["test -d /boot"]')!, "@@x-nix-switch refused Pre-switch check 1 (test -d /boot) failed with status 1\n", 3);
 
     await cycle(harness);
 
@@ -1043,31 +1045,28 @@ describe("safer switches", () => {
 // ── Rollback ─────────────────────────────────────────────────────────────────
 
 describe("rollback", () => {
-  const generations = result(0, [
-    "current\t/nix/store/b-system",
-    "booted\t/nix/store/b-system",
-    "profile\tsystem-2-link",
-    "generation\tsystem-1-link\t1700000000\t/nix/store/a-system\t26.05",
-    "generation\tsystem-2-link\t1700100000\t/nix/store/b-system\t26.11",
-  ].join("\n"));
+  const generations = generations_result([
+    { generation: 1, path: "/nix/store/a-system", version: "26.05" },
+    { generation: 2, path: "/nix/store/b-system", version: "26.11", current: true, profile: true },
+  ]);
 
   it("activates an earlier generation as a job, recording why", async () => {
     const harness = make_deployment();
-    harness.agent.answers.push(["profiles/system-*-link", generations]);
+    harness.agent.answers.push(['"kind":"generations"', generations]);
 
     const outcome = await harness.deployment.roll_back(1, "the new kernel panics");
 
     expect(outcome.ok).toBe(true);
     const job = harness.deployment.running_job()!;
     expect(job.kind).toBe("rollback");
-    expect(job.command).toContain("Rolling back to generation 1: the new kernel panics");
-    expect(job.command).toContain("--switch-generation 1");
+    expect(shown_command(job.command)).toContain("Rolling back to generation 1: the new kernel panics");
+    expect(shown_command(job.command)).toContain("--switch-generation 1");
     expect(harness.store.events(harness.deployment.id)[0].message).toBe("Rolling back to generation 1: the new kernel panics");
   });
 
   it("refuses the running generation and one that does not exist", async () => {
     const harness = make_deployment();
-    harness.agent.answers.push(["profiles/system-*-link", generations]);
+    harness.agent.answers.push(['"kind":"generations"', generations]);
 
     expect((await harness.deployment.roll_back(2, "x")).message).toContain("already running");
     expect((await harness.deployment.roll_back(9, "x")).message).toContain("not one of");
@@ -1083,7 +1082,7 @@ describe("package diff", () => {
   it("compares the running closure with the flake's as a job, and reuses it for the same two", async () => {
     const harness = make_deployment();
     await collect(harness);
-    harness.agent.answers.push(["diff-closures", diff_output]);
+    harness.agent.answers.push(['"kind":"closure_diff"', diff_output]);
 
     const first = await harness.deployment.diff(false);
     await harness.deployment.diff(false);
@@ -1096,7 +1095,7 @@ describe("package diff", () => {
   it("says the flake's closure is not built yet", async () => {
     const harness = make_deployment();
     await collect(harness);
-    harness.agent.answers.push(["diff-closures", result(0, "@@x-nix-diff missing\n")]);
+    harness.agent.answers.push(['"kind":"closure_diff"', result(0, "@@x-nix-diff missing\n")]);
 
     const outcome = await harness.deployment.diff(false);
 

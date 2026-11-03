@@ -52,7 +52,7 @@ export function job_view(id: number): View {
       ]),
       job.error && h("p", { class: "tone-bad" }, job.error),
       job.live && section("Progress", progress_view(JSON.parse(job.live) as BuildProgress, job.state === "running")),
-      section("Command", h("pre", { class: "output" }, job.command)),
+      section(operation_text(job.command) === null ? "Command" : "Operation", h("pre", { class: "output" }, operation_text(job.command) ?? job.command)),
       section("Output", job.output ? h("pre", { class: "output run-output" }, job.output) : empty(job.state === "running" ? "Nothing printed yet." : "It printed nothing.")),
     ];
   }, { quiet });
@@ -93,4 +93,14 @@ function progress_view(progress: BuildProgress, running: boolean): HTMLElement {
       ...building.map((activity) => h("li", {}, h("span", { class: "badge tone-info" }, "building"), h("code", {}, activity.name), activity.phase && h("span", { class: "muted small" }, activity.phase))),
       ...downloading.map((activity) => h("li", {}, h("span", { class: "badge tone-none" }, "downloading"), h("code", {}, activity.name)))),
   );
+}
+
+// A job's operation laid out to read, or null for a job from before operations, whose command is a line of its own.
+function operation_text(command: string): string | null {
+  try {
+    const value: unknown = JSON.parse(command);
+    return typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : null;
+  } catch {
+    return null;
+  }
 }

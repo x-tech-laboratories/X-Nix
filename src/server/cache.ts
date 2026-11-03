@@ -17,9 +17,10 @@ import { probe_cache_server, type CacheServerReading, type Fetcher } from "./cac
 import { level_of_status, type CacheSettings, type Status } from "./config.ts";
 import type { Message } from "./deployment.ts";
 import {
-  build_all_command, build_command, check_command, parse_report, push_command, report_mark, rows_status, target_row, targets, type Report, type TargetRow,
+  build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark, rows_status, target_row, targets, type Report, type TargetRow,
 } from "./nixos/attic.ts";
 import { timed_out_exit_code } from "./nixos/commands.ts";
+import type { Operation } from "../shared/operations.ts";
 import { parse_metadata } from "./nixos/flake.ts";
 import { latest_slot } from "./deployment.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
@@ -164,7 +165,7 @@ export class Cache {
   }
 
   private async launch_scheduled(slot: number): Promise<void> {
-    const launched = await this.launch("build-all", build_all_command(this.settings), "schedule");
+    const launched = await this.launch("build-all", build_all_operation(this.settings), "schedule");
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
       this.store.add_event(this.id, this.now(), "warning", `Could not start the scheduled Build all: ${launched.error}`);
@@ -194,7 +195,7 @@ export class Cache {
   }
 
   private async launch_check(): Promise<void> {
-    const launched = await this.launch("check", check_command(this.settings));
+    const launched = await this.launch("check", check_operation(this.settings));
     if (launched.job_id === null) this.save_unavailable(`Could not start the check: ${launched.error}`);
   }
 
@@ -307,9 +308,9 @@ export class Cache {
       const refusal = this.action_refusal(action, name);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       const row = this.reading()?.rows.find((candidate) => candidate.name === name);
-      const command = action === "build" ? build_command(this.settings, name) : push_command(this.settings, name, row!.target!);
+      const operation = action === "build" ? build_operation(this.settings, name) : push_operation(this.settings, name, row!.target!);
       const what = `${action_words[action]} of ${name}`;
-      const launched = await this.launch(action_kinds[action], command, trigger);
+      const launched = await this.launch(action_kinds[action], operation, trigger);
       if (launched.job_id === null) {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${what.toLowerCase()}: ${launched.error}`);
         return { ok: false, message: `Could not start the ${what.toLowerCase()}: ${launched.error}`, job_id: null };
@@ -324,7 +325,7 @@ export class Cache {
     return this.serial(async () => {
       const refusal = this.build_all_refusal();
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      const launched = await this.launch("build-all", build_all_command(this.settings));
+      const launched = await this.launch("build-all", build_all_operation(this.settings));
       if (launched.job_id === null) {
         this.store.add_event(this.id, this.now(), "error", `Could not start Build all: ${launched.error}`);
         return { ok: false, message: `Could not start Build all: ${launched.error}`, job_id: null };
@@ -334,16 +335,16 @@ export class Cache {
     });
   }
 
-  private async launch(kind: JobKind, command: string, trigger = kind === "check" ? "schedule" : "manual"): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
+  private async launch(kind: JobKind, operation: Operation, trigger = kind === "check" ? "schedule" : "manual"): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for a build or push, but not for the periodic check.
-      ({ waking } = await start_run(this.agents, this.settings.host, run_id, command, null, kind !== "check"));
+      ({ waking } = await start_run(this.agents, this.settings.host, run_id, operation, null, kind !== "check"));
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error), unreachable: error instanceof AgentError && error.unreachable };
     }
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
       track_wake(this.store, job_id, this.settings.host ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${kind}: ${error}`);

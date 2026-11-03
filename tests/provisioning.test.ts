@@ -1,23 +1,25 @@
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { run_operation } from "../src/agent/run.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { build_app, type ProvisioningView } from "../src/server/app.ts";
 import { hash_password } from "../src/server/auth.ts";
 import { ConfigError, parse_config, provisioning_settings } from "../src/server/config.ts";
 import {
-  hardware_mark, install_command, media_command, media_expression, media_mark, parse_hardware_config, parse_install_record,
+  hardware_mark, install_operation, media_operation, media_expression, media_mark, parse_hardware_config, parse_install_record,
   parse_install_request, type InstallRequest,
 } from "../src/server/nixos/provision.ts";
 import { Poller } from "../src/server/poller.ts";
 import { Provisioner } from "../src/server/provisioning.ts";
 import { Store } from "../src/server/store.ts";
 import { generate_agent_key, parse_private_key, parse_public_key } from "../src/shared/agent_keys.ts";
+import type { InstallOperation } from "../src/shared/operations.ts";
 import { clock, FakeAgent } from "./fake_agent.ts";
 
 const folder = mkdtempSync(join(tmpdir(), "x-nix-provisioning-"));
@@ -104,19 +106,23 @@ exit ${exit_code}
   return bin;
 }
 
-function run_install(command: string, stdin: string, bin: string) {
-  return spawnSync("sh", ["-c", command], { input: stdin, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+// Performs the install here, as the agent would, with nixos-anywhere from the folder of stand-ins.
+async function run_install(operation: InstallOperation, stdin: string, bin: string) {
+  const tool = operation.tool.includes("/") ? operation.tool : join(bin, operation.tool);
+  const ran = await run_operation({ ...operation, tool: existsSync(tool) ? tool : operation.tool }, { timeout_in_seconds: 30, stdin });
+  return { status: ran.exit_code, stdout: ran.stdout };
 }
 
 describe("the install script", () => {
-  it("places the key from stdin with the new system's modes, and prints the record and hardware configuration", () => {
+  it("places the key from stdin with the new system's modes, and prints the record and hardware configuration", async () => {
     const directory = mkdtempSync(join(folder, "install-"));
     const ssh_key = join(directory, "ssh_key");
     writeFileSync(ssh_key, "not a real key", { mode: 0o600 });
     const key = generate_agent_key("x-nix-agent-freya");
-    const command = install_command(settings({ ssh_key, nixos_anywhere_args: ["--build-on", "remote"] }), request, key.public_line);
+    const operation = install_operation(settings({ ssh_key, nixos_anywhere_args: ["--build-on", "remote"] }), request, key.public_line);
+    const command = JSON.stringify(operation);
 
-    const ran = run_install(command, key.private_text, fake_nixos_anywhere(directory));
+    const ran = await run_install(operation, key.private_text, fake_nixos_anywhere(directory));
 
     expect(ran.status).toBe(0);
     expect(command).not.toContain(key.private_text.split("\n")[1]);
@@ -136,13 +142,13 @@ describe("the install script", () => {
     expect(parse_hardware_config(ran.stdout)).toContain('availableKernelModules = [ "nvme" ]');
   });
 
-  it("stops after partitioning with no key, and passes on nixos-anywhere's failure", () => {
+  it("stops after partitioning with no key, and passes on nixos-anywhere's failure", async () => {
     const directory = mkdtempSync(join(folder, "partition-"));
     const ssh_key = join(directory, "ssh_key");
     writeFileSync(ssh_key, "not a real key", { mode: 0o600 });
-    const command = install_command(settings({ ssh_key }), { ...request, stop_after_partitioning: true, generate_hardware_config: false }, null);
+    const operation = install_operation(settings({ ssh_key }), { ...request, stop_after_partitioning: true, generate_hardware_config: false }, null);
 
-    const ran = run_install(command, "", fake_nixos_anywhere(directory, 3));
+    const ran = await run_install(operation, "", fake_nixos_anywhere(directory, 3));
 
     expect(ran.status).toBe(3);
     const arguments_given = readFileSync(join(directory, "arguments"), "utf8");
@@ -151,12 +157,12 @@ describe("the install script", () => {
     expect(arguments_given).not.toContain("--generate-hardware-config");
   });
 
-  it("says plainly when nixos-anywhere is missing or the SSH key unreadable", () => {
-    const missing = run_install(install_command(settings({ nixos_anywhere_bin: "x-nix-no-such-tool" }), request, null), "", folder);
+  it("says plainly when nixos-anywhere is missing or the SSH key unreadable", async () => {
+    const missing = await run_install(install_operation(settings({ nixos_anywhere_bin: "x-nix-no-such-tool" }), request, null), "", folder);
     expect(missing.status).toBe(127);
     expect(missing.stdout).toContain("x-nix-no-such-tool is not on this host's PATH");
 
-    const unreadable = run_install(install_command(settings({ ssh_key: join(folder, "absent") }), request, null), "", fake_nixos_anywhere(mkdtempSync(join(folder, "key-"))));
+    const unreadable = await run_install(install_operation(settings({ ssh_key: join(folder, "absent") }), request, null), "", fake_nixos_anywhere(mkdtempSync(join(folder, "key-"))));
     expect(unreadable.status).toBe(2);
     expect(unreadable.stdout).toContain("Cannot read the SSH key");
   });
@@ -170,9 +176,9 @@ describe("the media build", () => {
       const expression = media_expression('/srv/fle"et${x}', "freya", format);
       expect(() => execFileSync("nix-instantiate", ["--parse", "--expr", expression], { stdio: "pipe" })).not.toThrow();
     }
-    const command = media_command(settings(), "/var/lib/x-nix/media", "github:owner/fleet", "freya", "iso", "freya-iso-1");
-    expect(command).toContain("--out-link /var/lib/x-nix/media/freya-iso-1");
-    expect(command).toContain("isoImage");
+    const operation = media_operation(settings(), "/var/lib/x-nix/media", "github:owner/fleet", "freya", "iso", "freya-iso-1");
+    expect(operation.link).toBe("/var/lib/x-nix/media/freya-iso-1");
+    expect(operation.expression).toContain("isoImage");
   });
 });
 
@@ -281,7 +287,7 @@ describe("a media build", () => {
     writeFileSync(join(result, "iso", "nixos.iso"), "iso bytes");
     symlinkSync("/etc/passwd", join(result, "iso", "outside"));
     const outcome = await harness.provisioner.build_media({ owner: "freya", flake: "/srv/fleet", configuration: "freya", format: "iso" });
-    const run = harness.agent.last_run("--out-link")!;
+    const run = harness.agent.last_run('"kind":"media"')!;
     harness.agent.end(run, `building\n${media_mark} ${result}\n`, 0);
     await harness.provisioner.cycle();
 
@@ -348,7 +354,7 @@ describe("/api/provisioning", () => {
     mkdirSync(result);
     writeFileSync(join(result, "netboot.ipxe"), "#!ipxe\n");
     const outcome = await harness.provisioner.build_media({ owner: "freya", flake: "/srv/fleet", configuration: "freya", format: "netboot" });
-    harness.agent.end(harness.agent.last_run("--out-link")!, `${media_mark} ${result}\n`, 0);
+    harness.agent.end(harness.agent.last_run('"kind":"media"')!, `${media_mark} ${result}\n`, 0);
     await harness.provisioner.cycle();
     const password = "correct horse battery staple";
     app = await build_app({

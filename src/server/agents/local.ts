@@ -1,9 +1,10 @@
-// The agent built into the server for its own machine, running commands and long runs itself.
+// The agent built into the server for its own machine, performing operations and long runs itself.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { run_command } from "../../agent/commands.ts";
 import { LongRunError, LongRuns, type LongRunOptions } from "../../agent/long_runs.ts";
+import { run_operation } from "../../agent/run.ts";
+import type { Operation } from "../../shared/operations.ts";
 import { AgentError, type Agent, type LongRun, type LongRunPoll, type RunResult } from "./agent.ts";
 
 // ── Local agent ──────────────────────────────────────────────────────────────
@@ -16,12 +17,12 @@ export class LocalAgent implements Agent {
     this.long_runs = new LongRuns(state_directory, options);
   }
 
-  run(command: string, timeout_in_seconds: number): Promise<RunResult> {
-    return run_command(command, { timeout_in_seconds });
+  run(operation: Operation, timeout_in_seconds: number): Promise<RunResult> {
+    return run_operation(operation, { timeout_in_seconds });
   }
 
-  async start(run_id: string, command: string, stdin: string | null = null): Promise<LongRun> {
-    return as_agent_error(() => this.long_runs.start(run_id, command, stdin));
+  async start(run_id: string, operation: Operation, stdin: string | null = null): Promise<LongRun> {
+    return as_agent_error(() => this.long_runs.start(run_id, operation, stdin));
   }
 
   async poll(run_id: string, offset: number): Promise<LongRunPoll> {

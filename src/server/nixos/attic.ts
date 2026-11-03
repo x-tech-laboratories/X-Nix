@@ -1,6 +1,6 @@
-// The scripts a cache runs on its building host, and how their reports become rows.
+// The operations a cache runs on its building host (see agent/operations/cache.ts), and how their reports become rows.
 //
-// One check script evaluates every tracked target from the flake, checks whether that store path is in the local store,
+// A check evaluates every tracked target from the flake, checks whether that store path is in the local store,
 // and asks the cache which of the closure's own paths it lacks. Paths signed by an upstream cache are left out, since
 // Attic never stores them. A target named in `drop_pushed` is kept only in the cache: once a check finds it fully pushed,
 // its closure's path list is written beside its build root as `<link>.closure` and the root is removed, so garbage
@@ -12,12 +12,18 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { worse, type CacheSettings, type Status } from "../config.ts";
-import { shell_quote } from "./commands.ts";
+import {
+  flake_report_name, nix_string, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation, type CachePushOperation,
+  type CacheTarget, type CacheSettings as CacheSpec, type Operation,
+} from "../../shared/operations.ts";
+import { timed } from "./commands.ts";
 import { local_path } from "./flake.ts";
+
+export { report_mark } from "../../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-// What a script reported about one target, by key.
+// What an operation reported about one target, by key.
 export interface TargetFacts {
   target?: string;
   built?: string;
@@ -57,12 +63,6 @@ export interface TargetRow {
   eval_error: string | null;
 }
 
-// Starts every line a script reports on, so a build's own output is never read as a report.
-export const report_mark = "@@x-nix-cache";
-
-// The name the flake's metadata is reported under, never a target's.
-const flake_name = "@flake";
-
 // ── Targets ──────────────────────────────────────────────────────────────────
 
 // Every tracked name and installable, configurations first.
@@ -79,239 +79,60 @@ export function build_link(settings: CacheSettings, name: string): string | null
   return `${settings.build_root_dir.replace(/\/+$/, "")}/${settings.build_links[name] ?? `${settings.id}-${name}`}`;
 }
 
-// The build root and closure list of a target kept only in the cache, else null.
-function kept_root(settings: CacheSettings, name: string): [link: string, list: string] | null {
+// One target as an operation names it: its installable, its attribute, and its build root and closure list.
+function target_of(settings: CacheSettings, name: string): CacheTarget {
+  const index = settings.configurations.indexOf(name);
+  const attribute = index !== -1 ? `nixosConfigurations.${nix_string(name)}.config.system.build.toplevel` : settings.installables[name];
   const link = build_link(settings, name);
-  return link === null || !settings.drop_pushed.includes(name) ? null : [link, `${link}.closure`];
+  // A target named in drop_pushed is kept only in the cache once pushed, judged by the closure list beside its root.
+  const kept = link !== null && settings.drop_pushed.includes(name);
+  return { name, installable: new Map(targets(settings)).get(name)!, attribute, link, list: kept ? `${link}.closure` : null };
 }
 
-function nix(settings: CacheSettings): string {
-  return [settings.nix_bin, ...settings.nix_args.map(shell_quote)].join(" ");
+function spec(settings: CacheSettings): CacheSpec {
+  return {
+    nix: [settings.nix_bin, ...settings.nix_args],
+    flake: settings.flake,
+    cache_url: settings.cache_url,
+    upstream_keys: settings.upstream_keys,
+    // A remote ref is only seen freshly with --refresh.
+    refresh: local_path(settings.flake) === null,
+    build_root_dir: settings.build_root_dir,
+    build_args: settings.build_args,
+    push_command: settings.push_command,
+  };
 }
 
-// A remote ref is only seen freshly with --refresh.
-function remote(settings: CacheSettings): boolean {
-  return local_path(settings.flake) === null;
-}
+// ── Operations ───────────────────────────────────────────────────────────────
 
-// ── Scripts ──────────────────────────────────────────────────────────────────
-
-// `report` prints one fact about $name; `check` evaluates a target, then `inspect` reads the closure at $out, using $link
-// and $list, the target's build root and closure list, both empty unless it is kept only in the cache.
-function functions(settings: CacheSettings): string {
-  const nix_command = nix(settings);
-  // nix pads the path column with spaces and then a tab, so the widest path has only the tab before its signatures.
-  const keys = settings.upstream_keys.map((key) => `${key}:`).join(" ");
-  const skip_upstream = `BEGIN { n = split("${keys}", up, " ") } { for (i = 2; i <= NF; i++) for (k = 1; k <= n; k++) if (index($i, up[k]) == 1) next; print $1 }`;
-  const own_paths = settings.upstream_keys.length > 0
-    ? `${nix_command} path-info -r --sigs "$out" | awk ${shell_quote(skip_upstream)}`
-    : `${nix_command} path-info -r "$out"`;
-  return [
-    `report() { printf "${report_mark}\\t%s\\t%s\\t%s\\n" "$name" "$1" "$(printf "%s" "$2" | tr "\\t\\n" "  ")"; }`,
-    "check() {",
-    "  name=$1 link=$3 list=$4",
-    // nix's stderr reaches the run's output as it evaluates, and is kept for the error report.
-    `  out=$( { { ${nix_command} eval --raw --no-write-lock-file $refresh "$2"; echo $? > "$t/rc"; } 2>&1 1>&3 3>&- | tee "$t/err" >&2; } 3>&1 )`,
-    '  if [ "$(cat "$t/rc")" != 0 ]; then',
-    '    report error "$(tail -c 400 "$t/err")"',
-    "    return",
-    "  fi",
-    "  refresh=",
-    '  report target "$out"',
-    "  inspect",
-    "}",
-    "inspect() {",
-    `  if ${nix_command} path-info "$out" >/dev/null 2>&1; then`,
-    "    report built 1",
-    `    ${own_paths} > "$t/own"`,
-    // A target dropped from the store is judged by the closure list written when it was dropped.
-    '  elif [ -n "$list" ] && [ "$(head -n 1 "$list" 2>/dev/null)" = "$out" ]; then',
-    "    report built 1",
-    "    report local 0",
-    '    tail -n +2 "$list" > "$t/own"',
-    "  else",
-    "    report built 0",
-    '    echo "$out" > "$t/own"',
-    "  fi",
-    '  report own "$(wc -l < "$t/own" | tr -d " ")"',
-    // nix remembers a path the cache lacked for an hour, so one checked before its push would read as missing long after.
-    `  json=$(${nix_command} path-info --stdin --json --option narinfo-cache-negative-ttl 0 --store ${shell_quote(settings.cache_url)} < "$t/own" 2>"$t/err")`,
-    '  if [ -z "$json" ]; then',
-    '    report cache_error "$(tail -c 400 "$t/err")"',
-    "    return",
-    "  fi",
-    `  printf "%s\\n" "$json" | grep -o '"/nix/store/[^"]*":null' | cut -d'"' -f2 > "$t/missing"`,
-    '  while read -r path; do report missing "$path"; done < "$t/missing"',
-    // Only a root still pointing at this closure is dropped, and its list is in place before the root goes.
-    '  if [ ! -s "$t/missing" ] && [ -n "$link" ] && [ "$(readlink "$link")" = "$out" ]; then',
-    '    { echo "$out"; cat "$t/own"; } > "$list.tmp" && mv "$list.tmp" "$list" && rm -f "$link" && report dropped 1',
-    "  fi",
-    "}",
-  ].join("\n");
-}
-
-const preamble = ['t=$(mktemp -d)', `trap 'rm -rf "$t"' EXIT`];
-
-// The check of every target, then the flake's metadata, killed once it runs past `timeout`.
-export function check_command(settings: CacheSettings): string {
-  return `timeout ${settings.timeout} sh -c ${shell_quote(check_script(settings))}`;
-}
-
-export function check_script(settings: CacheSettings): string {
-  const lines = [
-    ...preamble,
-    // Only the first evaluation refetches a remote flake, so every target is judged at the same revision.
-    `refresh=${remote(settings) ? "--refresh" : ""}`,
-    functions(settings),
-  ];
-  for (const [name, installable] of targets(settings)) {
-    lines.push(["check", name, installable, ...(kept_root(settings, name) ?? [])].map(shell_quote).join(" "));
-  }
-  lines.push(`name=${shell_quote(flake_name)}; report metadata "$(${nix(settings)} flake metadata --json --no-write-lock-file ${shell_quote(settings.flake)} 2>/dev/null)"`);
-  return lines.join("\n");
+// The check of every target, then the flake's metadata, stopped once it runs past `timeout`.
+export function check_operation(settings: CacheSettings): Operation {
+  const check: CacheCheckOperation = { kind: "cache_check", cache: spec(settings), targets: targets(settings).map(([name]) => target_of(settings, name)) };
+  return timed(settings.timeout, check);
 }
 
 // Builds one target from the flake's latest revision, pushes what it built when there is a push_command, then checks it.
-export function build_command(settings: CacheSettings, name: string): string {
-  return `sh -c ${shell_quote(build_script(settings, name))}`;
-}
-
-export function build_script(settings: CacheSettings, name: string): string {
-  const installable = new Map(targets(settings)).get(name)!;
-  const args = [...settings.build_args, ...(remote(settings) ? ["--refresh"] : [])].map(shell_quote).join(" ");
-  const link = build_link(settings, name);
-  // One fixed link per target, so each build replaces the root the last one held.
-  const build = link === null
-    ? `${nix(settings)} build --print-out-paths --no-link ${args} ${shell_quote(installable)}`
-    : `mkdir -p ${shell_quote(settings.build_root_dir!)} && ${nix(settings)} build --print-out-paths --out-link ${shell_quote(link)} ${args} ${shell_quote(installable)}`;
-  const lines = [...preamble, functions(settings), target_line(settings, name), `out=$(${build})`, "rc=$?", 'out=$(printf "%s\\n" "$out" | tail -n 1)'];
-  // Pushed here rather than left to a store watcher, so the check that follows never races the upload.
-  if (settings.push_command !== null) lines.push(`if [ "$rc" = 0 ] && [ -n "$out" ]; then ${settings.push_command} "$out" || rc=$?; fi`);
-  lines.push('if [ -n "$out" ]; then report target "$out"; inspect; fi', "exit $rc");
-  return lines.join("\n");
+export function build_operation(settings: CacheSettings, name: string): CacheBuildOperation {
+  return { kind: "cache_build", cache: spec(settings), target: target_of(settings, name) };
 }
 
 // Pushes one target's store path, then checks it again; the push's status is the run's.
-export function push_command(settings: CacheSettings, name: string, path: string): string {
-  return `sh -c ${shell_quote(push_script(settings, name, path))}`;
+export function push_operation(settings: CacheSettings, name: string, path: string): CachePushOperation {
+  return { kind: "cache_push", cache: spec(settings), target: target_of(settings, name), path };
 }
 
-export function push_script(settings: CacheSettings, name: string, path: string): string {
-  const lines = [
-    ...preamble, functions(settings), target_line(settings, name), `out=${shell_quote(path)}`,
-    `${settings.push_command} "$out"`, "rc=$?", 'report target "$out"', "inspect", "exit $rc",
-  ];
-  return lines.join("\n");
-}
-
-// ── Build all ────────────────────────────────────────────────────────────────
-
-// Quotes text as a Nix string.
-function nix_string(text: string): string {
-  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("${", "\\${")}"`;
-}
-
-// One attribute set of every target's derivation, keyed t0, t1 and so on, so no name needs quoting in the shell.
+// One attribute set of every target's derivation, keyed t0, t1 and so on in the order of the targets.
 export function build_all_expression(settings: CacheSettings): string {
-  const attributes = [
-    ...settings.configurations.map((name) => `nixosConfigurations.${nix_string(name)}.config.system.build.toplevel`),
-    ...Object.values(settings.installables),
-  ];
-  const entries = attributes.map((attribute, index) => `t${index} = flake.${attribute};`).join(" ");
+  const entries = targets(settings).map(([name], index) => `t${index} = flake.${target_of(settings, name).attribute};`).join(" ");
   return `let flake = builtins.getFlake ${nix_string(settings.flake)}; in { ${entries} }`;
 }
 
 // Evaluates and builds every target, then checks each, failing when any target did not build.
-export function build_all_command(settings: CacheSettings): string {
-  return `sh -c ${shell_quote(build_all_script(settings))}`;
-}
-
-export function build_all_script(settings: CacheSettings): string {
-  const tracked = targets(settings);
-  const eval_jobs = shell_quote(settings.eval_jobs_bin);
-  const missing_tool = `${settings.eval_jobs_bin} is not installed on this host; Build all needs it on the PATH of services.x-nix or services.x-nix-agent`;
-  // A remote flake is fetched afresh, as every other job does with --refresh.
-  const fresh = remote(settings) ? " --option tarball-ttl 0" : "";
-  const evaluate = `${eval_jobs} --impure --workers ${settings.eval_workers} --gc-roots-dir "$t/roots"${fresh} --expr ${shell_quote(build_all_expression(settings))}`;
-  const args = settings.build_args.map(shell_quote).join(" ");
-  const builds = tracked.map(([name], index) => {
-    const link = build_link(settings, name);
-    const build = link === null
-      ? `${nix(settings)} build --no-link ${args} "$drv^*"`
-      : `mkdir -p ${shell_quote(settings.build_root_dir!)} && ${nix(settings)} build --out-link ${shell_quote(link)} ${args} "$drv^*"`;
-    return `    t${index}) ${build} ;;`;
-  });
-  const names = tracked.map(([name], index) => `    t${index}) printf %s ${shell_quote(name)} ;;`);
-  const lines = [
-    ...preamble,
-    functions(settings),
-    `if ! command -v ${eval_jobs} >/dev/null 2>&1; then echo ${shell_quote(missing_tool)} >&2; exit 127; fi`,
-    'mkdir "$t/roots"',
-    "name_of() {",
-    '  case "$1" in',
-    ...names,
-    "  esac",
-    "}",
-    // Each build runs in the background and leaves its outcome and duration in $t/<key>.result for the report.
-    "build_one() {",
-    "  key=$1 drv=$2 out=$3 started=$(date +%s)",
-    '  case "$key" in',
-    ...builds,
-    "  esac",
-    "  if [ $? = 0 ]; then word=ok; else word=failed; fi",
-    ...(settings.push_command === null ? [] : [`  if [ "$word" = ok ]; then ${settings.push_command} "$out" || word=push_failed; fi`]),
-    '  echo "$word $(( $(date +%s) - started ))" > "$t/$key.result"',
-    '  echo "$(name_of "$key"): $word"',
-    "}",
-    // nix-eval-jobs prints one JSON line per target as its evaluation ends, and that target's build starts at once.
-    `{ { ${evaluate}; echo $? > "$t/eval_rc"; } 2>&1 1>&3 3>&- | tee "$t/eval_err" >&2; } 3>&1 | {`,
-    "  while IFS= read -r line; do",
-    `    key=$(printf '%s\\n' "$line" | sed -n 's/.*"attr":"\\(t[0-9]*\\)".*/\\1/p')`,
-    '    [ -n "$key" ] || continue',
-    `    if printf '%s\\n' "$line" | grep -q '"error":'; then`,
-    `      printf '%s\\n' "$line" | sed -n 's/.*"error":"\\(.*\\)".*/\\1/p' | sed 's/\\\\n/ /g' | tail -c 400 > "$t/$key.error"`,
-    '      echo "$(name_of "$key"): evaluation failed"',
-    "      continue",
-    "    fi",
-    `    drv=$(printf '%s\\n' "$line" | sed -n 's/.*"drvPath":"\\([^"]*\\)".*/\\1/p')`,
-    `    out=$(printf '%s\\n' "$line" | sed -n 's/.*"out":"\\(\\/nix\\/store\\/[^"]*\\)".*/\\1/p')`,
-    '    echo "$out" > "$t/$key.out"',
-    '    echo "$(name_of "$key"): evaluated, building $out"',
-    '    build_one "$key" "$drv" "$out" </dev/null &',
-    "  done",
-    "  wait",
-    "}",
-    "rc=0",
-    // Each target is reported in turn, as inspect shares its scratch files.
-    "finish() {",
-    "  key=$1",
-    '  if [ -f "$t/$key.error" ]; then',
-    '    report error "$(cat "$t/$key.error")"',
-    "    report build eval_failed",
-    "    rc=1",
-    '  elif [ -f "$t/$key.result" ]; then',
-    '    read -r word seconds < "$t/$key.result"',
-    '    report build "$word"',
-    '    report build_seconds "$seconds"',
-    '    [ "$word" = ok ] || rc=1',
-    '    out=$(cat "$t/$key.out")',
-    '    report target "$out"',
-    "    inspect",
-    "  else",
-    '    report error "nix-eval-jobs never evaluated it: $(tail -c 300 "$t/eval_err")"',
-    "    report build eval_failed",
-    "    rc=1",
-    "  fi",
-    "}",
-  ];
-  tracked.forEach(([name], index) => lines.push(`${target_line(settings, name)}; finish t${index}`));
-  lines.push('[ "$(cat "$t/eval_rc" 2>/dev/null)" = 0 ] || rc=1', "exit $rc");
-  return lines.join("\n");
-}
-
-function target_line(settings: CacheSettings, name: string): string {
-  const [link, list] = kept_root(settings, name) ?? ["", ""];
-  return `name=${shell_quote(name)} link=${shell_quote(link)} list=${shell_quote(list)}`;
+export function build_all_operation(settings: CacheSettings): CacheBuildAllOperation {
+  return {
+    kind: "cache_build_all", cache: spec(settings), targets: targets(settings).map(([name]) => target_of(settings, name)),
+    eval_jobs: settings.eval_jobs_bin, eval_workers: settings.eval_workers, expression: build_all_expression(settings),
+  };
 }
 
 // ── Reports ──────────────────────────────────────────────────────────────────
@@ -323,7 +144,7 @@ export function parse_report(output: string): Report {
     if (parts[0] !== report_mark || parts.length < 4) continue;
     const [, name, key] = parts;
     const value = parts.slice(3).join("\t");
-    if (name === flake_name) {
+    if (name === flake_report_name) {
       report.metadata = value;
       continue;
     }

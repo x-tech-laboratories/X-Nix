@@ -2,7 +2,7 @@
 //
 // Every `interval` its agent reads the Nix store and its garbage collection, unless `gc` is false, and the boot loader's
 // entries, unless `boot` is false. Collect Garbage runs the same collection the timer does as a long run, and Reboot and
-// Set next boot run as commands, waking a host that sleeps first. Its jobs and events are kept under `host:<name>`, so
+// Set next boot run at once rather than as long runs, waking a host that sleeps first. Its jobs and events are kept under `host:<name>`, so
 // a host may share its name with a deployment.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -12,14 +12,15 @@ import { randomBytes } from "node:crypto";
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { level_of_status, type HostSettings, type Status } from "./config.ts";
 import type { Message } from "./deployment.ts";
-import { boot_script, next_boot_command, parse_boot, type Boot } from "./nixos/boot.ts";
-import { sudo } from "./nixos/commands.ts";
+import { boot_probe_operation, next_boot_operation, parse_boot, type Boot } from "./nixos/boot.ts";
+import { reboot_operation } from "./nixos/commands.ts";
 import {
-  assess_store, collect_command, finished_collection, fold_collection, gc_probe_script, observed_collection, parse_gc_probe, unread_store,
+  assess_store, collect_operation, finished_collection, fold_collection, observed_collection, parse_gc_probe, store_probe_operation, unread_store,
   type Collection, type StoreReading,
 } from "./nixos/garbage.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, Store } from "./store.ts";
+import type { Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -141,12 +142,12 @@ export class Host {
     const agent = this.agents.get(this.name);
     const gc = this.settings.gc;
     const [gc_probe, boot_probe] = await Promise.all([
-      gc === null ? null : agent.run(gc_probe_script(gc), probe_timeout_in_seconds),
-      this.settings.boot ? agent.run(boot_script(this.settings.require_sudo), probe_timeout_in_seconds) : null,
+      gc === null ? null : agent.run(store_probe_operation(gc), probe_timeout_in_seconds),
+      this.settings.boot ? agent.run(boot_probe_operation(this.settings.require_sudo), probe_timeout_in_seconds) : null,
     ]);
     const store = gc_probe === null ? null : this.read_store(gc_probe);
     // A boot read that reached nothing keeps the entries last seen.
-    const boot = boot_probe === null ? null : boot_probe.stdout.trim() === "" ? this.reading()?.boot ?? null : parse_boot(boot_probe.stdout);
+    const boot = boot_probe === null ? null : parse_boot(boot_probe.stdout) ?? this.reading()?.boot ?? null;
     this.save_reading({ status: store?.status ?? "online", checked_epoch: this.now(), store, boot });
   }
 
@@ -159,9 +160,9 @@ export class Host {
       checked_epoch: this.now(),
       messages: [{ level: "warning", text }],
     });
-    if (result.exit_code !== 0 && result.stdout.trim() === "") return unavailable(`Could not read the Nix store: ${clip(result.stderr || result.stdout, 200)}`);
     const fields = parse_gc_probe(result.stdout);
-    if (fields.df === "") return unavailable(`${gc.store} is unreadable; is Nix installed on this host?`);
+    if (fields === null) return unavailable(`Could not read the Nix store: ${clip(result.stderr || result.stdout, 200) || `status ${result.exit_code}`}`);
+    if (fields.size_bytes === null) return unavailable(`${gc.store} is unreadable; is Nix installed on this host?`);
     const state = this.state();
     state.last_collection = fold_collection(state.last_collection, observed_collection(fields));
     this.store.save_evaluation(this.id, state);
@@ -191,11 +192,12 @@ export class Host {
   }
 
   private async collect(trigger: string): Promise<HostActionOutcome> {
-    const command = collect_command(this.settings.gc!, this.settings.require_sudo);
+    const operation = collect_operation(this.settings.gc!, this.settings.require_sudo);
+    const command = JSON.stringify(operation);
     const run_id = `${this.settings.id}-collect-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
-      ({ waking } = await start_run(this.agents, this.name, run_id, command));
+      ({ waking } = await start_run(this.agents, this.name, run_id, operation));
     } catch (error) {
       const message = error instanceof AgentError ? error.message : String(error);
       const job_id = this.store.create_job({ deployment_id: this.id, kind: "collect", command, agent: this.name, run_id: null, trigger, started_epoch: this.now() });
@@ -216,8 +218,7 @@ export class Host {
 
   // A reboot runs as a command rather than a job that would die with the host.
   private async reboot(trigger: string): Promise<HostActionOutcome> {
-    const command = `${sudo(this.settings)}systemctl reboot`;
-    return this.run_command("reboot", command, trigger, "Reboot requested", "Could not reboot");
+    return this.run_at_once("reboot", reboot_operation(this.settings), trigger, "Reboot requested", "Could not reboot");
   }
 
   // Sets the entry the host boots into once, then reboots when asked; a command rather than a job, as a reboot ends it.
@@ -228,8 +229,8 @@ export class Host {
       const reading = this.reading()!;
       const boot = reading.boot!;
       const title = boot.entries.find((candidate) => candidate.id === entry)!.title;
-      const command = next_boot_command(boot, entry, reboot, this.settings.require_sudo);
-      const outcome = await this.run_command("next-boot", command, "manual", `Next boot set to ${title}${reboot ? "; rebooting" : ""}`, `Could not set the next boot to ${title}`);
+      const operation = next_boot_operation(boot, entry, reboot, this.settings.require_sudo);
+      const outcome = await this.run_at_once("next-boot", operation, "manual", `Next boot set to ${title}${reboot ? "; rebooting" : ""}`, `Could not set the next boot to ${title}`);
       if (outcome.ok) {
         // Shown at once, rather than after the next cycle reads it back.
         this.store.save_reading(this.id, { ...reading, boot: { ...boot, next: entry, entries: boot.entries.map((candidate) => ({ ...candidate, next: candidate.id === entry })) } });
@@ -238,10 +239,10 @@ export class Host {
     });
   }
 
-  // Runs a command on the woken host and keeps it in the history as a finished job.
-  private async run_command(kind: "reboot" | "next-boot", command: string, trigger: string, done: string, failed: string): Promise<HostActionOutcome> {
-    const result = await (await this.agents.awake(this.name)).run(command, command_timeout_in_seconds);
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.name, run_id: null, trigger, started_epoch: this.now() });
+  // Runs an operation on the woken host and keeps it in the history as a finished job.
+  private async run_at_once(kind: "reboot" | "next-boot", operation: Operation, trigger: string, done: string, failed: string): Promise<HostActionOutcome> {
+    const result = await (await this.agents.awake(this.name)).run(operation, command_timeout_in_seconds);
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.name, run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     const ok = result.exit_code === 0;
     this.store.finish_job(job_id, ok ? "succeeded" : "failed", result.exit_code, ok ? null : `Exited with status ${result.exit_code}`, this.now());

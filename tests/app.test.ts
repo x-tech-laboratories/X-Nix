@@ -9,7 +9,7 @@ import { cache_settings, flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
 import type { Host } from "../src/server/host.ts";
 import { Poller } from "../src/server/poller.ts";
-import { clock, FakeAgent, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
+import { clock, FakeAgent, generations_result, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -214,7 +214,10 @@ describe("/api/hosts", () => {
 
   it("sets the next boot to a known entry and refuses others", async () => {
     const harness = make_deployment();
-    harness.agent.boot_probe_result = result(0, `loader=efi\n@@entries\nBootOrder: 0001\nBoot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n`);
+    harness.agent.boot_probe_result = result(0, JSON.stringify({
+      loader: "efi", default: "0001", next: null,
+      entries: [{ id: "0001", title: "Linux Boot Manager", default: true, next: false }, { id: "0003", title: "Windows Boot Manager", default: false, next: false }],
+    }));
     await harness.host.cycle();
     const { server, inject } = await start_app(harness, [], [], [harness.host]);
     const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } })).headers["set-cookie"]).split(";")[0];
@@ -222,7 +225,7 @@ describe("/api/hosts", () => {
 
     expect((await inject("GET", "/api/hosts/host")).json<HostView>().next_boot_refusal).toBeNull();
     expect((await post({ entry: "0003" })).statusCode).toBe(200);
-    expect(harness.agent.commands).toContain("sudo -n efibootmgr --bootnext 0003");
+    expect(harness.agent.ran("sudo -n efibootmgr --bootnext 0003")).toBe(true);
     expect((await post({ entry: "9999" })).statusCode).toBe(409);
     expect((await post({})).statusCode).toBe(400);
   });
@@ -231,11 +234,14 @@ describe("/api/hosts", () => {
 // ── Caches ───────────────────────────────────────────────────────────────────
 
 describe("rollback, generations and closures", () => {
-  const generations = result(0, "current\t/nix/store/b-system\nprofile\tsystem-2-link\ngeneration\tsystem-1-link\t1\t/nix/store/a-system\t\ngeneration\tsystem-2-link\t2\t/nix/store/b-system\t\n");
+  const generations = generations_result([
+    { generation: 1, path: "/nix/store/a-system" },
+    { generation: 2, path: "/nix/store/b-system", current: true, profile: true },
+  ]);
 
   it("lists generations and rolls back to one, refusing a malformed request", async () => {
     const harness = make_deployment();
-    harness.agent.answers.push(["profiles/system-*-link", generations]);
+    harness.agent.answers.push(['"kind":"generations"', generations]);
     const { inject } = await start_app(harness);
 
     const listed = (await inject("GET", "/api/deployments/host-deploy/generations")).json<{ generations: { generation: number }[] }>();

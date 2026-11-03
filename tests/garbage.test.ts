@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { AgentError } from "../src/server/agents/agent.ts";
 import { ConfigError, host_settings } from "../src/server/config.ts";
 import { format_bytes } from "../src/server/nixos/garbage.ts";
-import { clock, make_host, result, type HostHarness as Harness } from "./fake_agent.ts";
+import { operation_of } from "../src/shared/operations.ts";
+import { clock, make_host, result, store_facts, type HostHarness as Harness } from "./fake_agent.ts";
 
 const gib = 2 ** 30;
 const day = 86400;
@@ -37,7 +38,7 @@ const two_profiles: GcProbeOptions["profiles"] = [
   ["/nix/var/nix/profiles/per-user/root/profile", 29, 11],
 ];
 
-// What the store's probe prints on a NixOS host.
+// What the store's read prints on a NixOS host.
 function gc_probe(options: GcProbeOptions = {}) {
   const size = options.size ?? 200 * gib;
   const used = options.used ?? 80 * gib;
@@ -45,25 +46,29 @@ function gc_probe(options: GcProbeOptions = {}) {
   const summary_at = options.summary_at ?? last_gc;
   const freed = options.freed === undefined ? "44.4 GiB" : options.freed;
   const outcome = options.outcome === undefined ? "finished" : options.outcome;
-  const lines = [
-    "hostname=host",
-    `df=${size} ${used} ${size - used} /nix/store`,
-    "paths=111121",
-    "roots=118",
-    `svc_state=${options.svc_state ?? "inactive"}`,
-    `svc_result=${options.svc_result ?? "success"}`,
-    "svc_exit=",
-    `timer_load=${options.timer_load ?? "loaded"}`,
-    `timer_state=${options.timer_state ?? "active"}`,
-    `timer_next=@${options.timer_next ?? clock.now + 3 * day}`,
-    freed === null ? "summary=" : `summary=${summary_at}.204758 host nix-gc-start[2166397]: ${options.deleted ?? 21482} store paths deleted, ${freed} freed`,
-    outcome === null ? "outcome=" : `outcome=${last_gc}.225681 host ${outcomes[outcome]}`,
-    options.error ? `error=${options.error_at ?? last_gc}.100000 host nix-gc-start[2166397]: ${options.error}` : "error=",
-  ];
-  for (const [path, generation, count, oldest] of options.profiles ?? [["/nix/var/nix/profiles/system", 236, 59]]) {
-    lines.push(`profile=${path}|${generation}|${count}|${oldest ?? clock.now - 30 * day}`);
-  }
-  return result(0, `${lines.join("\n")}\n`);
+  const profiles = options.profiles ?? [["/nix/var/nix/profiles/system", 236, 59]];
+  return store_facts({
+    size_bytes: size,
+    used_bytes: used,
+    avail_bytes: size - used,
+    paths: 111121,
+    roots: 118,
+    svc_state: options.svc_state ?? "inactive",
+    svc_result: options.svc_result ?? "success",
+    timer_load: options.timer_load ?? "loaded",
+    timer_state: options.timer_state ?? "active",
+    timer_next: `@${options.timer_next ?? clock.now + 3 * day}`,
+    summary: freed === null ? "" : `${summary_at}.204758 host nix-gc-start[2166397]: ${options.deleted ?? 21482} store paths deleted, ${freed} freed`,
+    outcome: outcome === null ? "" : `${last_gc}.225681 host ${outcomes[outcome]}`,
+    error: options.error ? `${options.error_at ?? last_gc}.100000 host nix-gc-start[2166397]: ${options.error}` : "",
+    profiles: profiles.map(([path, generation, count, oldest]) => ({ path, generation, count, oldest_epoch: oldest ?? clock.now - 30 * day })),
+  });
+}
+
+// The programs a job's operation runs, one argument list each.
+function argv_of(command: string | undefined): string[][] {
+  const operation = command === undefined ? null : operation_of(command);
+  return operation?.kind === "programs" ? operation.steps.map((step) => step.argv) : [];
 }
 
 function watched(gc: Record<string, unknown> = {}, values: Record<string, unknown> = {}): Harness {
@@ -301,7 +306,7 @@ describe("store", () => {
 
   it("is unavailable when the store is unreadable or the host does not answer", async () => {
     const unreadable = watched();
-    await read(unreadable, result(0, "hostname=host\ndf=\n"));
+    await read(unreadable, store_facts());
     expect(store_of(unreadable).status).toBe("unavailable");
 
     const silent = watched();
@@ -314,7 +319,7 @@ describe("store", () => {
     const harness = make_host({ gc: false });
     await read(harness);
     expect(harness.host.reading()?.store).toBeNull();
-    expect(harness.agent.commands.some((command) => command.includes("journalctl"))).toBe(false);
+    expect(harness.agent.operations.some((operation) => operation.kind === "store_probe")).toBe(false);
     expect(harness.host.action_refusal("collect")).toContain("gc is off");
   });
 
@@ -365,20 +370,20 @@ describe("collect garbage", () => {
     const harness = watched({ gc_args: ["--delete-older-than", "14d"] });
     expect((await harness.host.act("collect")).message).toBe("Collection started");
     const job = harness.host.running_job()!;
-    expect([job.kind, job.command, job.agent]).toEqual(["collect", "sudo -n nix-collect-garbage --delete-older-than 14d", "host"]);
+    expect([job.kind, argv_of(job.command), job.agent]).toEqual(["collect", [["sudo", "-n", "nix-collect-garbage", "--delete-older-than", "14d"]], "host"]);
   });
 
   it("runs without sudo when require_sudo is off", async () => {
     const harness = watched({}, { require_sudo: false });
     await harness.host.act("collect");
-    expect(harness.host.running_job()?.command).toBe("nix-collect-garbage --delete-older-than 7d");
+    expect(argv_of(harness.host.running_job()?.command)).toEqual([["nix-collect-garbage", "--delete-older-than", "7d"]]);
   });
 
   it("keeps a collection that could not start in the history", async () => {
     const harness = watched();
-    harness.agent.start_error = new AgentError("Could not start sh.");
+    harness.agent.start_error = new AgentError("Could not start the runner.");
     const outcome = await harness.host.act("collect");
-    expect(outcome).toMatchObject({ ok: false, message: "Could not start the collection: Could not start sh." });
+    expect(outcome).toMatchObject({ ok: false, message: "Could not start the collection: Could not start the runner." });
     expect(harness.host.running_job()).toBeNull();
   });
 

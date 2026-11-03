@@ -1,13 +1,12 @@
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import type { RunProgram } from "../src/agent/programs.ts";
+import { run_operation } from "../src/agent/run.ts";
 
 import { deployment_settings } from "../src/server/config.ts";
 import { empty_progress, read_build_log, summarise } from "../src/server/nixos/build_log.ts";
-import { diff_command, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
-import { build_command } from "../src/server/nixos/commands.ts";
+import { diff_operation, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
+import { build_operation } from "../src/server/nixos/commands.ts";
 import { current_closure, target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -16,15 +15,13 @@ function settings(values: Record<string, unknown> = {}) {
   return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...values });
 }
 
-// A folder of stand-in programs, each a shell script.
-function fake_programs(programs: Record<string, string>): string {
-  const folder = join(mkdtempSync(join(tmpdir(), "x-nix-test-")), "bin");
-  mkdirSync(folder);
-  for (const [name, script] of Object.entries(programs)) {
-    writeFileSync(join(folder, name), `#!/bin/sh\n${script}\n`);
-    chmodSync(join(folder, name), 0o755);
-  }
-  return folder;
+// Stand-in programs answering by their arguments, printing what the operation shows.
+function fake_programs(answer: (argv: string[]) => string): RunProgram {
+  return async (context, argv, options = {}) => {
+    const stdout = answer(argv);
+    if ((options.stdout ?? "show") === "show" || options.stdout === "both") context.out.write(stdout);
+    return { exit_code: 0, stdout, stderr: "" };
+  };
 }
 
 const sizes = JSON.stringify({ [current_closure]: { closureSize: 4_000_000_000 }, [target_closure]: { closureSize: 4_100_000_000 } });
@@ -76,14 +73,10 @@ describe("the package diff", () => {
     expect(diff.derivation_diff).toBe("- /nix/store/x.drv:\n+ /nix/store/y.drv:");
   });
 
-  it("runs nix-diff only when no package changed, and says when it is missing", () => {
-    const programs = fake_programs({
-      nix: `case "$*" in *diff-closures*) printf '' ;; *-S*) echo '${sizes}' ;; esac\nexit 0`,
-      "nix-store": "echo /nonexistent.drv",
-    });
-    const environment = { ...process.env, PATH: `${programs}:/run/current-system/sw/bin:/usr/bin:/bin` };
+  it("runs nix-diff only when no package changed, and says when it is missing", async () => {
+    const program = fake_programs((argv) => (argv[0] === "nix-store" ? "/nonexistent.drv\n" : argv.includes("-S") ? `${sizes}\n` : ""));
 
-    const run = spawnSync("sh", ["-c", diff_command(settings({ nix_bin: join(programs, "nix"), nix_args: [] }), current_closure, target_closure)], { encoding: "utf8", env: environment });
+    const run = await run_operation(diff_operation(settings({ nix_args: [] }), current_closure, target_closure), { timeout_in_seconds: 10, program });
 
     const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null);
     expect(diff.note).toMatch(/nix-diff is not installed|derivations of both closures/);
@@ -117,8 +110,8 @@ describe("live build progress", () => {
   const drv = "/nix/store/dddddddddddddddddddddddddddddddd-hello-2.12.drv";
 
   it("asks nix for its structured log only when build_progress is on", () => {
-    expect(build_command(settings(), "host")).toContain("--log-format internal-json -v");
-    expect(build_command(settings({ build_progress: false }), "host")).not.toContain("internal-json");
+    expect(build_operation(settings(), "host").args.join(" ")).toContain("--log-format internal-json -v");
+    expect(build_operation(settings({ build_progress: false }), "host").args).not.toContain("internal-json");
   });
 
   it("counts builds and downloads and turns log lines back into text, across pieces cut mid-line", () => {

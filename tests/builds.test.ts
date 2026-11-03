@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,17 +5,19 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
-import { run_command } from "../src/agent/commands.ts";
+import { run_operation } from "../src/agent/run.ts";
 import { AgentPool, type Agent } from "../src/server/agents/agent.ts";
 import { build_app } from "../src/server/app.ts";
 import { hash_password } from "../src/server/auth.ts";
-import { built_store_path, locate_script, parse_products, product_stream, products_script } from "../src/server/builds.ts";
+import { built_store_path, locate_operation, parse_products, product_stream, products_operation } from "../src/server/builds.ts";
 import { Poller } from "../src/server/poller.ts";
 import { Store } from "../src/server/store.ts";
+import type { Operation } from "../src/shared/operations.ts";
 import { FakeAgent, make_deployment, result, target_closure } from "./fake_agent.ts";
 
-function run(command: string) {
-  return spawnSync("sh", ["-c", command], { encoding: "utf8" });
+// Performs an operation here, as the agent would.
+function run(operation: Operation) {
+  return run_operation(operation, { timeout_in_seconds: 10 });
 }
 
 // A folder standing in for a built store path, holding an ISO product, a folder product and one outside it.
@@ -31,9 +32,9 @@ function fake_build(): string {
   return out;
 }
 
-// An agent that runs every command on this machine.
+// An agent that performs every operation on this machine.
 const local_agent: Agent = {
-  run: (command, timeout_in_seconds) => run_command(command, { timeout_in_seconds }),
+  run: (operation, timeout_in_seconds) => run_operation(operation, { timeout_in_seconds }),
   start: async () => { throw new Error("not used"); },
   poll: async () => { throw new Error("not used"); },
   forget: async () => {},
@@ -52,23 +53,23 @@ describe("the store path of a build", () => {
 // ── Products ─────────────────────────────────────────────────────────────────
 
 describe("products", () => {
-  it("are listed with sizes only for regular files inside the store path", () => {
+  it("are listed with sizes only for regular files inside the store path", async () => {
     const out = fake_build();
-    const products = parse_products(run(products_script(out)).stdout);
+    const products = parse_products((await run(products_operation(out))).stdout);
     expect(products.map((product) => [product.type, product.subtype, product.name, product.size_bytes])).toEqual([
       ["file", "iso", "nixos.iso", 10],
       ["doc", "manual", "iso", null],
       ["file", "secret", "secret", null],
     ]);
-    expect(parse_products(run(products_script(join(out, "missing"))).stdout)).toEqual([]);
+    expect(parse_products((await run(products_operation(join(out, "missing")))).stdout)).toEqual([]);
   });
 
-  it("are located again before a download, refusing a path outside the store path", () => {
+  it("are located again before a download, refusing a path outside the store path", async () => {
     const out = fake_build();
-    const inside = run(locate_script(out, `${out}/iso/nixos.iso`));
-    expect(inside.stdout).toBe(`10\t${out}/iso/nixos.iso\n`);
-    expect(run(locate_script(out, "/etc/hostname")).status).toBe(3);
-    expect(run(locate_script(out, `${out}/iso`)).status).toBe(4);
+    const inside = await run(locate_operation(out, `${out}/iso/nixos.iso`));
+    expect(JSON.parse(inside.stdout)).toEqual({ path: `${out}/iso/nixos.iso`, size: 10 });
+    expect((await run(locate_operation(out, "/etc/hostname"))).exit_code).toBe(3);
+    expect((await run(locate_operation(out, `${out}/iso`))).exit_code).toBe(4);
   });
 
   it("stream a file through the agent piece by piece", async () => {
@@ -89,9 +90,9 @@ describe("products", () => {
 describe("recording", () => {
   it("keeps a finished deployment build with its store path and products", async () => {
     const harness = make_deployment({ configuration: "host" });
-    harness.agent.command_result = result(0, `@@x-nix-product\tfile\tiso\t${target_closure}/iso/a.iso\t42\n`);
+    harness.agent.command_result = result(0, JSON.stringify([{ type: "file", subtype: "iso", path: `${target_closure}/iso/a.iso`, name: "a.iso", size_bytes: 42 }]));
     await harness.deployment.act("build");
-    expect(harness.agent.last_run("build --no-link --print-out-paths")).toBeDefined();
+    expect(harness.agent.last_run('"kind":"build"')).toBeDefined();
     harness.agent.end(harness.agent.last_run("build")!, `building\n${target_closure}\n`, 0);
 
     await harness.deployment.cycle();
@@ -110,7 +111,7 @@ describe("recording", () => {
     await harness.deployment.cycle();
 
     expect(harness.store.builds()[0]).toMatchObject({ succeeded: false, store_path: null, products: [] });
-    expect(harness.agent.commands.slice(commands_before).some((command) => command.includes("hydra-build-products"))).toBe(false);
+    expect(harness.agent.commands.slice(commands_before).some((command) => command.includes('"kind":"products"'))).toBe(false);
   });
 });
 
@@ -125,12 +126,14 @@ describe("/api/builds", () => {
     app = null;
   });
 
-  // An agent answering the locate script with a path and size, and each piece with base64 of its bytes.
+  // An agent answering the locate with a path and size, and each piece with base64 of its bytes.
   class ProductAgent extends FakeAgent {
-    override async run(command: string) {
-      this.commands.push(command);
-      if (command.includes("realpath")) return command.includes("outside") ? result(3, "", "It is not inside the build's store path") : result(0, `5\t${target_closure}/iso/a.iso\n`);
-      if (command.startsWith("dd ")) return result(0, Buffer.from("hello").toString("base64"));
+    override async run(operation: Operation) {
+      this.commands.push(JSON.stringify(operation));
+      if (operation.kind === "locate") {
+        return operation.path.includes("outside") ? result(3, "", "It is not inside the build's store path") : result(0, JSON.stringify({ path: `${target_closure}/iso/a.iso`, size: 5 }));
+      }
+      if (operation.kind === "piece") return result(0, Buffer.from("hello").toString("base64"));
       return result(0);
     }
   }

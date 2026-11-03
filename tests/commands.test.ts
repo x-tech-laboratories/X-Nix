@@ -1,15 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { build, cache_holds, evaluate, github_update } from "../src/agent/operations/deploy.ts";
+import type { Context, ProgramOptions, ProgramResult, RunProgram } from "../src/agent/programs.ts";
 import { ConfigError, deployment_settings, flake_settings, host_settings, parse_config } from "../src/server/config.ts";
 import {
-  build_command, cache_holds_command, eval_command, metadata_command, split_eval_output, switch_command, switch_from_cache_command, update_command,
+  build_operation, cache_holds_operation, cache_switch_steps, eval_operation, metadata_operation, post_switch_argv, rebuild_steps, split_eval_output,
+  update_operation,
 } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
+import type { BuildOperation, EvaluateOperation, GithubUpdateOperation, Operation } from "../src/shared/operations.ts";
 import { current_closure, host_values } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -23,53 +23,73 @@ function flake(values: Record<string, unknown> = {}) {
   return flake_settings({ id: "config", url: "/etc/nixos", ...values });
 }
 
-// A folder of stand-in programs, each a shell script.
-function fake_programs(programs: Record<string, string>): string {
-  const folder = join(mkdtempSync(join(tmpdir(), "x-nix-test-")), "bin");
-  mkdirSync(folder);
-  for (const [name, script] of Object.entries(programs)) {
-    writeFileSync(join(folder, name), `#!/bin/sh\n${script}\n`);
-    chmodSync(join(folder, name), 0o755);
-  }
-  return folder;
+const nix = ["nix", "--extra-experimental-features", "nix-command flakes"];
+
+// A context whose programs answer what the test says, keeping every program run and everything shown.
+function fake_context(answer: (argv: string[], options: ProgramOptions) => Partial<ProgramResult> = () => ({})) {
+  const ran: string[][] = [];
+  let output = "";
+  const sink = { write: (chunk: Buffer | string) => void (output += chunk.toString()) };
+  const shows = (use: string | undefined) => use === undefined || use === "show" || use === "both";
+  const program: RunProgram = async (context, argv, options = {}) => {
+    ran.push(argv);
+    if (options.echo && context.log) context.out.write(`$ ${argv.join(" ")}\n`);
+    const result = { exit_code: 0, stdout: "", stderr: "", ...answer(argv, options) };
+    if (shows(options.stdout)) context.out.write(result.stdout);
+    if (shows(options.stderr)) context.err.write(result.stderr);
+    return result;
+  };
+  const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: true, stdin: null, program };
+  return { context, ran, output: () => output };
 }
 
-function run_shell(command: string, path_first: string | null = null) {
-  const environment = path_first === null ? process.env : { ...process.env, PATH: `${path_first}:${process.env.PATH}` };
-  return spawnSync("sh", ["-c", command], { encoding: "utf8", env: environment });
+// The operation inside a timed wrapper.
+function inner<Kind extends Operation>(operation: Operation): Kind {
+  return (operation.kind === "timed" ? operation.operation : operation) as Kind;
 }
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
 
 describe("the evaluation", () => {
-  it("never writes the lock file and carries its own timeout", () => {
-    const command = eval_command(settings({ eval_timeout: "5m" }), "host");
+  it("carries its own timeout", () => {
+    const operation = eval_operation(settings({ eval_timeout: "5m" }), "host");
 
-    expect(command).toContain("--no-write-lock-file");
-    expect(command.startsWith("timeout 300 sh -c ")).toBe(true);
+    expect(operation.seconds).toBe(300);
+    expect(operation.operation.kind).toBe("evaluate");
   });
 
   it("refreshes a remote flake but not a local one", () => {
-    expect(eval_command(settings(), "host")).not.toContain("--refresh");
-    expect(eval_command(settings({ flake: "github:owner/config" }), "host")).toContain("--refresh");
+    expect(inner<EvaluateOperation>(eval_operation(settings(), "host")).refresh).toBe(false);
+    expect(inner<EvaluateOperation>(eval_operation(settings({ flake: "github:owner/config" }), "host")).refresh).toBe(true);
   });
 
-  it("evaluates the configured attribute, or the evaluating host's own name", () => {
-    expect(eval_command(settings(), "ragnarok")).toContain("ragnarok");
-    expect(eval_command(settings(), null)).toContain("$(uname -n)");
+  it("never writes the lock file and evaluates the configured attribute", async () => {
+    const { context, ran } = fake_context();
+
+    await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "ragnarok")));
+
+    expect(ran.every((argv) => argv.includes("--no-write-lock-file"))).toBe(true);
+    expect(ran[0].at(-1)).toBe('/etc/nixos#nixosConfigurations."ragnarok".config.system.build.toplevel');
   });
 
-  it("splits back into the toplevel and the metadata when run", () => {
-    const nix = fake_programs({
-      nix: `case "$*" in *metadata*) echo '{"lastModified": 1}'; echo "fetching" >&2 ;; *) echo "evaluating" >&2; printf %s ${current_closure} ;; esac`,
-    });
+  it("splits back into the toplevel and the metadata when run", async () => {
+    const { context, output } = fake_context((argv) => argv.includes("metadata")
+      ? { stdout: '{"lastModified": 1}', stderr: "fetching" }
+      : { stdout: current_closure, stderr: "evaluating" });
 
-    const run = run_shell(eval_command(settings({ nix_bin: join(nix, "nix"), nix_args: [] }), "host"));
-    const parts = split_eval_output(run.stdout, "missing");
+    const status = await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "host")));
+    const parts = split_eval_output(output(), "missing");
 
-    expect(run.status).toBe(0);
+    expect(status).toBe(0);
     expect(parts.eval).toEqual({ exit_code: 0, stdout: current_closure, stderr: "evaluating" });
     expect(parts.metadata).toEqual({ exit_code: 0, stdout: '{"lastModified": 1}', stderr: "fetching" });
+  });
+
+  it("fails when either command does", async () => {
+    const { context, output } = fake_context((argv) => (argv.includes("metadata") ? { exit_code: 1, stderr: "no network" } : { stdout: current_closure }));
+
+    expect(await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "host")))).toBe(1);
+    expect(split_eval_output(output(), "missing").metadata).toEqual({ exit_code: 1, stdout: "", stderr: "no network" });
   });
 
   it("fails a command the run never reported on", () => {
@@ -83,39 +103,36 @@ describe("the evaluation", () => {
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 describe("the switch", () => {
+  const argv = (values: Record<string, unknown> = {}, mode: "switch" | "boot" = "switch") => rebuild_steps(settings(values), mode)[0].argv;
+
   it("switches to the flake, naming the configuration when set", () => {
-    expect(switch_command(settings())).toBe("sudo -n nixos-rebuild switch --flake /etc/nixos");
-    expect(switch_command(settings({ configuration: "ragnarok" }))).toContain("--flake '/etc/nixos#ragnarok'");
+    expect(argv()).toEqual(["sudo", "-n", "nixos-rebuild", "switch", "--flake", "/etc/nixos"]);
+    expect(argv({ configuration: "ragnarok" })).toContain("/etc/nixos#ragnarok");
+    expect(argv({}, "boot")).toEqual(["sudo", "-n", "nixos-rebuild", "boot", "--flake", "/etc/nixos"]);
   });
 
   it("honours require_sudo and appends rebuild_args", () => {
-    expect(switch_command(settings({ require_sudo: false }))).toBe("nixos-rebuild switch --flake /etc/nixos");
-    expect(switch_command(settings({ rebuild_args: ["--show-trace"] }))).toContain("--show-trace");
+    expect(argv({ require_sudo: false })).toEqual(["nixos-rebuild", "switch", "--flake", "/etc/nixos"]);
+    expect(argv({ rebuild_args: ["--show-trace"] })).toContain("--show-trace");
   });
 
   it("sends compilation to build_host before rebuild_args, and activates on target_host", () => {
-    const command = switch_command(settings({ build_host: "root@builder", target_host: "root@odin", rebuild_args: ["--show-trace"] }));
-
-    expect(command).toContain("--build-host root@builder --target-host root@odin --show-trace");
-    expect(switch_command(settings())).not.toContain("--build-host");
-    expect(switch_command(settings())).not.toContain("--target-host");
+    expect(argv({ build_host: "root@builder", target_host: "root@odin", rebuild_args: ["--show-trace"] }).slice(-5))
+      .toEqual(["--build-host", "root@builder", "--target-host", "root@odin", "--show-trace"]);
+    expect(argv()).not.toContain("--build-host");
+    expect(argv()).not.toContain("--target-host");
   });
 
   it("runs the wrapper outside sudo", () => {
-    expect(switch_command(settings({ switch_wrapper: ["systemd-inhibit", "--what=shutdown"] })))
-      .toBe("systemd-inhibit --what=shutdown sudo -n nixos-rebuild switch --flake /etc/nixos");
-  });
-
-  it("keeps the switch's exit status after post_switch", () => {
-    const command = switch_command(settings({ rebuild_bin: "false", require_sudo: false, post_switch: "true" }));
-
-    expect(run_shell(command).status).toBe(1);
+    expect(argv({ switch_wrapper: ["systemd-inhibit", "--what=shutdown"] }))
+      .toEqual(["systemd-inhibit", "--what=shutdown", "sudo", "-n", "nixos-rebuild", "switch", "--flake", "/etc/nixos"]);
   });
 
   it("runs post_switch as root under sudo, or as is without require_sudo", () => {
-    expect(switch_command(settings({ post_switch: "systemctl restart display-manager" })))
-      .toBe("sudo -n nixos-rebuild switch --flake /etc/nixos; rc=$?; sudo -n /bin/sh -c 'systemctl restart display-manager'; (exit $rc)");
-    expect(switch_command(settings({ require_sudo: false, post_switch: "true" }))).toBe("nixos-rebuild switch --flake /etc/nixos; rc=$?; true; (exit $rc)");
+    expect(post_switch_argv(settings({ post_switch: "systemctl restart display-manager" })))
+      .toEqual(["sudo", "-n", "/bin/sh", "-c", "systemctl restart display-manager"]);
+    expect(post_switch_argv(settings({ require_sudo: false, post_switch: "true" }))).toEqual(["/bin/sh", "-c", "true"]);
+    expect(post_switch_argv(settings())).toBeNull();
   });
 });
 
@@ -124,55 +141,49 @@ describe("the switch from the cache", () => {
 
   // The dry run exits 0 whatever it finds, as nix does, so only its output can fail the check.
   const holds = (plan: string, cache_has_top = true) => {
-    const bin = fake_programs({
-      nix: [
-        `case "$*" in *"path-info --option narinfo-cache-negative-ttl 0 --store"*) exit ${cache_has_top ? 0 : 1};; esac`,
-        `printf '%s\\n' ${JSON.stringify(plan)} >&2`,
-      ].join("\n"),
-    });
-    return run_shell(cache_holds_command(settings({ ...from_cache, nix_bin: join(bin, "nix") }), current_closure)).status;
+    const { context } = fake_context((argv) => (argv.includes("--store") ? { exit_code: cache_has_top ? 0 : 1 } : { stderr: plan }));
+    return cache_holds(context, cache_holds_operation(settings(from_cache), current_closure));
   };
 
-  it("holds a closure the host can fetch, taking from upstream what the cache left out", () => {
-    expect(holds("these 1240 paths will be fetched (1.6 GiB download, 4.7 GiB unpacked):")).toBe(0);
-    expect(holds("")).toBe(0);
+  it("holds a closure the host can fetch, taking from upstream what the cache left out", async () => {
+    expect(await holds("these 1240 paths will be fetched (1.6 GiB download, 4.7 GiB unpacked):")).toBe(0);
+    expect(await holds("")).toBe(0);
   });
 
-  it("does not hold a closure with a path nothing can fetch, or a system the cache lacks", () => {
-    expect(holds("don't know how to build these paths:\n  /nix/store/00000000000000000000000000000000-bash")).toBe(1);
-    expect(holds("these 2 derivations will be built:")).toBe(1);
-    expect(holds("", false)).toBe(1);
+  it("does not hold a closure with a path nothing can fetch, or a system the cache lacks", async () => {
+    expect(await holds("don't know how to build these paths:\n  /nix/store/00000000000000000000000000000000-bash")).toBe(1);
+    expect(await holds("these 2 derivations will be built:")).toBe(1);
+    expect(await holds("", false)).toBe(1);
   });
 
   it("fetches the closure, sets the system profile and activates it", () => {
-    expect(switch_from_cache_command(settings(from_cache), current_closure)).toBe([
-      `nix --extra-experimental-features 'nix-command flakes' build --no-link ${current_closure}`,
-      `nix --extra-experimental-features 'nix-command flakes' path-info --recursive ${current_closure} >/dev/null`,
-      `sudo -n nix-env -p /nix/var/nix/profiles/system --set ${current_closure}`,
-      `sudo -n ${current_closure}/bin/switch-to-configuration switch`,
-    ].join(" && "));
+    expect(cache_switch_steps(settings(from_cache), current_closure, "switch")).toEqual([
+      { argv: [...nix, "build", "--no-link", current_closure] },
+      { argv: [...nix, "path-info", "--recursive", current_closure], quiet: true },
+      { argv: ["sudo", "-n", "nix-env", "-p", "/nix/var/nix/profiles/system", "--set", current_closure] },
+      { argv: ["sudo", "-n", `${current_closure}/bin/switch-to-configuration`, "switch"] },
+    ]);
   });
 
   it("sets the system profile only in the modes that make a boot entry", () => {
-    const activate = (mode: "boot" | "test" | "dry-activate") => switch_from_cache_command(settings(from_cache), current_closure, mode);
+    const activate = (mode: "boot" | "test" | "dry-activate") => cache_switch_steps(settings(from_cache), current_closure, mode).map((step) => step.argv.join(" "));
 
-    expect(activate("boot")).toContain(`--set ${current_closure} && sudo -n ${current_closure}/bin/switch-to-configuration boot`);
-    expect(activate("test")).not.toContain("nix-env");
-    expect(activate("test")).toContain(`${current_closure} >/dev/null && sudo -n ${current_closure}/bin/switch-to-configuration test`);
-    expect(activate("dry-activate")).not.toContain("nix-env");
-    expect(activate("dry-activate").endsWith("switch-to-configuration dry-activate")).toBe(true);
+    expect(activate("boot").some((line) => line.includes("nix-env"))).toBe(true);
+    expect(activate("boot").at(-1)).toBe(`sudo -n ${current_closure}/bin/switch-to-configuration boot`);
+    expect(activate("test").some((line) => line.includes("nix-env"))).toBe(false);
+    expect(activate("test").at(-1)).toBe(`sudo -n ${current_closure}/bin/switch-to-configuration test`);
+    expect(activate("dry-activate").some((line) => line.includes("nix-env"))).toBe(false);
   });
 
-  it("runs inside the wrapper and keeps its exit status after post_switch", () => {
-    const wrapped = switch_from_cache_command(settings({ ...from_cache, switch_wrapper: ["systemd-inhibit", "--what=shutdown"] }), current_closure);
-    expect(wrapped.startsWith("systemd-inhibit --what=shutdown sh -c 'nix ")).toBe(true);
+  it("runs every step inside the wrapper", () => {
+    const steps = cache_switch_steps(settings({ ...from_cache, switch_wrapper: ["systemd-inhibit", "--what=shutdown"] }), current_closure, "switch");
 
-    const failing = switch_from_cache_command(settings({ ...from_cache, nix_bin: "false", require_sudo: false, post_switch: "true" }), current_closure);
-    expect(run_shell(failing).status).toBe(1);
+    expect(steps.every((step) => step.argv[0] === "systemd-inhibit" && step.argv[1] === "--what=shutdown")).toBe(true);
   });
 
   it("refuses anything but a store path", () => {
-    expect(() => switch_from_cache_command(settings(from_cache), "/nix/store/x; rm -rf /")).toThrow("not a store path");
+    expect(() => cache_switch_steps(settings(from_cache), "/nix/store/x; rm -rf /", "switch")).toThrow("not a store path");
+    expect(() => cache_holds_operation(settings(from_cache), "/nix/store/x; rm -rf /")).toThrow("not a store path");
   });
 
   it("needs a cache_url, and activates on the switch agent's own host rather than a target_host", () => {
@@ -184,50 +195,47 @@ describe("the switch from the cache", () => {
 // ── Build ────────────────────────────────────────────────────────────────────
 
 describe("the build", () => {
-  it("realises this host's closure without activating it, going on past failures", () => {
-    const command = build_command(settings({ flake: "github:owner/config", configuration: "ragnarok" }), "ragnarok");
+  const run_build = async (operation: BuildOperation, answer: (argv: string[]) => Partial<ProgramResult> = () => ({})) => {
+    const fake = fake_context(answer);
+    const status = await build(fake.context, operation);
+    return { status, ran: fake.ran, output: fake.output() };
+  };
 
-    expect(command).toContain("build --no-link");
-    expect(command).toContain("nixosConfigurations");
-    expect(command).toContain("ragnarok");
-    expect(command).toContain("--keep-going");
+  it("realises this host's closure without activating it, going on past failures", async () => {
+    const { ran } = await run_build(build_operation(settings({ flake: "github:owner/config", configuration: "ragnarok" }), "ragnarok"));
+
+    expect(ran[0]).toContain("--no-link");
+    expect(ran[0]).toContain("--keep-going");
+    expect(ran[0]).toContain("--refresh");
+    expect(ran[0].at(-1)).toBe('github:owner/config#nixosConfigurations."ragnarok".config.system.build.toplevel');
   });
 
   it("takes its arguments from build_args", () => {
-    const command = build_command(settings({ build_args: ["--max-jobs", "2"] }), "host");
+    const operation = build_operation(settings({ build_args: ["--max-jobs", "2"], build_progress: false }), "host");
 
-    expect(command).toContain("--max-jobs 2");
-    expect(command).not.toContain("--keep-going");
+    expect(operation.args).toEqual(["--max-jobs", "2"]);
   });
 
   it("keeps one replaceable root per deployment under build_root_dir", () => {
-    const command = build_command(settings({ build_root_dir: "/var/lib/agent/build roots" }), "host");
-
-    expect(command.startsWith("mkdir -p '/var/lib/agent/build roots' && ")).toBe(true);
-    expect(command).toContain("build --out-link '/var/lib/agent/build roots/odin-deploy'");
-    expect(command).not.toContain("--no-link");
+    expect(build_operation(settings({ build_root_dir: "/var/lib/agent/build roots/" }), "host").root_link).toBe("/var/lib/agent/build roots/odin-deploy");
+    expect(build_operation(settings(), "host").root_link).toBeNull();
   });
 
   it.each([
     { local: false, cached: true, builds: false },
     { local: true, cached: true, builds: true },
     { local: false, cached: false, builds: true },
-  ])("skips a build the cache already holds (local $local, cached $cached)", ({ local, cached, builds }) => {
-    const nix = fake_programs({
-      nix: [
-        'case "$*" in',
-        `  *eval*) printf %s ${current_closure} ;;`,
-        `  *'--store https://cache.example'*) exit ${cached ? 0 : 1} ;;`,
-        `  *path-info*) exit ${local ? 0 : 1} ;;`,
-        "  *build*) echo built ;;",
-        "esac",
-      ].join("\n"),
+  ])("skips a build the cache already holds (local $local, cached $cached)", async ({ local, cached, builds }) => {
+    const { status, output } = await run_build(build_operation(settings({ cache_url: "https://cache.example/fleet" }), "host"), (argv) => {
+      if (argv.includes("eval")) return { stdout: current_closure };
+      if (argv.includes("--store")) return { exit_code: cached ? 0 : 1 };
+      if (argv.includes("path-info")) return { exit_code: local ? 0 : 1 };
+      return { stdout: "built\n" };
     });
 
-    const run = run_shell(build_command(settings({ nix_bin: join(nix, "nix"), nix_args: [], cache_url: "https://cache.example/fleet" }), "host"));
-
-    expect(run.status).toBe(0);
-    expect(run.stdout).toBe(builds ? "built\n" : `${current_closure} is already in the cache; not building it\n`);
+    expect(status).toBe(0);
+    expect(output.includes("built\n")).toBe(builds);
+    expect(output.includes(`${current_closure} is already in the cache; not building it`)).toBe(!builds);
   });
 });
 
@@ -237,49 +245,60 @@ describe("the update", () => {
   const github = { url: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" };
 
   it("updates a local flake in place", () => {
-    expect(update_command(flake())).toContain("sudo -n nix --extra-experimental-features 'nix-command flakes' flake update --flake /etc/nixos");
+    expect(update_operation(flake())).toEqual({ kind: "programs", steps: [{ argv: ["sudo", "-n", ...nix, "flake", "update", "--flake", "/etc/nixos"] }] });
   });
 
-  it("updates a github: flake unprivileged, pushing over SSH with pinned host keys", () => {
-    const command = update_command(flake(github));
+  it("updates a github: flake unprivileged, pushing over SSH with pinned host keys", async () => {
+    const operation = update_operation(flake(github)) as GithubUpdateOperation;
+    const environments: (string | undefined)[] = [];
+    const { context, ran } = fake_context();
+    const program = context.program;
+    context.program = (inner_context, argv, options) => {
+      environments.push(options?.env?.GIT_SSH_COMMAND);
+      return program(inner_context, argv, options);
+    };
 
-    expect(command).not.toContain("sudo");
-    expect(command).toContain("git@github.com:owner/config.git");
-    expect(command).toContain("-i /run/secrets/deploy_key");
-    expect(command).toContain("StrictHostKeyChecking=yes");
-    expect(command).not.toContain("https://");
+    await github_update(context, operation);
+
+    expect(operation.kind).toBe("github_update");
+    expect(ran.some((argv) => argv.includes("sudo"))).toBe(false);
+    expect(ran[0]).toContain("git@github.com:owner/config.git");
+    expect(environments[0]).toContain("-i /run/secrets/deploy_key");
+    expect(environments[0]).toContain("StrictHostKeyChecking=yes");
   });
 
-  it("clones the flake's branch and commits as the configured author", () => {
-    const command = update_command(flake({ ...github, url: "github:owner/config/dev", commit_author: "Bot <bot@example.com>", commit_message: "build: bump inputs" }));
+  it("clones the flake's branch and commits as the configured author", async () => {
+    const operation = update_operation(flake({ ...github, url: "github:owner/config/dev", commit_author: "Bot <bot@example.com>", commit_message: "build: bump inputs" }));
+    const { context, ran } = fake_context((argv) => (argv.includes("update")
+      ? { stderr: "• Updated input 'nixpkgs':\n" }
+      : argv.includes("diff") ? { exit_code: 1 } : {}));
 
-    expect(command).toContain("--branch dev");
-    expect(command).toContain("user.name=Bot");
-    expect(command).toContain("user.email=bot@example.com");
-    expect(command).toContain("'build: bump inputs'");
+    expect(await github_update(context, operation as GithubUpdateOperation)).toBe(0);
+    expect(ran[0]).toEqual(expect.arrayContaining(["--branch", "dev"]));
+    const commit = ran.find((argv) => argv.includes("commit"))!;
+    expect(commit).toEqual(expect.arrayContaining(["user.name=Bot", "user.email=bot@example.com"]));
+    expect(commit[commit.indexOf("-m") + 1]).toBe("build: bump inputs\n\n- nixpkgs");
+    expect(ran.some((argv) => argv.includes("push"))).toBe(true);
   });
 
-  it.each([{ status: 0, expected: 0 }, { status: 3, expected: 1 }])("prints its log once and keeps its status (nix exits $status)", ({ status, expected }) => {
-    const programs = fake_programs({
-      nix: `echo "Updated input 'nixpkgs'" >&2\nexit ${status}`,
-      // A clone makes its target folder, and diff says the lock is unchanged.
-      git: 'case "$*" in clone*) eval mkdir -p "\\${$#}";; esac\nexit 0',
-    });
+  it.each([{ status: 0, expected: 0 }, { status: 3, expected: 1 }])("prints its log once and keeps its status (nix exits $status)", async ({ status, expected }) => {
+    // A clone succeeds, and diff says the lock is unchanged.
+    const { context, output } = fake_context((argv) => (argv.includes("update") ? { exit_code: status, stderr: "Updated input 'nixpkgs'\n" } : {}));
 
-    const run = run_shell(update_command(flake({ ...github, nix_bin: join(programs, "nix"), nix_args: [] })), programs);
-
-    expect(run.status).toBe(expected);
-    expect(run.stdout.split("Updated input 'nixpkgs'").length - 1).toBe(1);
-    expect(run.stdout.includes("Every input is already current")).toBe(status === 0);
+    expect(await github_update(context, update_operation(flake(github)) as GithubUpdateOperation)).toBe(expected);
+    expect(output().split("Updated input 'nixpkgs'").length - 1).toBe(1);
+    expect(output().includes("Every input is already current")).toBe(status === 0);
   });
 });
 
 // ── Flake metadata ───────────────────────────────────────────────────────────
 
 describe("the flake's metadata read", () => {
-  it("fetches a remote flake afresh under its own timeout, and reads a local one from disk", () => {
-    expect(metadata_command(flake({ url: "github:owner/config", timeout: "1m" }))).toMatch(/^timeout 60 nix .* flake metadata --json --no-write-lock-file --refresh github:owner\/config$/);
-    expect(metadata_command(flake())).not.toContain("--refresh");
+  it("fetches a remote flake afresh, and reads a local one from disk", () => {
+    const argv = (values: Record<string, unknown>) => (metadata_operation(flake(values)) as { steps: { argv: string[] }[] }).steps[0].argv;
+
+    expect(argv({ url: "github:owner/config" })).toEqual([...nix, "flake", "metadata", "--json", "--no-write-lock-file", "--refresh", "github:owner/config"]);
+    expect(argv({})).not.toContain("--refresh");
   });
 });
 
@@ -376,8 +395,9 @@ describe("the probe", () => {
     expect(generation_of("something-else")).toBeNull();
   });
 
-  it("falls back to nixos-version's JSON for the version", () => {
-    expect(parse_probe('current=/x\nversion=\nversion_json={"nixosVersion":"26.11"}\n').version).toBe("26.11");
+  it("reads the facts the agent printed, and nothing from a probe that printed none", () => {
+    expect(parse_probe('{"current":"/x","version":"26.11"}')?.version).toBe("26.11");
+    expect(parse_probe("")).toBeNull();
   });
 
   it("cannot tell about a reboot without the booted parts", () => {

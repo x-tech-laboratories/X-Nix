@@ -1,25 +1,19 @@
-// The shell commands a deployment's and a flake's jobs run: evaluation, build, switch, switch from cache, reboot, and the flake's update.
+// The operations a deployment's and a flake's jobs ask an agent for: evaluation, build, switch, switch from cache, reboot,
+// and the flake's update.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import type { DeploymentSettings, FlakeSettings } from "../config.ts";
 import type { RunResult } from "../agents/agent.ts";
+import type { DeploymentSettings, FlakeSettings } from "../config.ts";
+import {
+  eval_mark, is_store_path, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type Step,
+  type TimedOperation,
+} from "../../shared/operations.ts";
 import { github_repository, local_path } from "./flake.ts";
 
-// ── Quoting ──────────────────────────────────────────────────────────────────
+export { eval_mark, is_store_path, timed_out_exit_code } from "../../shared/operations.ts";
 
-// Quotes a word for sh, leaving plain words as they are.
-export function shell_quote(word: string): string {
-  if (word !== "" && /^[\w@%+=:,./-]+$/.test(word)) return word;
-  return `'${word.replaceAll("'", `'"'"'`)}'`;
-}
-
-// Escapes a value for use inside a double-quoted shell word.
-function escape_double_quoted(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$");
-}
-
-// ── Metadata and update ──────────────────────────────────────────────────────
+// ── Settings ─────────────────────────────────────────────────────────────────
 
 // Whether Update can write the flake's lock: a local checkout, or a github: flake it may push to.
 export function can_update(settings: FlakeSettings): boolean {
@@ -30,62 +24,31 @@ export function pushes_to_github(settings: FlakeSettings): boolean {
   return local_path(settings.url) === null && github_repository(settings.url) !== null && settings.push_ssh_key !== null;
 }
 
-function nix(settings: Pick<DeploymentSettings, "nix_bin" | "nix_args">): string {
-  return [settings.nix_bin, ...settings.nix_args.map(shell_quote)].join(" ");
+export function nix(settings: Pick<DeploymentSettings, "nix_bin" | "nix_args">): Argv {
+  return [settings.nix_bin, ...settings.nix_args];
 }
-
-// Asks the cache afresh: nix remembers a path the cache lacked for an hour, so a system checked before its push would
-// read as missing long after the push.
-const fresh_lookup = "--option narinfo-cache-negative-ttl 0";
 
 // A remote ref is only seen freshly with --refresh; a local path is read from disk every time.
-function refresh_args(settings: DeploymentSettings): string[] {
-  return local_path(settings.flake) === null ? ["--refresh"] : [];
+function refreshes(flake: string): boolean {
+  return local_path(flake) === null;
 }
 
-export function sudo(settings: Pick<DeploymentSettings, "require_sudo">): string {
-  return settings.require_sudo ? "sudo -n " : "";
+export function sudo(settings: Pick<DeploymentSettings, "require_sudo">): Argv {
+  return settings.require_sudo ? ["sudo", "-n"] : [];
 }
 
-// The host's system closure in the flake; with no attribute known, the evaluating host's own hostname.
-export function installable(settings: DeploymentSettings, attribute: string | null): string {
-  const name = attribute ? escape_double_quoted(attribute) : "$(uname -n)";
-  return `"${escape_double_quoted(settings.flake)}#nixosConfigurations.\\"${name}\\".config.system.build.toplevel"`;
-}
-
-function words(...parts: (string | null | undefined | false)[]): string {
-  return parts.filter(Boolean).join(" ");
+export function timed(seconds: number, operation: Operation): TimedOperation {
+  return { kind: "timed", seconds, operation };
 }
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
 
-// Starts a line naming the command and stream the evaluation script prints next.
-export const eval_mark = "@@x-nix-eval";
-
-// The exit status `timeout` gives a run it killed.
-export const timed_out_exit_code = 124;
-
 const eval_parts = ["eval", "metadata"] as const;
 
-// Runs `nix eval` of the toplevel and `nix flake metadata`, showing nix's progress live, then prints each one's
-// stdout and exit status after marker lines, all under `timeout`.
-export function eval_command(settings: DeploymentSettings, attribute: string | null): string {
-  const refresh = refresh_args(settings).join(" ");
-  const commands: Record<(typeof eval_parts)[number], string> = {
-    eval: words(nix(settings), "eval --raw --no-write-lock-file", refresh, installable(settings, attribute)),
-    metadata: words(nix(settings), "flake metadata --json --no-write-lock-file", refresh, shell_quote(settings.flake)),
-  };
-  const lines = ['w=$(mktemp -d)', `trap 'rm -rf "$w"' EXIT`];
-  for (const name of eval_parts) {
-    lines.push(`echo "${eval_mark} ${name} stderr"`);
-    lines.push(`{ ${commands[name]}; } 2>&1 >"$w/${name}.stdout"; echo $? >"$w/${name}.exit"`);
-  }
-  for (const name of eval_parts) {
-    for (const stream of ["stdout", "exit"]) lines.push(`echo "${eval_mark} ${name} ${stream}"; cat "$w/${name}.${stream}"; echo`);
-  }
-  // The run fails when either command did, so its job shows it.
-  lines.push(eval_parts.map((name) => `[ "$(cat "$w/${name}.exit")" = 0 ]`).join(" && "));
-  return `timeout ${settings.eval_timeout} sh -c ${shell_quote(lines.join("\n"))}`;
+// Evaluates the toplevel and reads the flake's metadata, all under eval_timeout.
+export function eval_operation(settings: DeploymentSettings, attribute: string | null): TimedOperation {
+  const evaluate: EvaluateOperation = { kind: "evaluate", nix: nix(settings), flake: settings.flake, attribute, refresh: refreshes(settings.flake) };
+  return timed(settings.eval_timeout, evaluate);
 }
 
 // Splits a finished evaluation's output back into one result per command; one never reported on fails with `missing`.
@@ -113,43 +76,22 @@ export function split_eval_output(output: string, missing: string): Record<"eval
 
 // ── Flake ────────────────────────────────────────────────────────────────────
 
-// Reads the flake's metadata and lock, fetching a remote flake afresh, under `timeout`.
-export function metadata_command(settings: FlakeSettings): string {
-  const refresh = local_path(settings.url) === null ? "--refresh" : null;
-  return `timeout ${settings.timeout} ${words(nix(settings), "flake metadata --json --no-write-lock-file", refresh, shell_quote(settings.url))}`;
+// Reads the flake's metadata and lock, fetching a remote flake afresh.
+export function metadata_operation(settings: FlakeSettings): Operation {
+  const refresh = refreshes(settings.url) ? ["--refresh"] : [];
+  return { kind: "programs", steps: [{ argv: [...nix(settings), "flake", "metadata", "--json", "--no-write-lock-file", ...refresh, settings.url] }] };
 }
 
-export function update_command(settings: FlakeSettings): string {
-  if (!pushes_to_github(settings)) return `${sudo(settings)}${nix(settings)} flake update --flake ${shell_quote(settings.url)}`;
-  return github_update_command(settings);
-}
-
-// Clones the flake's repository, updates its lock and pushes a commit back, as the agent's user rather than root.
-function github_update_command(settings: FlakeSettings): string {
+export function update_operation(settings: FlakeSettings): Operation {
+  if (!pushes_to_github(settings)) {
+    return { kind: "programs", steps: [{ argv: [...sudo(settings), ...nix(settings), "flake", "update", "--flake", settings.url] }] };
+  }
   const repository = github_repository(settings.url)!;
   const [name, email = ""] = settings.commit_author.split("<", 2);
-  const identity = `-c user.name=${shell_quote(name.trim())} -c user.email=${shell_quote(email.replace(/>\s*$/, "").trim())}`;
-  const branch = repository.branch ? `--branch ${shell_quote(repository.branch)} ` : "";
-  const ssh = `ssh -i ${shell_quote(settings.push_ssh_key!)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes`;
-  const lines = [
-    "set -e",
-    "t=$(mktemp -d)",
-    `trap 'rm -rf "$t"' EXIT`,
-    // Host keys come from the system known_hosts, so an unpinned github.com fails rather than being trusted.
-    `export GIT_SSH_COMMAND=${shell_quote(ssh)}`,
-    `git clone --quiet --depth 1 ${branch}${shell_quote(repository.ssh_url)} "$t/repo"`,
-    // The update prints as it runs and its log feeds the commit message; set -e ignores an && || list.
-    `{ ${nix(settings)} flake update --flake "$t/repo" 2>&1 && echo 0 > "$t/rc" || echo $? > "$t/rc"; } | tee "$t/log"`,
-    '[ "$(cat "$t/rc")" = 0 ] || exit 1',
-    'if git -C "$t/repo" diff --quiet -- flake.lock; then echo "Every input is already current"; exit 0; fi',
-    `printf '%s\\n\\n' ${shell_quote(settings.commit_message)} > "$t/msg"`,
-    `sed -n "s/.*Updated input '\\([^']*\\)'.*/- \\1/p" "$t/log" >> "$t/msg"`,
-    `git -C "$t/repo" ${identity} commit --quiet -F "$t/msg" -- flake.lock`,
-    'git -C "$t/repo" push origin HEAD',
-    'git -C "$t/repo" log --oneline -1',
-  ];
-  // A subshell, so set -e ends the update and not the shell recording its exit status.
-  return `(\n${lines.join("\n")}\n)`;
+  return {
+    kind: "github_update", nix: nix(settings), ssh_url: repository.ssh_url, branch: repository.branch, ssh_key: settings.push_ssh_key!,
+    author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message,
+  };
 }
 
 // ── Build ────────────────────────────────────────────────────────────────────
@@ -157,25 +99,19 @@ function github_update_command(settings: FlakeSettings): string {
 // Makes nix print its activities as JSON lines, which the job turns back into log lines and counts of builds.
 export const progress_args = ["--log-format", "internal-json", "-v"];
 
-// Realises the host's closure without activating it, so a later switch substitutes instead of building, printing its store
-// path for the build history.
-export function build_command(settings: DeploymentSettings, attribute: string | null): string {
-  const args = [...(settings.build_progress ? progress_args : []), ...settings.build_args, ...refresh_args(settings)].map(shell_quote).join(" ");
-  const target = installable(settings, attribute);
-  let build: string;
-  if (settings.build_root_dir === null) {
-    build = words(nix(settings), "build --no-link --print-out-paths", args, target);
-  } else {
+// Realises the host's closure without activating it, so a later switch substitutes instead of building.
+export function build_operation(settings: DeploymentSettings, attribute: string | null): BuildOperation {
+  return {
+    kind: "build",
+    nix: nix(settings),
+    flake: settings.flake,
+    attribute,
+    args: [...(settings.build_progress ? progress_args : []), ...settings.build_args],
+    refresh: refreshes(settings.flake),
     // One link per deployment, so each build replaces the garbage-collector root the last one held.
-    const link = shell_quote(`${settings.build_root_dir.replace(/\/+$/, "")}/${settings.id}`);
-    build = `mkdir -p ${shell_quote(settings.build_root_dir)} && ` + words(nix(settings), `build --out-link ${link} --print-out-paths`, args, target);
-  }
-  if (settings.cache_url === null) return build;
-  // A closure missing here but already in the cache is not downloaded just to be rooted; any failure falls to the build.
-  const evaluate = words(nix(settings), "eval --raw --no-write-lock-file", refresh_args(settings).join(" "), target);
-  const cached = `out=$(${evaluate} 2>/dev/null) && [ -n "$out" ] && ! ${nix(settings)} path-info "$out" >/dev/null 2>&1 `
-    + `&& ${nix(settings)} path-info ${fresh_lookup} --store ${shell_quote(settings.cache_url)} "$out" >/dev/null 2>&1`;
-  return `if ${cached}; then echo "$out is already in the cache; not building it"; else ${build}; fi`;
+    root_link: settings.build_root_dir === null ? null : `${settings.build_root_dir.replace(/\/+$/, "")}/${settings.id}`,
+    cache_url: settings.cache_url,
+  };
 }
 
 // ── Switch ───────────────────────────────────────────────────────────────────
@@ -185,64 +121,50 @@ export type SwitchMode = "switch" | "boot" | "test" | "dry-activate";
 
 export const switch_modes: SwitchMode[] = ["switch", "boot", "test", "dry-activate"];
 
-export function switch_command(settings: DeploymentSettings, mode: SwitchMode = "switch"): string {
+// The profile whose newest generation the host boots and runs.
+export const system_profile = "/nix/var/nix/profiles/system";
+
+// nixos-rebuild in the mode asked, inside switch_wrapper.
+export function rebuild_steps(settings: DeploymentSettings, mode: SwitchMode): Step[] {
   const flake_reference = settings.configuration ? `${settings.flake}#${settings.configuration}` : settings.flake;
   const args = [
     ...(settings.build_host ? ["--build-host", settings.build_host] : []),
     ...(settings.target_host ? ["--target-host", settings.target_host] : []),
     ...settings.rebuild_args,
-    ...refresh_args(settings),
-  ].map(shell_quote).join(" ");
-  const wrapper = settings.switch_wrapper.map((word) => `${shell_quote(word)} `).join("");
-  const rebuild = `${wrapper}${sudo(settings)}${settings.rebuild_bin} ${mode} --flake ${shell_quote(flake_reference)} ${args}`.trim();
-  return with_post_switch(settings, rebuild);
+    ...(refreshes(settings.flake) ? ["--refresh"] : []),
+  ];
+  return [{ argv: [...settings.switch_wrapper, ...sudo(settings), settings.rebuild_bin, mode, "--flake", flake_reference, ...args] }];
 }
 
-// Runs post_switch after the switch, as root under sudo, keeping the switch's own exit status whatever it returns.
-export function with_post_switch(settings: DeploymentSettings, switching: string): string {
-  if (settings.post_switch === null) return switching;
-  const follow_up = settings.require_sudo ? `sudo -n /bin/sh -c ${shell_quote(settings.post_switch)}` : settings.post_switch;
-  return `${switching}; rc=$?; ${follow_up}; (exit $rc)`;
-}
-
-// ── Switch from cache ────────────────────────────────────────────────────────
-
-// The profile whose newest generation the host boots and runs.
-const system_profile = "/nix/var/nix/profiles/system";
-
-// Whether a value is a top-level store path, the only kind put into a command line here.
-export function is_store_path(value: string): boolean {
-  return /^\/nix\/store\/[0-9a-z]{32}-[A-Za-z0-9+._?=-]+$/.test(value);
-}
-
-// Fetches the evaluated closure from the cache and activates it in the mode asked, so the host neither evaluates nor builds.
-// Exits 0 only when the cache holds the store path and the host can fetch every path of its closure. Caches such as Attic
-// leave out what an upstream cache serves, so the closure is checked against the host's own substituters, not the cache's.
-// The dry run exits 0 even for a path nothing can fetch, so its output is read instead.
-export function cache_holds_command(settings: DeploymentSettings, store_path: string): string {
+// Fetches the evaluated closure and activates it in the mode asked, so the host neither evaluates nor builds. The daemon
+// fetches the closure from the host's substituters, the cache among them, taking from upstream what the cache left out;
+// it substitutes for anyone, so only activation needs sudo.
+export function cache_switch_steps(settings: DeploymentSettings, store_path: string, mode: SwitchMode): Step[] {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
-  const path = shell_quote(store_path);
-  return `${nix(settings)} path-info ${fresh_lookup} --store ${shell_quote(settings.cache_url ?? "")} ${path} >/dev/null`
-    + ` && plan=$(${nix(settings)} build --dry-run --no-link ${path} 2>&1)`
-    + ` && ! printf '%s\\n' "$plan" | grep -q -e "know how to build" -e "will be built"`;
-}
-
-export function switch_from_cache_command(settings: DeploymentSettings, store_path: string, mode: SwitchMode = "switch"): string {
-  if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
-  const path = shell_quote(store_path);
-  // The daemon fetches the closure from the host's substituters, the cache among them, taking from upstream what the cache
-  // left out. It runs as the agent's user, as the daemon substitutes for anyone, so only activation needs sudo.
-  const steps = [`${nix(settings)} build --no-link ${path}`, `${nix(settings)} path-info --recursive ${path} >/dev/null`];
+  const steps: Step[] = [
+    { argv: [...nix(settings), "build", "--no-link", store_path] },
+    { argv: [...nix(settings), "path-info", "--recursive", store_path], quiet: true },
+  ];
   // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
-  if (mode === "switch" || mode === "boot") steps.push(`${sudo(settings)}nix-env -p ${system_profile} --set ${path}`);
-  steps.push(`${sudo(settings)}${store_path}/bin/switch-to-configuration ${mode}`);
-  const joined = steps.join(" && ");
-  const switching = settings.switch_wrapper.length === 0 ? joined : `${settings.switch_wrapper.map(shell_quote).join(" ")} sh -c ${shell_quote(joined)}`;
-  return with_post_switch(settings, switching);
+  if (mode === "switch" || mode === "boot") steps.push({ argv: [...sudo(settings), "nix-env", "-p", system_profile, "--set", store_path] });
+  steps.push({ argv: [...sudo(settings), `${store_path}/bin/switch-to-configuration`, mode] });
+  return steps.map((step) => ({ ...step, argv: [...settings.switch_wrapper, ...step.argv] }));
+}
+
+// post_switch, run as root under sudo, or null when there is none.
+export function post_switch_argv(settings: DeploymentSettings): Argv | null {
+  if (settings.post_switch === null) return null;
+  return settings.require_sudo ? ["sudo", "-n", "/bin/sh", "-c", settings.post_switch] : ["/bin/sh", "-c", settings.post_switch];
+}
+
+// Whether the cache holds the evaluated closure and the host can fetch all of it.
+export function cache_holds_operation(settings: DeploymentSettings, store_path: string): CacheHoldsOperation {
+  if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
+  return { kind: "cache_holds", nix: nix(settings), cache_url: settings.cache_url ?? "", store_path };
 }
 
 // ── Reboot ───────────────────────────────────────────────────────────────────
 
-export function reboot_command(settings: DeploymentSettings): string {
-  return `${sudo(settings)}systemctl reboot`;
+export function reboot_operation(settings: Pick<DeploymentSettings, "require_sudo">): Operation {
+  return { kind: "programs", steps: [{ argv: [...sudo(settings), "systemctl", "reboot"] }] };
 }

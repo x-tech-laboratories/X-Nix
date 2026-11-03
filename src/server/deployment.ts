@@ -1,6 +1,6 @@
 // One NixOS deployment: whether the running system is the one its flake evaluates to, and the jobs that bring it there.
 //
-// Every cycle reads the host's running system, booted system, generation and version with one cheap script. Every
+// Every cycle reads the host's running system, booted system, generation and version with one cheap read. Every
 // `eval_interval` it also evaluates the host's toplevel from the flake and reads `nix flake metadata`, as one long run
 // that outlives a restart of the server; later cycles poll it and judge drift against the stored evaluation until it
 // ends. A failed evaluation is retried after `retry_interval`. Build and switch run as long runs on the agent the
@@ -32,18 +32,19 @@ import { parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
-import { closure_command, diff_command, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
+import { closure_operation, diff_operation, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
-  build_command, cache_holds_command, eval_command, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
+  build_operation, cache_holds_operation, eval_operation, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
-  confirm_command, generations_script, parse_generations, rollback_command, rollback_signal_command, switch_job_command, switch_verdict, watch_token,
+  confirm_operation, generations_operation, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, switch_verdict, watch_token,
   type Generation,
 } from "./nixos/switch.ts";
 import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
-import { parse_probe, probe_script, reboot_required, type ProbeFields } from "./nixos/probe.ts";
+import { parse_probe, probe_operation, reboot_required, type ProbeFields } from "./nixos/probe.ts";
 import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
+import { operation_of, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -346,13 +347,13 @@ export class Deployment {
     else if (from_cache !== null) evaluating = Promise.resolve(this.fold_cache_check(from_cache.cache, from_cache.name));
     // An evaluation on another host needs the target's attribute name, which the first probe supplies.
     else if (this.due_for_evaluation() && !(this.settings.eval_agent !== null && this.attribute() === null)) evaluating = this.launch_evaluation();
-    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_script(), probe_timeout_in_seconds), evaluating]);
+    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_operation(), probe_timeout_in_seconds), evaluating]);
     const evaluation = folded ?? this.evaluation();
 
-    if (probe.exit_code !== 0 && probe.stdout.trim() === "") {
-      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200)}`, evaluation);
-    }
     const fields = parse_probe(probe.stdout);
+    if (fields === null) {
+      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200) || `status ${probe.exit_code}`}`, evaluation);
+    }
     if (fields.current === null) return this.save_unavailable("/run/current-system is unreadable; is this a NixOS host?", evaluation);
     this.assemble(fields, evaluation, folded !== null);
   }
@@ -502,7 +503,7 @@ export class Deployment {
   // Starts the evaluation, answering with a failed evaluation if it could not start.
   private async launch_evaluation(): Promise<Evaluation | null> {
     this.force_eval = false;
-    const launched = await this.launch("eval", eval_command(this.effective_settings(), this.attribute()), "schedule", false);
+    const launched = await this.launch("eval", eval_operation(this.effective_settings(), this.attribute()), "schedule", false);
     if (launched.job_id !== null) return null;
     const failure: RunResult = { exit_code: launched.unreachable ? -1 : 1, stdout: "", stderr: `Could not start the evaluation: ${launched.error}` };
     return this.fold_evaluation(failure, failure);
@@ -568,10 +569,10 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
-    const command = this.command_for("switch");
+    const operation = this.operation_for("switch");
     if (this.settings.switch_from_cache) {
       // A cache that builds this host builds the missing system for the switch, as for one a person starts.
-      const building = await this.build_in_cache_first("switch", command, "automatic");
+      const building = await this.build_in_cache_first("switch", operation, "automatic");
       if (building !== null) {
         this.cache_wait_target = null;
         const evaluation = this.evaluation();
@@ -587,7 +588,7 @@ export class Deployment {
       }
     }
     this.cache_wait_target = null;
-    const launched = await this.launch("switch", command, "automatic", false);
+    const launched = await this.launch("switch", operation, "automatic", false);
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
       this.store.add_event(this.id, this.now(), "warning", `Could not start the automatic switch: ${launched.error}`);
@@ -596,12 +597,12 @@ export class Deployment {
     const evaluation = this.evaluation();
     evaluation.auto_switch_target = target;
     this.store.save_evaluation(this.id, evaluation);
-    if (launched.job_id === null) this.record_failed_launch("switch", command, "automatic", launched.error);
+    if (launched.job_id === null) this.record_failed_launch("switch", operation, "automatic", launched.error);
     else this.store.add_event(this.id, this.now(), "info", "Automatic switch started");
   }
 
   private async cache_holds(target: string, host: string | null = this.agent_for("switch")): Promise<boolean> {
-    const result = await this.agents.get(host).run(cache_holds_command(this.settings, target), cache_check_timeout_in_seconds);
+    const result = await this.agents.get(host).run(cache_holds_operation(this.settings, target), cache_check_timeout_in_seconds);
     return result.exit_code === 0;
   }
 
@@ -625,8 +626,8 @@ export class Deployment {
   }
 
   private async launch_scheduled(kind: ScheduledKind, slot: number): Promise<void> {
-    const command = this.command_for(kind);
-    const launched = await this.launch(kind, command, "schedule", false);
+    const operation = this.operation_for(kind);
+    const launched = await this.launch(kind, operation, "schedule", false);
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
       this.store.add_event(this.id, this.now(), "warning", `Could not start the scheduled ${kind}: ${launched.error}`);
@@ -635,7 +636,7 @@ export class Deployment {
     const evaluation = this.evaluation();
     evaluation.scheduled = { ...evaluation.scheduled, [kind]: slot };
     this.store.save_evaluation(this.id, evaluation);
-    if (launched.job_id === null) this.record_failed_launch(kind, command, "schedule", launched.error);
+    if (launched.job_id === null) this.record_failed_launch(kind, operation, "schedule", launched.error);
     else this.store.add_event(this.id, this.now(), "info", `Scheduled ${kind} started`);
   }
 
@@ -649,14 +650,14 @@ export class Deployment {
       if (action === "reboot") return this.host === null ? { ok: false, message: "No host to reboot", job_id: null } : this.host.act("reboot", trigger);
       const building = action === "build" ? this.builds_in_cache() : null;
       if (building !== null) return building.cache.act("build", building.name, trigger === "manual" ? `deployment ${this.id}` : trigger);
-      const command = this.command_for(action);
+      const operation = this.operation_for(action);
       if (is_switch_kind(action)) {
-        const waiting = await this.build_in_cache_first(action, command, trigger);
+        const waiting = await this.build_in_cache_first(action, operation, trigger);
         if (waiting !== null) return waiting;
       }
-      const launched = await this.launch(action, command, trigger, true);
+      const launched = await this.launch(action, operation, trigger, true);
       if (launched.job_id === null) {
-        const job_id = this.record_failed_launch(action, command, trigger, launched.error);
+        const job_id = this.record_failed_launch(action, operation, trigger, launched.error);
         return { ok: false, message: `Could not start the ${job_noun(action)}: ${launched.error}`, job_id };
       }
       return { ok: true, message: `${capitalise(job_noun(action))} started`, job_id: launched.job_id };
@@ -683,7 +684,7 @@ export class Deployment {
 
   // Starts a switch from the cache whose system the cache lacks as a job that waits on the cache building it, or answers
   // null when the switch can start at once: the cache holds the system, no cache builds it, or the check could not run.
-  private async build_in_cache_first(kind: SwitchMode, command: string, trigger: string): Promise<ActionOutcome | null> {
+  private async build_in_cache_first(kind: SwitchMode, operation: Operation, trigger: string): Promise<ActionOutcome | null> {
     if (!this.settings.switch_from_cache) return null;
     const building = this.building_cache();
     const target = this.cached_target();
@@ -692,7 +693,9 @@ export class Deployment {
     const holds = await this.cache_holds(target, building.cache.settings.host).catch(() => true);
     if (holds) return null;
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.agent_for(kind), run_id, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({
+      deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.agent_for(kind), run_id, trigger, started_epoch: this.now(),
+    });
     const cache_name = building.cache.settings.name;
     this.store.append_output(job_id, `The ${cache_name} cache does not hold ${target} yet, so it builds ${building.name} first\n`);
     this.save_cache_build({ job_id, cache: building.cache.id, target_name: building.name, target, build_job_id: null });
@@ -737,7 +740,7 @@ export class Deployment {
       this.force_eval = true;
       if (!usable) return this.end_cache_build(job, `The build of ${what} finished, but the cache still lacks ${waiting.target}; evaluate again and switch`);
       const token = watch_token(job.command) ?? randomBytes(8).toString("hex");
-      this.store.set_command(job.id, switch_job_command(this.effective_settings(), job.kind as SwitchMode, token, built));
+      this.store.set_command(job.id, JSON.stringify(switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, built)));
       this.store.append_output(job.id, `The flake moved since ${waiting.target} was evaluated, so this ${job_noun(job.kind)} takes ${built}, which the cache built\n`);
     }
     this.save_cache_build(null);
@@ -745,7 +748,7 @@ export class Deployment {
     const command = this.store.job(job.id)!.command;
     let waking: Promise<void> | null;
     try {
-      ({ waking } = await start_run(this.agents, job.agent, job.run_id!, command));
+      ({ waking } = await start_run(this.agents, job.agent, job.run_id!, operation_of(command)!));
     } catch (error) {
       this.store.append_output(job.id, `${(error as Error).message}\n`);
       this.store.finish_job(job.id, "failed", null, "The job could not be started", this.now());
@@ -775,11 +778,11 @@ export class Deployment {
     this.store.save_evaluation(this.id, evaluation);
   }
 
-  private command_for(kind: JobAction): string {
-    if (kind === "build") return build_command(this.effective_settings(), this.attribute());
+  private operation_for(kind: JobAction): Operation {
+    if (kind === "build") return build_operation(this.effective_settings(), this.attribute());
     const store_path = this.settings.switch_from_cache ? this.cached_target() : null;
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
-    return switch_job_command(this.effective_settings(), kind, randomBytes(8).toString("hex"), store_path);
+    return switch_job_operation(this.effective_settings(), kind, randomBytes(8).toString("hex"), store_path);
   }
 
   // The store path a switch from the cache activates: the last evaluation's, unless that evaluation failed.
@@ -798,18 +801,18 @@ export class Deployment {
     return this.settings.switch_agent ?? this.settings.host;
   }
 
-  private async launch(kind: JobKind, command: string, trigger: string, announce: boolean): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
+  private async launch(kind: JobKind, operation: Operation, trigger: string, announce: boolean): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const agent = this.agent_for(kind);
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for any job but the periodic evaluation, which would keep it from ever sleeping.
-      ({ waking } = await start_run(this.agents, agent, run_id, command, null, kind !== "eval"));
+      ({ waking } = await start_run(this.agents, agent, run_id, operation, null, kind !== "eval"));
     } catch (error) {
       const unreachable = error instanceof AgentError && error.unreachable;
       return { job_id: null, error: (error as Error).message, unreachable };
     }
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent, run_id, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
       track_wake(this.store, job_id, agent ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${job_noun(kind)}: ${error}`);
@@ -820,8 +823,8 @@ export class Deployment {
   }
 
   // Keeps a job that could not start in the history, with why.
-  private record_failed_launch(kind: JobKind, command: string, trigger: string, error: string): number {
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.agent_for(kind), run_id: null, trigger, started_epoch: this.now() });
+  private record_failed_launch(kind: JobKind, operation: Operation, trigger: string, error: string): number {
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.agent_for(kind), run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, `${error}\n`);
     this.store.finish_job(job_id, "failed", null, "The job could not be started", this.now());
     this.store.add_event(this.id, this.now(), "error", `Could not start the ${job_noun(kind)}: ${error}`);
@@ -926,13 +929,13 @@ export class Deployment {
         return;
       }
       const reason = `HTTP health check failed: ${failure}`;
-      const signalled = await agent.run(rollback_signal_command(this.settings, token, reason), signal_timeout_in_seconds);
+      const signalled = await agent.run(rollback_signal_operation(token, reason), signal_timeout_in_seconds);
       if (signalled.exit_code !== 0) return;
       this.tended_switches.add(job.id);
       this.store.append_output(job.id, `${reason}; told the watchdog to roll back\n`);
       return;
     }
-    const confirmed = await agent.run(confirm_command(this.settings, token), signal_timeout_in_seconds);
+    const confirmed = await agent.run(confirm_operation(token), signal_timeout_in_seconds);
     // A host X-Nix cannot reach now is tried again on the next poll, until the watchdog gives up on it.
     if (confirmed.exit_code !== 0) return;
     this.tended_switches.add(job.id);
@@ -966,10 +969,10 @@ export class Deployment {
     if (!is_store_path(from) || !is_store_path(to)) return { diff: null, message: "The running or the flake's closure is not a store path" };
     const last = evaluation.last_diff;
     if (!force && last !== null && last.from === from && last.to === to && last.built && last.error === null) return { diff: last, message: null };
-    const command = diff_command(this.settings, from, to);
-    const result = await this.agents.get(this.settings.host).run(command, diff_timeout_in_seconds);
+    const operation = diff_operation(this.settings, from, to);
+    const result = await this.agents.get(this.settings.host).run(operation, diff_timeout_in_seconds);
     if (result.exit_code === -1) return { diff: null, message: `Could not compare the closures: ${clip(result.stderr || result.stdout, 200)}` };
-    const job_id = this.store.create_job({ deployment_id: this.id, kind: "diff", command, agent: this.settings.host, run_id: null, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: this.id, kind: "diff", command: JSON.stringify(operation), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     const diff = parse_diff(result.stdout, from, to, this.now(), job_id);
     const ok = result.exit_code === 0 && diff.error === null;
@@ -984,7 +987,7 @@ export class Deployment {
 
   // Reads every generation of the host's system profile.
   async generations(): Promise<{ generations: Generation[]; error: string | null }> {
-    const result = await this.agents.get(this.settings.host).run(generations_script(), probe_timeout_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(generations_operation(), probe_timeout_in_seconds);
     const generations = parse_generations(result.stdout);
     if (generations.length === 0) return { generations, error: `Could not read the system profile's generations: ${clip(result.stderr || result.stdout, 200) || "none found"}` };
     return { generations, error: null };
@@ -999,10 +1002,10 @@ export class Deployment {
       const chosen = generations.find((candidate) => candidate.generation === generation);
       if (chosen === undefined) return { ok: false, message: `Generation ${generation} is not one of the host's system generations`, job_id: null };
       if (chosen.current && chosen.profile) return { ok: false, message: `Generation ${generation} is already running`, job_id: null };
-      const command = rollback_command(this.settings, generation, reason);
-      const launched = await this.launch("rollback", command, "manual", false);
+      const operation = rollback_operation(this.settings, generation, reason);
+      const launched = await this.launch("rollback", operation, "manual", false);
       if (launched.job_id === null) {
-        const job_id = this.record_failed_launch("rollback", command, "manual", launched.error);
+        const job_id = this.record_failed_launch("rollback", operation, "manual", launched.error);
         return { ok: false, message: `Could not start the rollback: ${launched.error}`, job_id };
       }
       this.store.add_event(this.id, this.now(), "warning", `Rolling back to generation ${generation}: ${reason}`);
@@ -1025,7 +1028,7 @@ export class Deployment {
       if (path === null) return { tree: null, error: selector.which === "target" ? "The flake has not been evaluated yet" : "The running system has not been read yet" };
     }
     if (!is_store_path(path)) return { tree: null, error: `${path} is not a store path` };
-    const result = await this.agents.get(this.settings.host).run(closure_command(this.settings, path), closure_timeout_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(closure_operation(this.settings, path), closure_timeout_in_seconds);
     if (result.exit_code !== 0) {
       const missing = selector.which === "target" ? "; the flake's closure may not be built on the host yet" : "";
       return { tree: null, error: `Could not read the closure of ${path}: ${clip(result.stderr || result.stdout, 300)}${missing}` };

@@ -546,6 +546,11 @@ export function deployment_settings(
   if (switch_from_cache && settings.target_host !== null) {
     throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which activates on the switch agent's own host, so it cannot take a \`target_host\``);
   }
+  // A guarded switch's checks and watchdog run inside the agent on the host it activates, so there is no remote host to name.
+  const guarded = settings.pre_switch_checks.length > 0 || settings.health_commands.length > 0 || settings.health_urls.length > 0 || settings.magic_rollback;
+  if (guarded && settings.target_host !== null) {
+    throw new ConfigError(`Deployment '${id}' guards its switches with pre_switch_checks, health checks or magic_rollback, which run in the agent on the activated host, so it cannot take a \`target_host\`; give that host its own agent and name it in switch_agent`);
+  }
   return settings;
 }
 

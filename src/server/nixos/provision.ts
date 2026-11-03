@@ -1,9 +1,9 @@
-// The shell commands that provision new hosts: a nixos-anywhere install over SSH, and a build of install media.
+// The operations that provision new hosts: a nixos-anywhere install over SSH, and a build of install media.
 //
 // An install kexecs the target into an installer, partitions it with disko, installs the flake's configuration and
-// reboots, or stops after partitioning. The new host's agent key arrives on the script's stdin, is written into a
-// private folder that nixos-anywhere copies onto the new system with `--extra-files`, and is removed with that folder
-// when the script ends. The generated hardware-configuration.nix is printed after a marker so the page can show it.
+// reboots, or stops after partitioning. The new host's agent key arrives on the run's stdin and the agent places it
+// (see agent/operations/provision.ts). The generated hardware-configuration.nix is printed after a marker so the page
+// can show it.
 //
 // Install media is an installer ISO, the netboot (iPXE) files or a kexec tarball, built from the flake's configuration:
 // its own `system.build` attribute when it has one, otherwise the configuration extended with nixpkgs' installer module.
@@ -11,7 +11,9 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { ProvisioningSettings } from "../config.ts";
-import { shell_quote } from "./commands.ts";
+import { hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
+
+export { hardware_mark, media_mark, missing_tool_exit_code, nix_string } from "../../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -31,7 +33,7 @@ export interface InstallRequest {
   generate_hardware_config: boolean;
 }
 
-// What the install script's first line records, so the job's own command says what it installs.
+// What the install operation records, so the job's own command says what it installs.
 export interface InstallRecord extends InstallRequest {
   // The new agent's public key line, or null when the install stops after partitioning and places no key.
   public_line: string | null;
@@ -51,28 +53,13 @@ export const media_formats: MediaFormat[] = ["iso", "netboot", "kexec"];
 
 export const media_format_labels: Record<MediaFormat, string> = { iso: "Installer ISO", netboot: "Netboot (iPXE)", kexec: "Kexec tarball" };
 
-// Starts the comment line at the top of an install's script naming what it installs.
-export const install_mark = "@@x-nix-install";
-
-// Surrounds the hardware configuration an install generated.
-export const hardware_mark = "@@x-nix-hardware-config";
-
-// Starts the comment line at the top of a media build's script naming what it builds.
-export const media_record_mark = "@@x-nix-media-for";
-
-// Starts the line naming the store path a media build made.
-export const media_mark = "@@x-nix-media";
-
-// The exit status sh gives a program it cannot find, which a script also uses for a missing tool.
-export const missing_tool_exit_code = 127;
-
 // ── Checking ─────────────────────────────────────────────────────────────────
 
 const name_pattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 const address_pattern = /^[A-Za-z0-9][A-Za-z0-9.:%_-]*$/;
 const user_pattern = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
-// Text that fits on one line of a shell script and a Nix string.
+// Text that fits on one line and in a Nix string.
 function single_line(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "" && !/[\n\r\0]/.test(value);
 }
@@ -104,67 +91,26 @@ export function parse_install_request(body: unknown): InstallRequest | string {
 
 // ── Install ──────────────────────────────────────────────────────────────────
 
-// The folders above the key, each made with the mode the new system keeps for it, since nixos-anywhere copies modes.
-function key_folders(agent_key_path: string): { path: string; mode: string }[] {
-  const parts = agent_key_path.split("/").filter(Boolean).slice(0, -1);
-  return parts.map((_, index) => ({ path: parts.slice(0, index + 1).join("/"), mode: index === parts.length - 1 ? "700" : "755" }));
-}
-
-// Runs nixos-anywhere with the key on stdin, then prints the hardware configuration it generated; exits with its status.
-export function install_command(settings: ProvisioningSettings, request: InstallRequest, public_line: string | null): string {
+// Runs nixos-anywhere with the key on stdin, then prints the hardware configuration it generated.
+export function install_operation(settings: ProvisioningSettings, request: InstallRequest, public_line: string | null): InstallOperation {
   const record: InstallRecord = { ...request, public_line, agent_key_path: settings.agent_key_path };
-  const tool = settings.nixos_anywhere_bin;
-  const hardware = '"$t/hardware-configuration.nix"';
-  const ssh_key = settings.ssh_key ?? "";
-  const lines = [
-    `# ${install_mark} ${JSON.stringify(record)}`,
-    `echo ${shell_quote(`Installing ${request.flake}#${request.configuration} on ${request.user}@${request.address}${request.stop_after_partitioning ? ", stopping after partitioning" : ""}`)}`,
-    `if ! command -v ${shell_quote(tool)} >/dev/null 2>&1; then echo ${shell_quote(`${tool} is not on this host's PATH; add pkgs.nixos-anywhere to the PATH of the host that runs installs`)}; exit ${missing_tool_exit_code}; fi`,
-    `if [ ! -r ${shell_quote(ssh_key)} ]; then echo ${shell_quote(`Cannot read the SSH key ${ssh_key} on this host`)}; exit 2; fi`,
-    "t=$(mktemp -d) || exit 1",
-    `trap 'rm -rf "$t"' EXIT`,
-  ];
-  const anywhere = [
-    shell_quote(tool),
-    "--flake", shell_quote(`${request.flake}#${request.configuration}`),
-    "--target-host", shell_quote(`${request.user}@${request.address}`),
-    "--ssh-port", String(request.port),
-    "-i", shell_quote(ssh_key),
-  ];
-  if (public_line !== null) {
-    // The copied folder becomes the new system's root, so it and every folder in it keep the modes those folders need.
-    lines.push('mkdir -m 755 "$t/extra" || exit 1');
-    for (const folder of key_folders(settings.agent_key_path)) lines.push(`mkdir -m ${folder.mode} "$t/extra/"${shell_quote(folder.path)} || exit 1`);
-    const key_file = `"$t/extra/"${shell_quote(settings.agent_key_path.replace(/^\/+/, ""))}`;
-    lines.push(`(umask 077 && cat > ${key_file}) || exit 1`);
-    lines.push(`if [ ! -s ${key_file} ]; then echo "The new host's agent key did not arrive"; exit 2; fi`);
-    anywhere.push("--extra-files", '"$t/extra"');
-  }
-  if (request.generate_hardware_config) anywhere.push("--generate-hardware-config", "nixos-generate-config", hardware);
-  if (request.stop_after_partitioning) anywhere.push("--phases", "kexec,disko");
-  anywhere.push(...settings.nixos_anywhere_args.map(shell_quote));
-  lines.push(`${anywhere.join(" ")} </dev/null`, "rc=$?");
-  if (request.generate_hardware_config) {
-    lines.push(`if [ -s ${hardware} ]; then echo "${hardware_mark}"; cat ${hardware}; echo; echo "${hardware_mark} end"; fi`);
-  }
-  lines.push('exit "$rc"');
-  return lines.join("\n");
+  return {
+    kind: "install",
+    record: { ...record },
+    tool: settings.nixos_anywhere_bin,
+    ssh_key: settings.ssh_key ?? "",
+    agent_key_path: public_line === null ? null : settings.agent_key_path,
+    generate_hardware_config: request.generate_hardware_config,
+    stop_after_partitioning: request.stop_after_partitioning,
+    extra_args: settings.nixos_anywhere_args,
+  };
 }
 
 // What an install job's command says it installs, or null when it holds no record.
 export function parse_install_record(command: string): InstallRecord | null {
-  return parse_record<InstallRecord>(command, install_mark);
-}
-
-// The JSON on the comment line that starts with the mark, or null when there is none.
-function parse_record<Shape>(command: string, mark: string): Shape | null {
-  const line = command.split("\n").find((text) => text.startsWith(`# ${mark} `));
-  if (line === undefined) return null;
-  try {
-    return JSON.parse(line.slice(mark.length + 3)) as Shape;
-  } catch {
-    return null;
-  }
+  const operation = operation_of(command);
+  const inner = operation === null ? null : innermost(operation);
+  return inner?.kind === "install" ? (inner.record as unknown as InstallRecord) : null;
 }
 
 // The hardware configuration an install printed, or null when it printed none.
@@ -211,11 +157,6 @@ export function agent_snippet(host: string, agent_key_path: string, agent_url: s
 
 // ── Media ────────────────────────────────────────────────────────────────────
 
-// A Nix string literal holding the text as it is.
-export function nix_string(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("${", "\\${")}"`;
-}
-
 function nix_attribute(name: string): string {
   return /^[A-Za-z_][A-Za-z0-9_'-]*$/.test(name) ? name : nix_string(name);
 }
@@ -247,24 +188,23 @@ export function media_expression(flake: string, configuration: string, format: M
 }
 
 // Builds the medium with a link in the media folder that roots it, then prints the store path the link points to.
-export function media_command(settings: ProvisioningSettings, media_root_dir: string, flake: string, configuration: string, format: MediaFormat, link_name: string): string {
-  const nix = [shell_quote(settings.nix_bin), ...settings.nix_args.map(shell_quote)].join(" ");
-  const link = shell_quote(`${media_root_dir.replace(/\/+$/, "")}/${link_name}`);
+export function media_operation(settings: ProvisioningSettings, media_root_dir: string, flake: string, configuration: string, format: MediaFormat, link_name: string): MediaOperation {
   const record: MediaRecord = { flake, configuration, format };
-  const lines = [
-    `# ${media_record_mark} ${JSON.stringify(record)}`,
-    `if ! command -v ${shell_quote(settings.nix_bin)} >/dev/null 2>&1; then echo ${shell_quote(`${settings.nix_bin} is not on this host's PATH`)}; exit ${missing_tool_exit_code}; fi`,
-    `mkdir -p ${shell_quote(media_root_dir)} || exit 1`,
-    // A flake named by path or branch is not locked, which getFlake only reads when impure.
-    `${nix} build --impure --print-build-logs --out-link ${link} --expr ${shell_quote(media_expression(flake, configuration, format))} || exit $?`,
-    `echo "${media_mark} $(readlink -f ${link})"`,
-  ];
-  return lines.join("\n");
+  return {
+    kind: "media",
+    nix: [settings.nix_bin, ...settings.nix_args],
+    record,
+    media_root_dir,
+    link: `${media_root_dir.replace(/\/+$/, "")}/${link_name}`,
+    expression: media_expression(flake, configuration, format),
+  };
 }
 
 // What a media build's command says it builds, or null when it holds no record.
 export function parse_media_record(command: string): MediaRecord | null {
-  return parse_record<MediaRecord>(command, media_record_mark);
+  const operation = operation_of(command);
+  const inner = operation === null ? null : innermost(operation);
+  return inner?.kind === "media" ? (inner.record as MediaRecord) : null;
 }
 
 // The store path a media build printed, or null when it printed none.
