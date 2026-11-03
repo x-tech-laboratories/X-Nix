@@ -281,7 +281,7 @@ function agent_keys(raw: unknown): Map<string, string> {
   return keys;
 }
 
-// Each host maps to its MAC address, or to an object of `mac`, `broadcast`, `port` and `timeout`.
+// Each host maps to its MAC address, or to an object of `mac`, `broadcast`, `port`, `timeout`, `via` and `keep_awake`.
 function wake_settings(raw: unknown): Map<string, WakeSettings> {
   if (raw === undefined || raw === null) return new Map();
   if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("`wake_on_lan` must map each host to its MAC address or wake settings");
@@ -295,7 +295,10 @@ function wake_settings(raw: unknown): Map<string, WakeSettings> {
     if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
     const port = read.limit("port", 9) ?? 9;
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
-    settings.set(host, { mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m") });
+    settings.set(host, {
+      mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"),
+      via: read.text("via"), keep_awake: read.flag("keep_awake", true),
+    });
   }
   return settings;
 }

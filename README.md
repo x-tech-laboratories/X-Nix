@@ -347,13 +347,16 @@ connected.
 ### Wake-on-LAN
 
 A host listed under `wake_on_lan` is woken before an operation on it when its agent is not connected:
-X-Nix sends a magic packet from the server and waits for the agent to dial in, then starts the
-operation. A job appears at once with the progress `Waking <host>` and starts its run once the agent
+X-Nix sends a magic packet, from the server or from the agent `via` names, and waits for the agent
+to dial in, then starts the operation. A job appears at once with the progress `Waking <host>` and starts its run once the agent
 is back, or fails with the reason when it does not come back within `timeout`; Reboot, Set next boot
 and a download wait for the host instead. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's
 Build, Push and Build all, an install or media build run by that host, and a build product's download
 all wake it, whether started by hand, on a schedule or by a fleet run. The periodic read, evaluation
-and cache check never do, so a sleeping host reads as unreachable until something wakes it. Each
+and cache check never do, so a sleeping host reads as unreachable until something wakes it. With
+`keep_awake`, every job on the host, woken or not, holds a `systemd-inhibit --what=idle:sleep`
+inhibitor there until it ends, the same way `inhibit_sleep` holds one for a switch, so the host's own
+idle suspend cannot cut it off. Each
 host maps to its MAC address, or to an object of these settings:
 
 ```json
@@ -366,6 +369,8 @@ host maps to its MAC address, or to an object of these settings:
 | `broadcast` | `255.255.255.255` | Where the packet is sent, such as the host's subnet broadcast. |
 | `port`      | `9`               | The UDP port the packet is sent to.                           |
 | `timeout`   | `3m`              | How long to wait for the agent before the operation fails.    |
+| `via`       | the server        | The host whose agent sends the packet with `wakeonlan`, for a host on another network. |
+| `keep_awake` | `true`           | Hold off idle and sleep on the host while any job runs there. |
 
 ### Pull mode
 

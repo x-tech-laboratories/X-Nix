@@ -50,6 +50,10 @@ let
     ++ [
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
     ]
+    # The inhibitor every job holds on a host listed under wake_on_lan.
+    ++ [
+      "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
+    ]
     # post_switch, run as root.
     ++ [ "/bin/sh -c *" ]
     # A switch over SSH to target_host logs in with root's own SSH setup, as nixos-rebuild does.

@@ -1028,7 +1028,7 @@ describe("live build progress", () => {
 // ── Sleeping host ────────────────────────────────────────────────────────────
 
 describe("a sleeping host that can be woken", () => {
-  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout }]]);
+  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null, keep_awake: true }]]);
 
   it("gets its job at once as waking, and the run starts once its agent dials in", async () => {
     const pi = new FakeAgent();

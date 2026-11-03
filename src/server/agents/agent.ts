@@ -4,7 +4,7 @@
 
 import type { LongRun, LongRunPoll, RunResult } from "../../shared/agent_protocol.ts";
 import { format_duration } from "../durations.ts";
-import { send_magic_packet, type SendWake, type WakeSettings } from "./wake.ts";
+import { send_magic_packet, wake_command, type SendWake, type WakeSettings } from "./wake.ts";
 
 export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared/agent_protocol.ts";
 
@@ -32,6 +32,8 @@ export interface Agent {
   // Removes an ended long run's output from the host.
   forget(run_id: string): Promise<void>;
 }
+
+const wake_command_timeout_in_seconds = 30;
 
 // ── Pool ─────────────────────────────────────────────────────────────────────
 
@@ -114,7 +116,7 @@ export class AgentPool {
       this.waiting.set(name, (this.waiting.get(name) ?? new Set()).add(on_arrival));
     });
     try {
-      await this.send_wake(settings);
+      await (settings.via === null ? this.send_wake(settings) : this.send_through(settings.via, settings));
     } catch (error) {
       stop_waiting();
       return new MissingAgent(name, `Could not wake ${name}: ${(error as Error).message}`);
@@ -122,6 +124,17 @@ export class AgentPool {
 
     if (!(await arrived)) return new MissingAgent(name, `${name} was sent a wake-on-LAN packet, but its agent did not connect within ${format_duration(settings.timeout)}`);
     return this.get(name);
+  }
+
+  // Sends the packet from another host's agent on the sleeping host's network.
+  private async send_through(via: string, settings: WakeSettings): Promise<void> {
+    const result = await this.get(via).run(wake_command(settings), wake_command_timeout_in_seconds);
+    if (result.exit_code !== 0) throw new Error(`${via} could not send the packet: ${(result.stderr || result.stdout).trim().slice(0, 200)}`);
+  }
+
+  // Whether every job on a host holds off idle and sleep until it ends.
+  keeps_awake(host: string | null): boolean {
+    return this.wake_settings.get(host ?? this.own_host)?.keep_awake === true;
   }
 
   // Whether a host's agent is away and the host can be woken.

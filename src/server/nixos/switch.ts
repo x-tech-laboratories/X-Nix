@@ -15,6 +15,7 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { with_inhibitor } from "../agents/wake.ts";
 import type { DeploymentSettings } from "../config.ts";
 import { format_duration } from "../durations.ts";
 import { shell_quote, switch_command, switch_from_cache_command, type SwitchMode } from "./commands.ts";
@@ -324,18 +325,7 @@ export function inhibitor_words(settings: DeploymentSettings): string {
 // Runs the command with inhibit_sleep's inhibitor held through a pipe only this shell keeps open, so it ends with the run.
 export function kept_awake(settings: DeploymentSettings, command: string): string {
   if (!settings.inhibit_sleep) return command;
-  const warning = shell_quote("Could not keep the host awake during the switch; switching anyway");
-  return [
-    'if hold=$(mktemp -d) && mkfifo "$hold/pipe"; then',
-    `  { ${on_host(settings, inhibitor_words(settings))} > /dev/null || echo ${warning}; } < "$hold/pipe" &`,
-    '  exec 9> "$hold/pipe"',
-    '  rm -rf "$hold"',
-    "else",
-    `  echo ${warning}`,
-    "fi",
-    // The switch runs without the pipe, so nothing it leaves running, such as the watchdog, holds the inhibitor.
-    `sh -c ${shell_quote(command)} 9>&-`,
-  ].join("\n");
+  return with_inhibitor(on_host(settings, inhibitor_words(settings)), "Could not keep the host awake during the switch; switching anyway", command);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
