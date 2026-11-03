@@ -210,6 +210,7 @@ export interface Deployment {
   flake_id: string | null;
   host_name: string | null;
   cache_id: string | null;
+  evaluated_by: string | null;
   configuration: string | null;
   tags: string[];
   pin: string | null;

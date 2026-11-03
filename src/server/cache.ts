@@ -48,6 +48,16 @@ export interface CacheReading {
   rows: TargetRow[];
   // Absent from readings saved before Build all existed.
   build_all?: BuildAllOutcome | null;
+  // When the rows were last evaluated, which a check that could not run leaves alone; absent from older readings.
+  evaluated_epoch?: number | null;
+  // When the flake last changed and its oldest locked input, from the last check's metadata.
+  flake?: CheckedFlake | null;
+}
+
+export interface CheckedFlake {
+  last_modified_epoch: number | null;
+  oldest_input: string | null;
+  inputs_last_modified_epoch: number | null;
 }
 
 export interface CacheActionOutcome {
@@ -209,9 +219,12 @@ export class Cache {
         return this.save_unavailable(`Could not check the tracked targets: ${tail || finished.error || "no output"}`);
       }
       const rows = targets(this.settings).map(([name]) => target_row(this.settings, name, report.targets.get(name)));
-      const revision = report.metadata === null ? null : parse_metadata(report.metadata)?.revision ?? null;
+      const metadata = report.metadata === null ? null : parse_metadata(report.metadata);
       const extra: Message[] = finished.error === null ? [] : [{ level: "warning", text: `The check ended badly: ${finished.error}` }];
-      this.save_rows(rows, revision ?? this.reading()?.revision ?? null, extra);
+      const flake = metadata === null ? this.reading()?.flake ?? null : {
+        last_modified_epoch: metadata.last_modified_epoch, oldest_input: metadata.oldest_input, inputs_last_modified_epoch: metadata.inputs_last_modified_epoch,
+      };
+      this.save_rows(rows, metadata?.revision ?? this.reading()?.revision ?? null, extra, this.reading()?.build_all ?? null, flake);
       return;
     }
 
@@ -255,13 +268,16 @@ export class Cache {
   }
 
   // Saves a whole set of rows with their counts and worst-of status, keeping the last Build all unless given a new one.
-  private save_rows(rows: TargetRow[], revision: string | null, extra: Message[], build_all: BuildAllOutcome | null = this.reading()?.build_all ?? null): void {
+  private save_rows(
+    rows: TargetRow[], revision: string | null, extra: Message[], build_all: BuildAllOutcome | null = this.reading()?.build_all ?? null,
+    flake: CheckedFlake | null = this.reading()?.flake ?? null,
+  ): void {
     const built = rows.filter((row) => row.built === true).length;
     const pushed = rows.filter((row) => row.pushed_ok).length;
     const messages: Message[] = [{ level: "info", text: `${built} of ${rows.length} targets built, ${pushed} fully pushed` }];
     for (const row of rows) if (row.status !== "online") messages.push({ level: level_of_status[row.status], text: `${row.name}: ${row.summary}` });
     messages.push(...extra);
-    this.save_reading({ status: rows_status(rows), checked_epoch: this.now(), messages, revision, rows, build_all });
+    this.save_reading({ status: rows_status(rows), checked_epoch: this.now(), messages, revision, rows, build_all, evaluated_epoch: this.now(), flake });
   }
 
   private save_unavailable(text: string): void {
@@ -269,6 +285,7 @@ export class Cache {
     this.save_reading({
       status: "unavailable", checked_epoch: this.now(), messages: [{ level: "warning", text }],
       revision: previous?.revision ?? null, rows: previous?.rows ?? [], build_all: previous?.build_all ?? null,
+      evaluated_epoch: previous?.evaluated_epoch ?? null, flake: previous?.flake ?? null,
     });
   }
 

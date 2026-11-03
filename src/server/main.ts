@@ -55,7 +55,9 @@ const provisioner = new Provisioner(config.provisioning, {
 accept_agent_keys(provisioner.agent_keys());
 const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents })]));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
-const deployments = config.deployments.map((settings) => new Deployment(settings, { store, agents, caches, host: hosts.get(settings.host ?? server_name) }));
+const deployments = config.deployments.map((settings) => new Deployment(settings, {
+  store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),
+}));
 // An update that moved a flake's lock has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {
   for (const deployment of deployments.filter((candidate) => candidate.settings.flake_id === flake.id)) {

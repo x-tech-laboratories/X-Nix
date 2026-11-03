@@ -130,6 +130,8 @@ export interface DeploymentOptions {
   caches?: Cache[];
   // The host the deployment runs on, which reboots it.
   host?: Host;
+  // Has the cache that evaluates for this deployment check now, as a push or a person asks.
+  check_cache?: (cache: Cache) => void;
 }
 
 // What a request for the package diff answers: the diff, or why there is none.
@@ -184,6 +186,7 @@ export class Deployment {
   private readonly http_check: (url: string) => Promise<string | null>;
   private readonly caches: Cache[];
   readonly host: Host | null;
+  private readonly check_cache: (cache: Cache) => void;
   // Switch jobs this server has confirmed or told to roll back, which need nothing more from it.
   private readonly tended_switches = new Set<number>();
   // When each switch first waited for its HTTP checks.
@@ -197,6 +200,7 @@ export class Deployment {
     this.http_check = options.http_check ?? fetch_check;
     this.caches = options.caches ?? [];
     this.host = options.host ?? null;
+    this.check_cache = options.check_cache ?? (() => {});
   }
 
   get id(): string {
@@ -217,8 +221,17 @@ export class Deployment {
     return this.store.running_job(this.id, main_job_kinds);
   }
 
+  // The deployment's own running evaluation, or the check of the cache that evaluates for it.
   running_evaluation(): Job | null {
-    return this.store.running_job(this.id, ["eval"]);
+    const own = this.store.running_job(this.id, ["eval"]);
+    if (own !== null) return own;
+    const job = this.evaluating_cache()?.cache.running_job() ?? null;
+    return job !== null && (job.kind === "check" || job.kind === "build-all") ? job : null;
+  }
+
+  // The cache whose check evaluates this deployment's system in its place, or null when it evaluates on its own.
+  evaluating_cache(): { cache: Cache; name: string } | null {
+    return this.builds_in_cache();
   }
 
   // Whether the deployment is waiting on a long run, so the poller looks again sooner.
@@ -297,6 +310,8 @@ export class Deployment {
   // Asks for an evaluation on the next cycle, even one that follows an evaluation running now, as after a push.
   request_evaluation(): void {
     this.force_eval = true;
+    const evaluating = this.evaluating_cache();
+    if (evaluating !== null) this.check_cache(evaluating.cache);
   }
 
   // Whether the deployment waits on a fresh evaluation before its drift can be trusted.
@@ -307,7 +322,7 @@ export class Deployment {
   // Runs one cycle; asked for by a person, it evaluates unless an evaluation is already running.
   cycle(options: { force_eval?: boolean } = {}): Promise<void> {
     return this.serial(async () => {
-      if (options.force_eval && this.running_evaluation() === null) this.force_eval = true;
+      if (options.force_eval && this.running_evaluation() === null) this.request_evaluation();
       const job = this.running_job();
       if (job !== null) return this.poll_job(job);
       if (this.auto_switch_due !== null) return this.launch_auto_switch(this.auto_switch_due);
@@ -324,9 +339,11 @@ export class Deployment {
   }
 
   private async probe_cycle(): Promise<void> {
-    const evaluation_job = this.running_evaluation();
+    const evaluation_job = this.store.running_job(this.id, ["eval"]);
+    const from_cache = evaluation_job === null ? this.evaluating_cache() : null;
     let evaluating: Promise<Evaluation | null> = Promise.resolve(null);
     if (evaluation_job !== null) evaluating = this.poll_evaluation(evaluation_job);
+    else if (from_cache !== null) evaluating = Promise.resolve(this.fold_cache_check(from_cache.cache, from_cache.name));
     // An evaluation on another host needs the target's attribute name, which the first probe supplies.
     else if (this.due_for_evaluation() && !(this.settings.eval_agent !== null && this.attribute() === null)) evaluating = this.launch_evaluation();
     const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_script(), probe_timeout_in_seconds), evaluating]);
@@ -446,12 +463,38 @@ export class Deployment {
   }
 
   due_for_evaluation(): boolean {
+    if (this.evaluating_cache() !== null) return false;
     if (this.force_eval) return true;
     const evaluation = this.evaluation();
     if (evaluation.evaluated_epoch === null) return true;
     // A failed evaluation waits only retry_interval, so a fix is seen soon.
     const failed = evaluation.eval_error !== null || evaluation.metadata_error !== null;
     return this.now() - evaluation.evaluated_epoch >= (failed ? this.settings.retry_interval : this.settings.eval_interval);
+  }
+
+  // Takes the target, revision and flake facts the cache's last check found for this host's configuration, which a
+  // check that could not run leaves as they were.
+  private fold_cache_check(cache: Cache, name: string): Evaluation {
+    this.force_eval = false;
+    const evaluation = this.evaluation();
+    const reading = cache.reading();
+    const row = reading?.rows.find((candidate) => candidate.name === name);
+    if (reading == null || row === undefined || reading.evaluated_epoch == null) return evaluation;
+    evaluation.evaluated_epoch = reading.evaluated_epoch;
+    if (row.eval_error !== null) {
+      evaluation.eval_error = `${cache.settings.name} cache: ${row.eval_error}`;
+      evaluation.eval_unreachable = false;
+    } else if (row.target !== null) {
+      evaluation.target = row.target;
+      evaluation.eval_error = null;
+      evaluation.eval_unreachable = false;
+    }
+    evaluation.flake_revision = reading.revision;
+    evaluation.flake_last_modified_epoch = reading.flake?.last_modified_epoch ?? evaluation.flake_last_modified_epoch;
+    evaluation.oldest_input = reading.flake?.oldest_input ?? evaluation.oldest_input;
+    evaluation.inputs_last_modified_epoch = reading.flake?.inputs_last_modified_epoch ?? evaluation.inputs_last_modified_epoch;
+    evaluation.metadata_error = null;
+    return evaluation;
   }
 
   // Starts the evaluation, answering with a failed evaluation if it could not start.

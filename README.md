@@ -283,7 +283,11 @@ evaluation, and an address sending ten unsigned deliveries is turned away for fi
 
 A deployment naming a cache by its id in `cache` is built by it: the deployment's Build builds its
 configuration in the cache, as the cache's own job, unless the deployment is pinned off the branch
-head the cache builds, and a switch from the cache fetches from the cache's `cache_url`.
+head the cache builds, and a switch from the cache fetches from the cache's `cache_url`. Such a
+deployment is also evaluated by the cache: it takes its target, the flake's revision and when the
+flake last changed from the cache's last check of its configuration instead of evaluating on its own,
+so the fleet is evaluated once per check. Check now, a push and a fleet run's sync ask the cache to
+check at once. A pinned deployment evaluates on its own, as its pin is not what the cache builds.
 
 The config file may also list `caches`, each a host that builds closures for the fleet and the Attic
 cache they are pushed to. Every `interval` the host runs one check: it evaluates every tracked

@@ -162,6 +162,8 @@ export interface DeploymentView {
   host_name: string | null;
   // The cache that builds its system, or null when it builds on its own.
   cache_id: string | null;
+  // The cache whose check evaluates its system in its place, or null when it evaluates on its own.
+  evaluated_by: string | null;
   configuration: string | null;
   tags: string[];
   // The commit or tag evaluation, build and switch use, or null for the branch head.
@@ -272,6 +274,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     switch_from_cache: settings.switch_from_cache,
     host_name: deployment.host?.name ?? null,
     cache_id: settings.cache_id,
+    evaluated_by: deployment.evaluating_cache()?.cache.id ?? null,
     reading: deployment.reading(),
     evaluation: deployment.evaluation(),
     evaluating: deployment.running_evaluation() !== null,

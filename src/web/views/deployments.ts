@@ -156,7 +156,8 @@ function details(deployment: Deployment): HTMLElement {
     ["Flake revision", code(evaluation.flake_revision)],
     ["Flake last changed", when(evaluation.flake_last_modified_epoch)],
     ["Oldest input", h("span", {}, evaluation.oldest_input ?? "—", " (", when(evaluation.inputs_last_modified_epoch), ")")],
-    ["Last evaluated", deployment.evaluating ? "evaluating now" : when(evaluation.evaluated_epoch)],
+    ["Last evaluated", h("span", {}, deployment.evaluating ? "evaluating now" : when(evaluation.evaluated_epoch),
+      deployment.evaluated_by === null ? "" : [" by the ", h("a", { href: link(["cache", deployment.evaluated_by]) }, deployment.evaluated_by), " cache's check"])],
     ["Last read", when(reading?.checked_epoch)],
   ];
   if (deployment.agents.eval !== deployment.host) rows.push(["Evaluates on", deployment.agents.eval ?? "this server"]);

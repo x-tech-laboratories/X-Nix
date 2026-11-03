@@ -53,6 +53,8 @@ export interface TargetRow {
   pushed: string;
   status: Status;
   summary: string;
+  // Why the target's evaluation failed, or null when it evaluated or was not checked.
+  eval_error: string | null;
 }
 
 // Starts every line a script reports on, so a build's own output is never read as a report.
@@ -337,10 +339,10 @@ export function parse_report(output: string): Report {
 export function target_row(settings: CacheSettings, name: string, facts: TargetFacts | undefined): TargetRow {
   const row: TargetRow = {
     name, target: null, built: null, local: true, own: null, missing_count: 0, missing: [], pushed_ok: false, pushed: "—",
-    status: "unavailable", summary: "Not checked",
+    status: "unavailable", summary: "Not checked", eval_error: null,
   };
   if (facts === undefined) return row;
-  if (facts.error !== undefined) return { ...row, status: "failed", summary: `Evaluation failed: ${facts.error.trim()}` };
+  if (facts.error !== undefined) return { ...row, status: "failed", summary: `Evaluation failed: ${facts.error.trim()}`, eval_error: facts.error.trim() };
 
   const built = facts.built === "1";
   const own = /^\d+$/.test(facts.own ?? "") ? Number(facts.own) : 0;

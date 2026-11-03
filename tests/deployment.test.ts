@@ -1167,3 +1167,57 @@ describe("a sleeping host that can be woken", () => {
     expect(deployment.running_job()).toBeNull();
   });
 });
+
+// ── Evaluated by its cache ───────────────────────────────────────────────────
+
+describe("a deployment its cache builds", () => {
+  const flake_epoch = clock.now - 7200;
+
+  function fed(values: Record<string, unknown> = {}) {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet", info_url: false }), {
+      store, agents: new AgentPool("host", agent), now: () => clock.now,
+    });
+    const checked: string[] = [];
+    const harness = make_deployment({ cache: "fleet", configuration: "host", ...values }, { store, agent, caches: [cache], check_cache: (asked) => checked.push(asked.id) });
+    const save_check = (row: Record<string, unknown>, evaluated_epoch = clock.now - 60) => store.save_cache_reading("fleet", {
+      status: "online", checked_epoch: evaluated_epoch, messages: [], revision: "a".repeat(40), evaluated_epoch,
+      flake: { last_modified_epoch: flake_epoch, oldest_input: "nixpkgs", inputs_last_modified_epoch: flake_epoch },
+      rows: [{ name: "host", target: target_closure, eval_error: null, ...row }],
+    });
+    return { ...harness, cache, checked, save_check };
+  }
+
+  it("takes its target and revision from the cache's check rather than evaluating on its own", async () => {
+    const harness = fed();
+    harness.save_check({});
+
+    await collect(harness);
+
+    expect(harness.agent.runs.some((run) => run.command.includes("@@x-nix-eval"))).toBe(false);
+    expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, flake_revision: "a".repeat(40), flake_last_modified_epoch: flake_epoch, evaluated_epoch: clock.now - 60 });
+    expect(harness.deployment.reading()?.up_to_date).toBe(false);
+  });
+
+  it("keeps its last target when the cache's evaluation of it fails, saying so", async () => {
+    const harness = fed();
+    harness.save_check({});
+    await collect(harness);
+    harness.save_check({ target: null, eval_error: "error: attribute 'host' missing" }, clock.now - 30);
+
+    await collect(harness);
+
+    expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: "Fleet cache: error: attribute 'host' missing" });
+  });
+
+  it("asks the cache to check when asked to evaluate, and evaluates on its own once pinned", async () => {
+    const harness = fed();
+    harness.deployment.request_evaluation();
+    expect(harness.checked).toEqual(["fleet"]);
+    expect(harness.deployment.due_for_evaluation()).toBe(false);
+
+    const pinned = fed({ pin: "v1" });
+    expect(await cycle(pinned)).toBeDefined();
+  });
+});
