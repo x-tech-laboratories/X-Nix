@@ -111,7 +111,10 @@ export interface DeploymentSettings {
   build_agent: string | null;
   build_args: string[];
   build_root_dir: string | null;
+  // The cache's URL, taken from the cache the deployment names when it names one.
   cache_url: string | null;
+  // The declared cache that builds the deployment's system, or null when it builds on its own.
+  cache_id: string | null;
   switch_agent: string | null;
   // Switch by fetching the evaluated closure from cache_url and activating it, rather than rebuilding on the host.
   switch_from_cache: boolean;
@@ -178,6 +181,8 @@ export interface CacheSettings {
   build_args: string[];
   build_root_dir: string | null;
   build_links: Record<string, string>;
+  // When Build all runs daily, local to the server.
+  build_at: TimeOfDay | null;
   push_command: string | null;
   // Targets kept only in the cache once fully pushed.
   drop_pushed: string[];
@@ -272,8 +277,9 @@ export function parse_config(raw: unknown, own_host = hostname()): Config {
   };
   const flakes = list("flakes").map((entry, index) => flake_settings(entry, index));
   const by_id = new Map(flakes.map((flake) => [flake.id, flake]));
-  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id, host_of));
   const parsed_caches = list("caches").map((entry, index) => cache_settings(entry, index, by_id));
+  const caches_by_id = new Map(parsed_caches.map((cache) => [cache.id, cache]));
+  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id, host_of, caches_by_id));
   // Jobs and events are kept by id, so no two flakes, deployments or caches may share one.
   const seen = new Set<string>();
   for (const { id } of [...flakes, ...parsed, ...parsed_caches]) {
@@ -346,6 +352,9 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
 const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"];
+
+// The settings of a deployment's own build, which its cache takes over when it names one.
+const cache_only_keys = ["cache_url", "build_at", "build_agent", "build_root_dir"];
 
 // The settings that describe the machine, which only a host under hosts takes.
 const host_only_keys = ["gc", "boot", "require_sudo", "inhibit_sleep"];
@@ -436,6 +445,7 @@ export function cache_settings(entry: unknown, index = 0, flakes = new Map<strin
     build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
     build_root_dir: read.text("build_root_dir"),
     build_links: read.names("build_links"),
+    build_at: read.time_of_day("build_at"),
     push_command: read.text("push_command"),
     drop_pushed: read.list("drop_pushed", []),
     eval_jobs_bin: read.text("eval_jobs_bin") ?? "nix-eval-jobs",
@@ -453,9 +463,10 @@ function default_info_url(cache_url: string): string | null {
   return /^https?:\/\//.test(cache_url) ? `${cache_url.replace(/\/+$/, "")}/nix-cache-info` : null;
 }
 
-// The settings of one deployment, with the flake it names resolved and its host's sudo and sleep settings.
+// The settings of one deployment, with the flake and cache it names resolved and its host's sudo and sleep settings.
 export function deployment_settings(
   entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>(), host_of: (name: string | null) => HostSettings = (name) => host_settings({ id: name ?? "localhost" }),
+  caches = new Map<string, CacheSettings>(),
 ): DeploymentSettings {
   if (typeof entry !== "object" || entry === null) throw new ConfigError(`Deployment ${index + 1} must be an object`);
   const values = entry as Record<string, unknown>;
@@ -469,7 +480,12 @@ export function deployment_settings(
   const host = host_of(read.text("host"));
   const switch_agent = read.text("switch_agent");
   const eval_interval = read.duration("eval_interval", "1h");
-  const cache_url = read.text("cache_url");
+  const cache_id = read.text("cache");
+  const cache = cache_id === null ? null : caches.get(cache_id) ?? null;
+  if (cache_id !== null && cache === null) throw new ConfigError(`\`cache\` of ${read.owner} names no cache under caches: '${cache_id}'`);
+  const builds_alone = cache_only_keys.find((key) => values[key] !== undefined && values[key] !== null);
+  if (cache !== null && builds_alone !== undefined) throw new ConfigError(`\`${builds_alone}\` of ${read.owner} belongs to its cache '${cache_id}', which builds its system`);
+  const cache_url = cache?.cache_url ?? read.text("cache_url");
   const switch_from_cache = read.flag("switch_from_cache", false);
   if (switch_from_cache && cache_url === null) throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which needs a \`cache_url\` to fetch from`);
   const { flake, flake_id } = resolve_flake(read.text("flake") ?? "/etc/nixos", flakes);
@@ -504,6 +520,7 @@ export function deployment_settings(
     build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
     build_root_dir: read.text("build_root_dir"),
     cache_url,
+    cache_id,
     switch_agent,
     switch_from_cache,
     inhibit_sleep: host.keep_awake,

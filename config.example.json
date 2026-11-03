@@ -71,13 +71,11 @@
       "flake": "fleet",
       "configuration": "pi",
       "eval_agent": "server",
-      "build_agent": "server",
-      "build_root_dir": "/var/lib/x-nix/build-roots",
-      "cache_url": "https://attic.example/fleet",
       "switch_from_cache": true,
       "auto_switch": true,
       "magic_rollback": true,
-      "post_switch": "systemctl restart display-manager.service"
+      "post_switch": "systemctl restart display-manager.service",
+      "cache": "fleet-cache"
     }
   ],
   "fleet": {
@@ -106,7 +104,8 @@
       "push_command": "attic push fleet",
       "eval_workers": 2,
       "health_url": "https://attic.example/health",
-      "metrics_url": "https://attic.example/metrics"
+      "metrics_url": "https://attic.example/metrics",
+      "build_at": "04:00"
     }
   ],
   "provisioning": {

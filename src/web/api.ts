@@ -209,6 +209,7 @@ export interface Deployment {
   flake: string;
   flake_id: string | null;
   host_name: string | null;
+  cache_id: string | null;
   configuration: string | null;
   tags: string[];
   pin: string | null;
@@ -359,6 +360,9 @@ export interface Cache {
   flake_id: string | null;
   cache_url: string;
   interval: number;
+  build_at: string | null;
+  scheduled_build: number | null;
+  deployments: { id: string; name: string }[];
   can_push: boolean;
   build_all_refusal: string | null;
   reading: CacheReading | null;

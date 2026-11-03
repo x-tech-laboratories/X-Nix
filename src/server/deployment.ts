@@ -235,6 +235,11 @@ export class Deployment {
 
   // Why an action cannot run now, or null when it can.
   action_refusal(action: ActionId): string | null {
+    if (action === "build" && this.settings.cache_id !== null && this.pin() === null) {
+      const building = this.builds_in_cache();
+      if (building === null) return `The ${this.settings.cache_id} cache does not track ${this.attribute() ?? "this host's configuration"}`;
+      return building.cache.action_refusal("build", building.name);
+    }
     if (is_switch_kind(action) && this.settings.switch_from_cache && this.cached_target() === null) {
       return "Switching from the cache needs the store path of a successful evaluation; evaluate first";
     }
@@ -597,6 +602,8 @@ export class Deployment {
       const refusal = this.action_refusal(action);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       if (action === "reboot") return this.host === null ? { ok: false, message: "No host to reboot", job_id: null } : this.host.act("reboot", trigger);
+      const building = action === "build" ? this.builds_in_cache() : null;
+      if (building !== null) return building.cache.act("build", building.name, trigger === "manual" ? `deployment ${this.id}` : trigger);
       const command = this.command_for(action);
       if (is_switch_kind(action)) {
         const waiting = await this.build_in_cache_first(action, command, trigger);
@@ -614,13 +621,19 @@ export class Deployment {
   // ── Building in the cache before a switch ───────────────────────────────
 
   // The cache that builds this host's configuration into the cache it switches from, and its name for it there.
-  private building_cache(): { cache: Cache; name: string } | null {
+  building_cache(): { cache: Cache; name: string } | null {
     const name = this.attribute();
     const url = this.settings.cache_url;
     if (name === null || url === null) return null;
     const same = (other: string) => other.replace(/\/+$/, "") === url.replace(/\/+$/, "");
-    const cache = this.caches.find((candidate) => same(candidate.settings.cache_url) && candidate.settings.configurations.includes(name));
+    const cache = this.caches.find((candidate) => (this.settings.cache_id === null ? same(candidate.settings.cache_url) : candidate.id === this.settings.cache_id)
+      && candidate.settings.configurations.includes(name));
     return cache === undefined ? null : { cache, name };
+  }
+
+  // The cache that builds this deployment's system in its place: the one it names, unless it is pinned off the head the cache builds.
+  private builds_in_cache(): { cache: Cache; name: string } | null {
+    return this.settings.cache_id === null || this.pin() !== null ? null : this.building_cache();
   }
 
   // Starts a switch from the cache whose system the cache lacks as a job that waits on the cache building it, or answers

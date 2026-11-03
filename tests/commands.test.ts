@@ -322,6 +322,19 @@ describe("a host in the config", () => {
   });
 });
 
+// ── Caches in the config ─────────────────────────────────────────────────────
+
+describe("a cache a deployment names", () => {
+  const cache = { id: "fleet", flake: "/etc/nixos", configurations: ["odin"], cache_url: "https://attic.example/fleet" };
+
+  it("gives the deployment its URL, and takes over its own build settings", () => {
+    const config = parse_config({ caches: [cache], deployments: [{ id: "odin", cache: "fleet", switch_from_cache: true }] });
+    expect(config.deployments[0]).toMatchObject({ cache_id: "fleet", cache_url: "https://attic.example/fleet" });
+    expect(() => parse_config({ caches: [cache], deployments: [{ id: "odin", cache: "fleet", build_at: "04:00" }] })).toThrow(/belongs to its cache/);
+    expect(() => parse_config({ deployments: [{ id: "odin", cache: "fleet" }] })).toThrow(/names no cache/);
+  });
+});
+
 // ── Flake references ─────────────────────────────────────────────────────────
 
 describe("flake references", () => {

@@ -553,6 +553,21 @@ describe("switch from cache", () => {
 
   const lacking: [string, ReturnType<typeof result>] = ["build --dry-run --no-link", result(1)];
 
+  it("builds in the cache it names rather than on its own, unless pinned off the head the cache builds", async () => {
+    const harness = with_cache({ cache: "fleet", cache_url: undefined });
+
+    const outcome = await harness.deployment.act("build");
+
+    expect(outcome.ok).toBe(true);
+    expect(harness.cache.running_job()).toMatchObject({ kind: "build-target", trigger: "deployment host-deploy", deployment_id: "fleet" });
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(harness.deployment.settings.cache_url).toBe("https://cache.example/fleet/");
+
+    const pinned = with_cache({ cache: "fleet", cache_url: undefined, pin: "v1" });
+    expect((await pinned.deployment.act("build")).ok).toBe(true);
+    expect(pinned.deployment.running_job()?.kind).toBe("build");
+  });
+
   it("builds the system in the cache first when the cache lacks it, then switches from it under the same job", async () => {
     const harness = with_cache();
     await collect(harness);

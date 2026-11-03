@@ -571,3 +571,22 @@ describe("config", () => {
     expect(() => parse_config({ deployments: [{ id: "fleet" }], caches: [base] })).toThrow("Two flakes, deployments or caches");
   });
 });
+
+// ── Daily Build all ──────────────────────────────────────────────────────────
+
+describe("the daily Build all", () => {
+  it("never starts as soon as it is set, then runs in place of the check once its slot has passed", async () => {
+    const harness = make_cache({ build_at: "04:00" });
+    await harness.cache.cycle();
+    expect(harness.cache.running_job()?.kind).toBe("check");
+    harness.agent.end(harness.agent.last_run("--store")!, "", 0);
+    await harness.cache.cycle();
+
+    const handled = harness.store.evaluation<{ scheduled_build: number }>(harness.cache.id)!.scheduled_build;
+    harness.store.save_evaluation(harness.cache.id, { scheduled_build: handled - 86400 });
+    await harness.cache.cycle();
+
+    expect(harness.cache.running_job()).toMatchObject({ kind: "build-all", trigger: "schedule" });
+    expect(harness.cache.build_due()).toBeNull();
+  });
+});

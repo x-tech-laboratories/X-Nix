@@ -118,7 +118,8 @@ whose agent is not connected reads as unreachable.
 | `build_agent`       | the switch agent                  | The host that runs Build, so one host can warm the cache for others. |
 | `build_args`        | `--keep-going --print-build-logs` | Arguments for Build.                                                 |
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
-| `cache_url`         | none                              | Skip a build this cache already holds.                               |
+| `cache`             | none                              | The id of the cache that builds this host's system (see Caches); it gives the `cache_url`, and takes the place of `build_at`, `build_agent` and `build_root_dir`. |
+| `cache_url`         | none                              | Without `cache`, the cache a build skips what it holds of, and a switch from the cache fetches from. |
 | `switch_agent`      | the host                          | The host that runs switch.                                           |
 | `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
@@ -280,6 +281,10 @@ evaluation, and an address sending ten unsigned deliveries is turned away for fi
 
 ## Caches
 
+A deployment naming a cache by its id in `cache` is built by it: the deployment's Build builds its
+configuration in the cache, as the cache's own job, unless the deployment is pinned off the branch
+head the cache builds, and a switch from the cache fetches from the cache's `cache_url`.
+
 The config file may also list `caches`, each a host that builds closures for the fleet and the Attic
 cache they are pushed to. Every `interval` the host runs one check: it evaluates every tracked
 target from the flake, sees whether that store path is built, and asks the cache which of the
@@ -313,6 +318,7 @@ PATH; elsewhere, a host without it fails the job with a message saying so.
 | `build_args`     | `--keep-going --print-build-logs` | Arguments for Build.                                                    |
 | `build_root_dir` | none                              | Link each build here, so it stays rooted until the next replaces it.    |
 | `build_links`    | `<cache id>-<target>`             | Each target's link name under `build_root_dir`.                         |
+| `build_at`       | none                              | Run Build all daily at this local time, such as `04:00`, in place of that cycle's check. |
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
 | `eval_jobs_bin`  | `nix-eval-jobs`                   | The program Build all evaluates every target with.                      |

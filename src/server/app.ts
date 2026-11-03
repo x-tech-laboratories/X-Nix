@@ -160,6 +160,8 @@ export interface DeploymentView {
   flake_id: string | null;
   // The host it runs on, by its agent's name.
   host_name: string | null;
+  // The cache that builds its system, or null when it builds on its own.
+  cache_id: string | null;
   configuration: string | null;
   tags: string[];
   // The commit or tag evaluation, build and switch use, or null for the branch head.
@@ -212,6 +214,11 @@ export interface CacheView {
   flake_id: string | null;
   cache_url: string;
   interval: number;
+  // When Build all runs daily, and the last slot handled.
+  build_at: string | null;
+  scheduled_build: number | null;
+  // The deployments whose systems it builds.
+  deployments: FlakeUser[];
   can_push: boolean;
   // Why Build all cannot run now, or null when it can.
   build_all_refusal: string | null;
@@ -264,6 +271,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     auto_switch: settings.auto_switch,
     switch_from_cache: settings.switch_from_cache,
     host_name: deployment.host?.name ?? null,
+    cache_id: settings.cache_id,
     reading: deployment.reading(),
     evaluation: deployment.evaluation(),
     evaluating: deployment.running_evaluation() !== null,
@@ -282,7 +290,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
   };
 }
 
-function cache_view(cache: Cache): CacheView {
+function cache_view(cache: Cache, store_state: Store, deployments: Iterable<Deployment>): CacheView {
   const settings = cache.settings;
   return {
     id: settings.id,
@@ -292,6 +300,9 @@ function cache_view(cache: Cache): CacheView {
     flake_id: settings.flake_id,
     cache_url: settings.cache_url,
     interval: settings.interval,
+    build_at: clock(settings.build_at),
+    scheduled_build: store_state.evaluation<{ scheduled_build?: number }>(cache.id)?.scheduled_build ?? null,
+    deployments: [...deployments].filter((deployment) => deployment.settings.cache_id === settings.id).map(({ settings: { id, name } }) => ({ id, name })),
     can_push: settings.push_command !== null,
     build_all_refusal: cache.build_all_refusal(),
     reading: cache.reading(),
@@ -589,11 +600,11 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     return cache;
   };
 
-  app.get("/api/caches", async (): Promise<CacheView[]> => [...poller.caches.values()].map(cache_view));
+  app.get("/api/caches", async (): Promise<CacheView[]> => [...poller.caches.values()].map((cache) => cache_view(cache, store, poller.deployments.values())));
 
   app.get<{ Params: { id: string } }>("/api/caches/:id", async (request, reply) => {
     const cache = find_cache(request.params.id, reply);
-    return cache === null ? reply : cache_view(cache);
+    return cache === null ? reply : cache_view(cache, store, poller.deployments.values());
   });
 
   // Checks every target now, unless a job is already running.
@@ -601,7 +612,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const cache = find_cache(request.params.id, reply);
     if (cache === null) return reply;
     await poller.refresh(cache);
-    return cache_view(cache);
+    return cache_view(cache, store, poller.deployments.values());
   });
 
   // Builds every target in one job.

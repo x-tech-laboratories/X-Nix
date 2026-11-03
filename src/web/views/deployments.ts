@@ -165,6 +165,7 @@ function details(deployment: Deployment): HTMLElement {
   const build_at = deployment.schedule.build;
   if (build_at !== null) rows.push(["Daily build", h("span", {}, `at ${build_at}, last slot `, when(evaluation.scheduled.build))]);
   if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
+  if (deployment.cache_id !== null) rows.push(["Built by", h("a", { href: link(["cache", deployment.cache_id]) }, `the ${deployment.cache_id} cache`)]);
   if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
   rows.push(["Switch safety", safety_text(deployment)]);
   if (reading?.current) rows.push(["Closure browser", h("a", { href: link(["deployments", deployment.id, "closure"]) }, "Browse the running closure")]);

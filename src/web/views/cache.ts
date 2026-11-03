@@ -202,6 +202,9 @@ function details(cache: Cache): HTMLElement {
     ["Flake", flake_link(cache.flake_id, cache.flake)],
     ["Cache", code(cache.cache_url)],
     ["Checked every", `${Math.round(cache.interval / 60)} minutes`],
+    ["Daily Build all", cache.build_at === null ? "off" : h("span", {}, `at ${cache.build_at}, last slot `, cache.scheduled_build ? h("span", { title: stamp(cache.scheduled_build) }, age(cache.scheduled_build)) : "—")],
+    ["Builds for", cache.deployments.length === 0 ? "no deployment names it" : h("span", {}, ...cache.deployments.flatMap((deployment, index) => [
+      index === 0 ? "" : ", ", h("a", { href: link(["deployments", deployment.id]) }, deployment.name)]))],
     ["Last checked", cache.reading ? h("span", { title: stamp(cache.reading.checked_epoch) }, age(cache.reading.checked_epoch)) : "—"],
   ];
   for (const target of cache.targets) {

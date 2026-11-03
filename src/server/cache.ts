@@ -4,7 +4,8 @@
 // server; later cycles poll it every `job_poll`, and the finished run's whole output becomes the new reading. While it
 // runs the previous reading stands. A target whose evaluation fails is failed; one not yet built, or not fully pushed,
 // is `pending_status`. Each target can also be built or pushed by hand, one job at a time, and the job's own check of
-// that target updates its row once it ends. Build all builds every target in one job, keeping how each one's build ended.
+// that target updates its row once it ends. Build all builds every target in one job, keeping how each one's build ended,
+// and with `build_at` runs daily in place of that cycle's check.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ import {
 } from "./nixos/attic.ts";
 import { timed_out_exit_code } from "./nixos/commands.ts";
 import { parse_metadata } from "./nixos/flake.ts";
+import { latest_slot } from "./deployment.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, JobWithOutput, Store } from "./store.ts";
 import { format_duration } from "./durations.ts";
@@ -129,12 +131,38 @@ export class Cache {
 
   // ── Cycle ────────────────────────────────────────────────────────────────
 
-  // Follows the running job, or starts a check when none runs, and reads the cache server's endpoints beside either.
+  // Follows the running job, or starts a daily Build all that is due or else a check, and reads the cache server's endpoints beside it.
   cycle(): Promise<void> {
     return this.serial(async () => {
       const job = this.running_job();
-      await Promise.all([job !== null ? this.poll_job(job) : this.launch_check(), this.probe_server()]);
+      const slot = job === null ? this.build_due() : null;
+      const work = job !== null ? this.poll_job(job) : slot !== null ? this.launch_scheduled(slot) : this.launch_check();
+      await Promise.all([work, this.probe_server()]);
     });
+  }
+
+  // The latest daily Build all slot when it is newer than the one last handled; a schedule seen for the first time starts at its next slot.
+  build_due(): number | null {
+    if (this.settings.build_at === null) return null;
+    const slot = latest_slot(this.settings.build_at, this.now());
+    const handled = this.store.evaluation<{ scheduled_build?: number }>(this.id)?.scheduled_build;
+    if (handled === undefined) {
+      this.store.save_evaluation(this.id, { scheduled_build: slot });
+      return null;
+    }
+    return slot > handled ? slot : null;
+  }
+
+  private async launch_scheduled(slot: number): Promise<void> {
+    const launched = await this.launch("build-all", build_all_command(this.settings), "schedule");
+    // A host that never answered started nothing, so a later cycle may try again.
+    if (launched.unreachable) {
+      this.store.add_event(this.id, this.now(), "warning", `Could not start the scheduled Build all: ${launched.error}`);
+      return;
+    }
+    this.store.save_evaluation(this.id, { scheduled_build: slot });
+    if (launched.job_id === null) this.store.add_event(this.id, this.now(), "error", `Could not start the scheduled Build all: ${launched.error}`);
+    else this.store.add_event(this.id, this.now(), "info", "Scheduled Build all started");
   }
 
   // Saves what the cache server's endpoints answered, noting a change of their status once one was known.
@@ -256,14 +284,15 @@ export class Cache {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
-  act(action: CacheActionId, name: string): Promise<CacheActionOutcome> {
+  // Builds or pushes one target, naming in the job what started it, such as a person or a deployment.
+  act(action: CacheActionId, name: string, trigger = "manual"): Promise<CacheActionOutcome> {
     return this.serial(async () => {
       const refusal = this.action_refusal(action, name);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       const row = this.reading()?.rows.find((candidate) => candidate.name === name);
       const command = action === "build" ? build_command(this.settings, name) : push_command(this.settings, name, row!.target!);
       const what = `${action_words[action]} of ${name}`;
-      const launched = await this.launch(action_kinds[action], command);
+      const launched = await this.launch(action_kinds[action], command, trigger);
       if (launched.job_id === null) {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${what.toLowerCase()}: ${launched.error}`);
         return { ok: false, message: `Could not start the ${what.toLowerCase()}: ${launched.error}`, job_id: null };
@@ -288,22 +317,21 @@ export class Cache {
     });
   }
 
-  private async launch(kind: JobKind, command: string): Promise<{ job_id: number | null; error: string }> {
+  private async launch(kind: JobKind, command: string, trigger = kind === "check" ? "schedule" : "manual"): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for a build or push, but not for the periodic check.
       ({ waking } = await start_run(this.agents, this.settings.host, run_id, command, null, kind !== "check"));
     } catch (error) {
-      return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
+      return { job_id: null, error: error instanceof AgentError ? error.message : String(error), unreachable: error instanceof AgentError && error.unreachable };
     }
-    const trigger = kind === "check" ? "schedule" : "manual";
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command, agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
       track_wake(this.store, job_id, this.settings.host ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${kind}: ${error}`);
       });
     }
-    return { job_id, error: "" };
+    return { job_id, error: "", unreachable: false };
   }
 }
