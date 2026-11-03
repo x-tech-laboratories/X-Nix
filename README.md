@@ -243,7 +243,7 @@ unprivileged.
 
 ## Fleet
 
-The Fleet page runs Build, Switch or Reboot across many deployments at once. Pick them by
+The Deployments page runs Build, Switch or Reboot across many deployments at once. Pick them by
 checkbox, or with a selector of space-separated terms, each a glob on the id or name (`web-*`) or a
 tag (`@canary`); any term matching picks the deployment. No more than `parallel` run at once. Each
 host's part is an ordinary job whose trigger names the fleet run, and the run itself is kept in the

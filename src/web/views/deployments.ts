@@ -1,23 +1,106 @@
-// The Deployments pages: every deployment as a card, and one deployment with its drift, actions, pin, jobs and events.
+// The Deployments pages: every deployment in a table to run actions across, and one deployment with its drift, actions, pin, jobs and events.
 
-import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type Job } from "../api.ts";
+import {
+  api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Generation, type Job,
+} from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import {
-  action_button, deployment_card, diff_view, drift_state, events_list, flake_link, jobs_table, messages_list, refresh_interval_in_milliseconds, short_revision,
-  tag_chips, tile,
+  action_button, diff_view, drift_state, events_list, flake_link, fleet_status_table, jobs_table, messages_list, refresh_interval_in_milliseconds,
+  short_revision, tag_chips, tile,
   type View,
 } from "./shared.ts";
+import { action_labels, runs_table } from "./fleet.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
+// Every deployment in a table, picked by checkbox, glob or @tag to run one action across them, at once or stage by
+// stage, with the fleet runs below.
 export function deployments_view(): View {
-  const list = h("div");
-  const refresh = (quiet: boolean) => load(list, async () => {
-    const deployments = await api<Deployment[]>("/api/deployments");
-    if (deployments.length === 0) return empty("No deployments yet.", "Name each NixOS host and its flake under deployments in the config file.");
-    return h("div", { class: "grid" }, ...deployments.map(deployment_card));
+  const selected = new Set<string>();
+  let deployments: Deployment[] = [];
+  const table = h("div");
+  const runs = h("div");
+  const tags = h("div", { class: "chips" });
+  const count = h("span", { class: "muted" });
+  const selector = h("input", { type: "text", class: "filter", placeholder: "web-* @canary", "aria-label": "Selector" });
+  const staged = h("input", { type: "checkbox" });
+  const stages = h("textarea", { class: "stage-list", placeholder: "One stage per line, such as @canary", "aria-label": "Stages" });
+  const parallel = h("input", { type: "number", min: 1, step: 1, "aria-label": "At once" });
+  const buttons = h("div", { class: "head-actions" });
+  const run_section = section("Run on the picked", h("div", { class: "stack" },
+    h("div", { class: "toolbar" },
+      h("label", { class: "check" }, staged, "Staged rollout"),
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "Stages"), stages),
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "At once"), parallel)),
+    buttons));
+  run_section.hidden = true;
+
+  const draw_table = () => {
+    table.replaceChildren(deployments.length === 0
+      ? empty("No deployments yet.", "Name each NixOS host and its flake under deployments in the config file.")
+      : fleet_status_table(deployments, { selected, changed: show_count }));
+    show_count();
+  };
+  // The run controls show only while something is picked.
+  const show_count = () => {
+    count.textContent = `${selected.size} of ${deployments.length} picked`;
+    run_section.hidden = selected.size === 0;
+  };
+  const pick = (ids: string[]) => {
+    selected.clear();
+    for (const id of ids) selected.add(id);
+    draw_table();
+  };
+
+  const select = async () => {
+    try {
+      pick(await api<string[]>(`/api/fleet/select?selector=${encodeURIComponent(selector.value)}`));
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
+  };
+
+  const run = async (action: FleetActionId) => {
+    try {
+      const outcome = await api<FleetOutcome>("/api/fleet/runs", "POST", {
+        action, ids: [...selected], staged: staged.checked,
+        stages: staged.checked ? stages.value.split("\n").map((line) => line.trim()).filter(Boolean) : undefined,
+        parallel: parallel.value === "" ? undefined : Number(parallel.value),
+      });
+      toast(outcome.message, "good", outcome.run === null ? null : { href: link(["fleet", String(outcome.run.id)]), text: "Follow it" });
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
+    await refresh(true);
+  };
+
+  buttons.append(...(Object.keys(action_labels) as FleetActionId[]).map((action) => h("button", {
+    class: action === "reboot" ? "danger" : action === "switch" ? "accent solid" : null,
+    onclick: () => {
+      if (action === "build") return void run(action);
+      const names = deployments.filter((deployment) => selected.has(deployment.id)).map((deployment) => deployment.name).join(", ");
+      const how = staged.checked ? "stage by stage, stopping at the first failure" : "up to the parallel limit at once";
+      confirm_dialog(`${action_labels[action]} ${selected.size} deployments`, `${action_labels[action]} ${names}, ${how}?`, action_labels[action], () => run(action));
+    },
+  }, action_labels[action])));
+
+  let first = true;
+  const refresh = (quiet: boolean) => load(runs, async () => {
+    const [list, fleet] = await Promise.all([api<Deployment[]>("/api/deployments"), api<Fleet>("/api/fleet")]);
+    deployments = list;
+    draw_table();
+    if (first) {
+      first = false;
+      stages.value = fleet.stages.join("\n");
+      parallel.placeholder = String(fleet.parallel);
+    }
+    tags.replaceChildren(...fleet.tags.map((tag) => h("button", { class: "link", onclick: () => {
+      selector.value = `@${tag}`;
+      void select();
+    } }, `@${tag}`)));
+    return fleet.runs.length === 0 ? empty("No fleet runs yet.") : runs_table(fleet.runs);
   }, { quiet });
   void refresh(false);
   const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
@@ -26,8 +109,21 @@ export function deployments_view(): View {
     title: "Deployments",
     root: h("div", { class: "page" },
       h("h1", {}, "Deployments"),
-      h("p", { class: "muted" }, "Each NixOS host against what its flake evaluates to."),
-      list,
+      h("p", { class: "muted" }, "Each NixOS host against what its flake evaluates to. Pick some by checkbox, by a name glob or by @tag to run one action across them."),
+      h("div", {},
+        h("form", { class: "toolbar", onsubmit: (event: Event) => {
+          event.preventDefault();
+          void select();
+        } },
+          h("label", { class: "field" }, h("span", { class: "field-label" }, "Selector"), selector),
+          h("button", { type: "submit" }, "Pick"),
+          h("button", { type: "button", onclick: () => pick(deployments.map((deployment) => deployment.id)) }, "All"),
+          h("button", { type: "button", onclick: () => pick([]) }, "None"),
+          count),
+        tags,
+        table),
+      run_section,
+      section("Fleet runs", runs),
     ),
     dispose: () => clearInterval(timer),
   };

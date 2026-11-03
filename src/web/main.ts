@@ -11,7 +11,7 @@ import { closure_view } from "./views/closure.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { flake_view, flakes_view } from "./views/flakes.ts";
 import { host_view, hosts_view } from "./views/hosts.ts";
-import { fleet_run_view, fleet_view } from "./views/fleet.ts";
+import { fleet_run_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
 import { provision_view } from "./views/provision.ts";
@@ -41,7 +41,7 @@ function view_for(parts: string[]): View {
   if (section === "deployments" && id) return deployment_view(id);
   if (section === "deployments") return deployments_view();
   if (section === "fleet" && id && /^\d+$/.test(id)) return fleet_run_view(Number(id));
-  if (section === "fleet") return fleet_view();
+  if (section === "fleet") return deployments_view();
   if (section === "jobs" && id && /^\d+$/.test(id)) return job_view(Number(id));
   if (section === "jobs") return jobs_view();
   if (section === "builds") return builds_view();
@@ -61,8 +61,10 @@ function show(): void {
   current = view_for(route.parts);
   main.replaceChildren(current.root);
   document.title = `${current.title} · X-Nix`;
+  // Fleet runs live on the Deployments page, so their pages light it up.
+  const section = route.parts[0] === "fleet" ? "deployments" : route.parts[0] ?? "";
   for (const item of sidebar.querySelectorAll<HTMLAnchorElement>("a[data-section]")) {
-    const active = item.dataset.section === (route.parts[0] ?? "");
+    const active = item.dataset.section === section;
     item.classList.toggle("active", active);
     if (active) item.setAttribute("aria-current", "page");
     else item.removeAttribute("aria-current");
