@@ -86,10 +86,10 @@ Build or Build all (or anything else that pushes, such as `attic watch-store`), 
 fleet run that finds the cache without the system has the cache tracking the host's configuration at that
 `cache_url` build and push it first: its job shows the build, waits for the cache's running check if there is one,
 and starts the switch once the cache holds the system, or fails without touching the host when the build fails or
-brings a different system. With no such cache it starts at once, as before. An automatic
-switch waits until the cache holds the new system and the host can fetch every path of its closure, checking again
-every cycle, so drift seen before the nightly
-build reaches the cache switches once it does.
+brings a different system. An automatic switch does the same, once per target closure, so drift seen before the
+nightly build switches as soon as the cache has built it. With no such cache a manual switch starts at once, as before,
+and an automatic one waits until the cache holds the new system and the host can fetch every path of its closure,
+checking again every cycle.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host

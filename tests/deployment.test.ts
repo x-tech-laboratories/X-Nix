@@ -587,6 +587,29 @@ describe("switch from cache", () => {
     expect(harness.store.job(job.id)!.state).toBe("succeeded");
   });
 
+  it("builds the system in the cache first for an automatic switch too, once per target", async () => {
+    const harness = with_cache({ auto_switch: true, auto_switch_after: "30m" });
+    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    await collect(harness);
+    harness.agent.answers.push(lacking);
+
+    await cycle(harness);
+
+    const job = harness.deployment.running_job()!;
+    expect(job).toMatchObject({ kind: "switch", trigger: "automatic", progress: "Building host in the Fleet cache" });
+    expect(harness.cache.running_job()?.kind).toBe("build-target");
+    expect(harness.deployment.evaluation().auto_switch_target).toBe(target_closure);
+    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+
+    harness.agent.answers.splice(0);
+    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 0);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(job.run_id);
+  });
+
   it("fails the switch without starting it when the build in the cache fails", async () => {
     const harness = with_cache();
     await collect(harness);

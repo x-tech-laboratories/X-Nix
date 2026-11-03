@@ -15,8 +15,9 @@
 // A switch runs in one of nixos-rebuild's modes, from the cache with switch_from_cache, and with pre_switch_checks,
 // health checks or magic_rollback it runs guarded (see nixos/switch.ts): while it waits for confirmation, each poll runs
 // the HTTP checks and confirms, and once it ends its marker lines say whether it was refused or rolled back and why.
-// A switch from the cache whose system the cache does not hold yet has the cache that tracks the host build and push it
-// first: the switch's job shows that build, then starts its own run once the cache holds the system.
+// A switch from the cache, started by a person, a fleet run or the drift, whose system the cache does not hold yet has the
+// cache that tracks the host build and push it first: the switch's job shows that build, then starts its own run once the
+// cache holds the system. With no such cache an automatic switch waits for the nightly build instead.
 // Rollback activates any earlier generation of the system profile. Before a switch the page asks for the package diff between the running and the built closure,
 // which runs as a job and is kept with the evaluation, and the closure browser reads any generation's dependency graph.
 // A Build with build_progress reads nix's structured log into counts of what is building and downloading.
@@ -556,14 +557,25 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
-    // A switch from the cache before the build reaches it would fail, so it waits and every cycle checks again.
-    if (this.settings.switch_from_cache && !(await this.cache_holds(target))) {
-      if (this.cache_wait_target !== target) this.store.add_event(this.id, this.now(), "info", `Waiting for ${target} to reach the cache before switching automatically`);
-      this.cache_wait_target = target;
-      return;
+    const command = this.command_for("switch");
+    if (this.settings.switch_from_cache) {
+      // A cache that builds this host builds the missing system for the switch, as for one a person starts.
+      const building = await this.build_in_cache_first("switch", command, "automatic");
+      if (building !== null) {
+        this.cache_wait_target = null;
+        const evaluation = this.evaluation();
+        evaluation.auto_switch_target = target;
+        this.store.save_evaluation(this.id, evaluation);
+        return;
+      }
+      // With no cache to build it, a switch from the cache before the build reaches it would fail, so it waits and every cycle checks again.
+      if (this.building_cache() === null && !(await this.cache_holds(target))) {
+        if (this.cache_wait_target !== target) this.store.add_event(this.id, this.now(), "info", `Waiting for ${target} to reach the cache before switching automatically`);
+        this.cache_wait_target = target;
+        return;
+      }
     }
     this.cache_wait_target = null;
-    const command = this.command_for("switch");
     const launched = await this.launch("switch", command, "automatic", false);
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
@@ -667,7 +679,8 @@ export class Deployment {
     this.save_cache_build({ job_id, cache: building.cache.id, target_name: building.name, target, build_job_id: null });
     await this.advance_cache_build(this.store.job(job_id)!, this.evaluation().cache_build!);
     const noun = job_noun(kind);
-    this.store.add_event(this.id, this.now(), "info", `${capitalise(noun)} started; building ${building.name} in the ${cache_name} cache first`);
+    const started = trigger === "automatic" ? `Automatic ${noun}` : capitalise(noun);
+    this.store.add_event(this.id, this.now(), "info", `${started} started; building ${building.name} in the ${cache_name} cache first`);
     return { ok: true, message: `Building ${building.name} in the ${cache_name} cache first; the ${noun} starts once it is pushed`, job_id };
   }
 
