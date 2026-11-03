@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 
 import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
+import type { WakeSettings } from "./agents/wake.ts";
 import { parse_duration } from "./durations.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 
@@ -182,6 +183,8 @@ export interface Config {
   provisioning: ProvisioningSettings;
   // Each other host's agent key, as its OpenSSH public key line.
   agents: Map<string, string>;
+  // How each host that sleeps is woken before an operation on it.
+  wake_on_lan: Map<string, WakeSettings>;
   fleet: FleetSettings;
 }
 
@@ -226,6 +229,7 @@ export function parse_config(raw: unknown): Config {
   return {
     deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
     agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
+    wake_on_lan: wake_settings((raw as { wake_on_lan?: unknown } | null)?.wake_on_lan),
     fleet: fleet_settings((raw as { fleet?: unknown } | null)?.fleet),
   };
 }
@@ -275,6 +279,25 @@ function agent_keys(raw: unknown): Map<string, string> {
     keys.set(host, line);
   }
   return keys;
+}
+
+// Each host maps to its MAC address, or to an object of `mac`, `broadcast`, `port` and `timeout`.
+function wake_settings(raw: unknown): Map<string, WakeSettings> {
+  if (raw === undefined || raw === null) return new Map();
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("`wake_on_lan` must map each host to its MAC address or wake settings");
+  const settings = new Map<string, WakeSettings>();
+  for (const [host, entry] of Object.entries(raw)) {
+    const fields = typeof entry === "string" ? { mac: entry } : entry;
+    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) throw new ConfigError(`The wake-on-LAN settings of '${host}' must be its MAC address or an object`);
+    const owner = `the wake-on-LAN settings of '${host}'`;
+    const read = new Reader(fields as Record<string, unknown>, owner);
+    const mac = read.text("mac");
+    if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
+    const port = read.limit("port", 9) ?? 9;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
+    settings.set(host, { mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m") });
+  }
+  return settings;
 }
 
 export function cache_settings(entry: unknown, index = 0): CacheSettings {

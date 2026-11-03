@@ -3,6 +3,8 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { LongRun, LongRunPoll, RunResult } from "../../shared/agent_protocol.ts";
+import { format_duration } from "../durations.ts";
+import { send_magic_packet, type SendWake, type WakeSettings } from "./wake.ts";
 
 export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared/agent_protocol.ts";
 
@@ -37,8 +39,8 @@ export interface Agent {
 class MissingAgent implements Agent {
   private readonly message: string;
 
-  constructor(name: string) {
-    this.message = `No agent named '${name}' is connected`;
+  constructor(name: string, message = `No agent named '${name}' is connected`) {
+    this.message = message;
   }
 
   async run(): Promise<RunResult> {
@@ -60,14 +62,25 @@ class MissingAgent implements Agent {
 export class AgentPool {
   private readonly agents = new Map<string, Agent>();
   readonly own_host: string;
+  private readonly send_wake: SendWake;
+  private wake_settings = new Map<string, WakeSettings>();
+  // Who waits on each host's agent to dial in after waking it.
+  private readonly waiting = new Map<string, Set<() => void>>();
 
-  constructor(own_host: string, own_agent: Agent) {
+  constructor(own_host: string, own_agent: Agent, send_wake: SendWake = send_magic_packet) {
     this.own_host = own_host;
     this.agents.set(own_host, own_agent);
+    this.send_wake = send_wake;
+  }
+
+  // Takes how each host that sleeps is woken.
+  set_wake(settings: Map<string, WakeSettings>): void {
+    this.wake_settings = settings;
   }
 
   add(host: string, agent: Agent): void {
     this.agents.set(host, agent);
+    for (const arrived of this.waiting.get(host) ?? []) arrived();
   }
 
   remove(host: string): void {
@@ -78,5 +91,34 @@ export class AgentPool {
   get(host: string | null): Agent {
     const name = host ?? this.own_host;
     return this.agents.get(name) ?? new MissingAgent(name);
+  }
+
+  // The agent for a host, waking the host first when its agent is away and it can be woken; for operations, not reads.
+  async awake(host: string | null): Promise<Agent> {
+    const name = host ?? this.own_host;
+    const settings = this.wake_settings.get(name);
+    if (this.agents.has(name) || settings === undefined) return this.get(name);
+
+    let stop_waiting = () => {};
+    const arrived = new Promise<boolean>((resolve) => {
+      const on_arrival = () => finish(true);
+      const timer = setTimeout(() => finish(false), settings.timeout * 1000);
+      const finish = (outcome: boolean) => {
+        clearTimeout(timer);
+        this.waiting.get(name)?.delete(on_arrival);
+        resolve(outcome);
+      };
+      stop_waiting = () => finish(false);
+      this.waiting.set(name, (this.waiting.get(name) ?? new Set()).add(on_arrival));
+    });
+    try {
+      await this.send_wake(settings);
+    } catch (error) {
+      stop_waiting();
+      return new MissingAgent(name, `Could not wake ${name}: ${(error as Error).message}`);
+    }
+
+    if (!(await arrived)) return new MissingAgent(name, `${name} was sent a wake-on-LAN packet, but its agent did not connect within ${format_duration(settings.timeout)}`);
+    return this.get(name);
   }
 }

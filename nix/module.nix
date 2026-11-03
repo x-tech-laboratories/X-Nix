@@ -25,6 +25,7 @@ let
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
     inherit (cfg) agents provisioning fleet;
+    wake_on_lan = cfg.wakeOnLan;
   };
 in
 {
@@ -107,6 +108,20 @@ in
         Each other host's agent key, as the OpenSSH public key line of the key its
         `services.x-nix-agent.keyFile` holds. Only a host named here can dial in on `/api/agent`.
       '';
+    };
+
+    wakeOnLan = mkOption {
+      type = json.type;
+      default = { };
+      example = {
+        thor = "aa:bb:cc:dd:ee:ff";
+        odin = {
+          mac = "aa:bb:cc:dd:ee:01";
+          broadcast = "192.168.1.255";
+          timeout = "5m";
+        };
+      };
+      description = "The hosts woken by a magic packet before an operation on them, each by its MAC address or the settings README.md lists.";
     };
 
     provisioning = mkOption {

@@ -291,7 +291,8 @@ export class Cache {
   private async launch(kind: JobKind, command: string): Promise<{ job_id: number | null; error: string }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     try {
-      await this.agents.get(this.settings.host).start(run_id, command);
+      // A sleeping host is woken for a build or push, but not for the periodic check.
+      await (kind === "check" ? this.agents.get(this.settings.host) : await this.agents.awake(this.settings.host)).start(run_id, command);
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
     }

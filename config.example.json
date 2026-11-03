@@ -62,6 +62,9 @@
       "metrics_url": "https://attic.example/metrics"
     }
   ],
+  "wake_on_lan": {
+    "pi": "aa:bb:cc:dd:ee:ff"
+  },
   "provisioning": {
     "ssh_key": "/var/lib/x-nix/install_key",
     "agent_url": "wss://nix.example.org/api/agent"

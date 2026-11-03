@@ -630,7 +630,7 @@ export class Deployment {
   // The reboot is for the probed host itself, and runs as a command rather than a job that would die with it.
   private async reboot(trigger: string): Promise<ActionOutcome> {
     const command = reboot_command(this.settings);
-    const result = await this.agents.get(this.settings.host).run(command, reboot_timeout_in_seconds);
+    const result = await (await this.agents.awake(this.settings.host)).run(command, reboot_timeout_in_seconds);
     const job_id = this.store.create_job({
       deployment_id: this.id, kind: "reboot", command, agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
     });
@@ -660,7 +660,7 @@ export class Deployment {
       const boot = reading.boot!;
       const title = boot.entries.find((candidate) => candidate.id === entry)!.title;
       const command = next_boot_command(boot, entry, reboot, this.settings.require_sudo);
-      const result = await this.agents.get(this.settings.host).run(command, reboot_timeout_in_seconds);
+      const result = await (await this.agents.awake(this.settings.host)).run(command, reboot_timeout_in_seconds);
       const job_id = this.store.create_job({
         deployment_id: this.id, kind: "next-boot", command, agent: this.settings.host, run_id: null, trigger: "manual", started_epoch: this.now(),
       });
@@ -708,7 +708,8 @@ export class Deployment {
     const agent = this.agent_for(kind);
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     try {
-      await this.agents.get(agent).start(run_id, command);
+      // A sleeping host is woken for any job but the periodic evaluation, which would keep it from ever sleeping.
+      await (kind === "eval" ? this.agents.get(agent) : await this.agents.awake(agent)).start(run_id, command);
     } catch (error) {
       const unreachable = error instanceof AgentError && error.unreachable;
       return { job_id: null, error: (error as Error).message, unreachable };

@@ -41,6 +41,7 @@ const store = new Store(join(state_directory, "x-nix.sqlite"));
 await rm(join(state_directory, "options"), { recursive: true, force: true });
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
 const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
+agents.set_wake(config.wake_on_lan);
 // Every other host's agent dials in, and joins the pool once it proves its declared key.
 const hub = new AgentHub(agents);
 // Hosts X-Nix installed are accepted with the keys it made for them, unless the config declares the host's key itself.

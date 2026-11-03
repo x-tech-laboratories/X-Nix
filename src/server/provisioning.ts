@@ -198,7 +198,7 @@ export class Provisioner {
   private async launch(owner: string, kind: JobKind, agent: string | null, command: string, stdin: string | null, run_id?: string): Promise<{ job_id: number | null; error: string }> {
     const id = run_id ?? `${owner}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     try {
-      await this.agents.get(agent).start(id, command, stdin);
+      await (await this.agents.awake(agent)).start(id, command, stdin);
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
     }

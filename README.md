@@ -341,6 +341,27 @@ long runs outlive the agent and are followed again once it reconnects. The proto
 agent protocol without its streams. The Overview lists each declared host and whether its agent is
 connected.
 
+### Wake-on-LAN
+
+A host listed under `wake_on_lan` is woken before an operation on it when its agent is not connected:
+X-Nix sends a magic packet from the server and waits for the agent to dial in, then starts the
+operation. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's
+Build, Push and Build all, an install or media build run by that host, and a build product's download
+all wake it, whether started by hand, on a schedule or by a fleet run. The periodic read, evaluation
+and cache check never do, so a sleeping host reads as unreachable until something wakes it. Each
+host maps to its MAC address, or to an object of these settings:
+
+```json
+{ "wake_on_lan": { "thor": "aa:bb:cc:dd:ee:ff", "odin": { "mac": "aa:bb:cc:dd:ee:01", "broadcast": "192.168.1.255" } } }
+```
+
+| Setting     | Default           | Meaning                                                       |
+| ----------- | ----------------- | ------------------------------------------------------------- |
+| `mac`       | required          | The MAC address of the network card that wakes the host.      |
+| `broadcast` | `255.255.255.255` | Where the packet is sent, such as the host's subnet broadcast. |
+| `port`      | `9`               | The UDP port the packet is sent to.                           |
+| `timeout`   | `3m`              | How long to wait for the agent before the operation fails.    |
+
 ### Pull mode
 
 An agent given `X_NIX_AGENT_PULL_FILE`, a JSON file of the settings below, deploys from Git on its own
@@ -366,8 +387,8 @@ job history of every deployment on that host with the trigger `agent pull`.
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
-whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, and whose
-`fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
+whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, whose
+`wakeOnLan` takes the Wake-on-LAN settings, and whose `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
 sudo rules below. Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent`
 builds the agent, and `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile`, `host` and
 `sudoRules`, and pull mode under `pull` with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs`

@@ -530,7 +530,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const refusal = download_refusal(build, product);
     if (refusal !== null) return reply.code(404).send({ error: refusal });
     if (options.agents === undefined) return reply.code(503).send({ error: "No agents to read the product through" });
-    const agent = options.agents.get(build.agent);
+    const agent = await options.agents.awake(build.agent);
     const located = await locate_product(agent, build, product);
     if ("error" in located) return reply.code(410).send({ error: `Cannot send ${product.name}: ${located.error}` });
     const file_name = product.name.replace(/[^\w.+-]/g, "_") || "product";
