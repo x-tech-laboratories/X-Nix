@@ -251,6 +251,11 @@ export class Store {
       output_offset = COALESCE(?, output_offset) WHERE id = ?`).run(text, progress, output_offset, job_id);
   }
 
+  // For a job whose run has not started yet, such as a switch waiting on a cache build that brought a newer system.
+  set_command(job_id: number, command: string): void {
+    this.database.prepare("UPDATE jobs SET command = ? WHERE id = ?").run(command, job_id);
+  }
+
   set_progress(job_id: number, progress: string): void {
     this.database.prepare("UPDATE jobs SET progress = ? WHERE id = ?").run(progress.slice(0, 200), job_id);
   }

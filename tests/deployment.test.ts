@@ -639,6 +639,25 @@ describe("switch from cache", () => {
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
   });
 
+  it("takes the system the cache built when the flake moved past the evaluation", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    harness.agent.answers.push([`build --dry-run --no-link ${target_closure}`, result(1)]);
+    const outcome = await harness.deployment.act("switch");
+
+    const reported = [["target", newer_closure], ["built", "1"], ["own", "1"]].map(([key, value]) => `@@x-nix-cache\thost\t${key}\t${value}`).join("\n");
+    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, `${reported}\n`, 0);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    const switching = harness.agent.last_run("switch-to-configuration")!;
+    expect(switching.command).toContain(`build --no-link ${newer_closure}`);
+    expect(switching.command).not.toContain(target_closure);
+    expect(harness.store.job(outcome.job_id!)!.command).toBe(switching.command);
+    expect(harness.store.job(outcome.job_id!)!.output).toContain(`so this switch takes ${newer_closure}, which the cache built`);
+    expect(harness.deployment.due_for_evaluation()).toBe(true);
+  });
+
   it("waits for the cache's running check before starting its build", async () => {
     const harness = with_cache();
     await collect(harness);

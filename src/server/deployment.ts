@@ -29,6 +29,7 @@ import { randomBytes } from "node:crypto";
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { built_store_path, record_builds } from "./builds.ts";
 import type { Cache } from "./cache.ts";
+import { parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type GcSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
@@ -707,14 +708,26 @@ export class Deployment {
     if (build === null) return this.end_cache_build(job, `The build of ${what} is gone from the history`);
     if (build.state === "running") return this.store.set_progress(job.id, `Building ${what}${build.progress ? `: ${build.progress}` : ""}`);
     if (build.state === "failed") return this.end_cache_build(job, `The build of ${what} failed: ${build.error}`);
-    // The cache builds the flake's head, which may have moved past the evaluation this switch fetches.
-    const holds = await this.cache_holds(waiting.target, cache.settings.host).catch(() => false);
-    if (!holds) return this.end_cache_build(job, `The build of ${what} finished, but the cache still lacks ${waiting.target}; evaluate again and switch`);
+    // The cache builds the flake's head, which may have moved past the evaluation this switch fetches; the switch then
+    // takes what the cache built from the same flake, unless a pin holds the deployment at another revision.
+    if (!(await this.cache_holds(waiting.target, cache.settings.host).catch(() => false))) {
+      const built = parse_report(build.output).targets.get(waiting.target_name)?.target ?? null;
+      const follows_head = cache.settings.flake === this.settings.flake && this.pin() === null;
+      const usable = built !== null && built !== waiting.target && is_store_path(built) && follows_head
+        && (await this.cache_holds(built, cache.settings.host).catch(() => false));
+      // Either way the evaluation is behind the flake, so the next cycle evaluates afresh.
+      this.force_eval = true;
+      if (!usable) return this.end_cache_build(job, `The build of ${what} finished, but the cache still lacks ${waiting.target}; evaluate again and switch`);
+      const token = watch_token(job.command) ?? randomBytes(8).toString("hex");
+      this.store.set_command(job.id, switch_job_command(this.effective_settings(), job.kind as SwitchMode, token, built));
+      this.store.append_output(job.id, `The flake moved since ${waiting.target} was evaluated, so this ${job_noun(job.kind)} takes ${built}, which the cache built\n`);
+    }
     this.save_cache_build(null);
     this.store.append_output(job.id, "The cache holds the system; switching\n");
+    const command = this.store.job(job.id)!.command;
     let waking: Promise<void> | null;
     try {
-      ({ waking } = await start_run(this.agents, job.agent, job.run_id!, job.command));
+      ({ waking } = await start_run(this.agents, job.agent, job.run_id!, command));
     } catch (error) {
       this.store.append_output(job.id, `${(error as Error).message}\n`);
       this.store.finish_job(job.id, "failed", null, "The job could not be started", this.now());
