@@ -105,7 +105,7 @@ function show_login(): void {
       submit.disabled = false;
     }
   } },
-    h("h1", {}, "X-Nix"),
+    h("div", { class: "login-brand" }, h("img", { src: "/icon.svg", alt: "", width: 96, height: 96 }), h("h1", {}, "X-Nix")),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Password"), password),
     submit, message);
   main.replaceChildren(form);

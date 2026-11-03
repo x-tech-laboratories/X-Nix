@@ -311,6 +311,8 @@ body.logged-out main { margin-left: var(--space-2); }
 .login { max-width: 320px; margin: calc(2 * var(--space-8)) auto; display: grid; gap: var(--space-5); }
 .login .field, .login input { width: 100%; }
 .login button, .login .button { justify-content: center; }
+.login-brand { display: grid; justify-items: center; gap: var(--space-4); }
+.login-brand img { width: 96px; height: 96px; }
 
 /* ── Panels, tabs and headers ─────────────────────────────────────────────── */
 
