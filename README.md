@@ -73,9 +73,13 @@ substitutes it. `cache_url` must therefore be one of the host's substituters; th
 other, as Attic leaves out what an upstream cache such as cache.nixos.org already serves. A `switch` or
 `boot` then sets it as the system profile's next generation, and every mode runs its own `switch-to-configuration`
 with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
-activating on the switch agent's own host, so it takes no `target_host`. The closure must already be in the cache,
-built and pushed by a cache's Build or Build all (or anything else that pushes, such as `attic watch-store`), and
-signed by a key the host trusts; `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. An automatic
+activating on the switch agent's own host, so it takes no `target_host`. The closure is built and pushed by a cache's
+Build or Build all (or anything else that pushes, such as `attic watch-store`), and signed by a key the host trusts;
+`build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. A switch, boot or test started by hand or by a
+fleet run that finds the cache without the system has the cache tracking the host's configuration at that
+`cache_url` build and push it first: its job shows the build, waits for the cache's running check if there is one,
+and starts the switch once the cache holds the system, or fails without touching the host when the build fails or
+brings a different system. With no such cache it starts at once, as before. An automatic
 switch waits until the cache holds the new system and the host can fetch every path of its closure, checking again
 every cycle, so drift seen before the nightly
 build reaches the cache switches once it does.

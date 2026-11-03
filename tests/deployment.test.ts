@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
-import { deployment_settings } from "../src/server/config.ts";
+import { Cache } from "../src/server/cache.ts";
+import { cache_settings, deployment_settings } from "../src/server/config.ts";
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { Store } from "../src/server/store.ts";
 import {
@@ -537,6 +538,115 @@ describe("switch from cache", () => {
     expect(job.agent).toBeNull();
     expect(job.command).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1 && sudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
     expect(job.command).toContain("systemd-inhibit");
+  });
+
+  // A cache on the server tracking the host's configuration, sharing the deployment's store and agent.
+  function with_cache(values: Record<string, unknown> = {}) {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
+      store, agents: new AgentPool("host", agent), now: () => clock.now,
+    });
+    const harness = make_deployment({ ...from_cache, configuration: "host", ...values }, { store, agent, caches: [cache] });
+    return { ...harness, cache };
+  }
+
+  const lacking: [string, ReturnType<typeof result>] = ["build --dry-run --no-link", result(1)];
+
+  it("builds the system in the cache first when the cache lacks it, then switches from it under the same job", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    harness.agent.answers.push(lacking);
+
+    const outcome = await harness.deployment.act("switch");
+
+    expect(outcome).toMatchObject({ ok: true, message: "Building host in the Fleet cache first; the switch starts once it is pushed" });
+    const job = harness.store.job(outcome.job_id!)!;
+    expect(job).toMatchObject({ kind: "switch", state: "running", progress: "Building host in the Fleet cache" });
+    const build = harness.agent.last_run('nixosConfigurations."host"')!;
+    expect(harness.cache.running_job()?.kind).toBe("build-target");
+    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+    expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
+
+    await harness.deployment.cycle();
+    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+
+    harness.agent.answers.splice(0);
+    harness.agent.end(build, "", 0);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    const switching = harness.agent.last_run("switch-to-configuration")!;
+    expect(switching.run_id).toBe(job.run_id);
+    expect(switching.command).toContain(`build --no-link ${target_closure}`);
+    expect(harness.store.job(job.id)!.output).toContain("The cache holds the system; switching");
+    expect(harness.deployment.evaluation().cache_build).toBeUndefined();
+
+    harness.agent.end(switching, "", 0);
+    await harness.deployment.cycle();
+    expect(harness.store.job(job.id)!.state).toBe("succeeded");
+  });
+
+  it("fails the switch without starting it when the build in the cache fails", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    harness.agent.answers.push(lacking);
+    const outcome = await harness.deployment.act("switch");
+
+    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 1);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The build of host in the Fleet cache failed: Exited with status 1" });
+    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+    expect(harness.deployment.running_job()).toBeNull();
+  });
+
+  it("fails the switch when the cache built a different system than the one evaluated", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    harness.agent.answers.push(lacking);
+    const outcome = await harness.deployment.act("switch");
+
+    harness.agent.end(harness.agent.last_run('nixosConfigurations."host"')!, "", 0);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(outcome.job_id!)!.error).toContain(`the cache still lacks ${target_closure}; evaluate again and switch`);
+    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+  });
+
+  it("waits for the cache's running check before starting its build", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    await harness.cache.cycle();
+    const check = harness.agent.last_run("--store")!;
+    harness.agent.answers.push(lacking);
+
+    const outcome = await harness.deployment.act("switch");
+
+    expect(harness.store.job(outcome.job_id!)!.progress).toBe("Waiting for the Fleet cache to finish its check");
+    expect(harness.agent.last_run('nixosConfigurations."host"')?.command ?? "").not.toContain("build --print-out-paths");
+
+    harness.agent.end(check, "", 0);
+    await harness.cache.cycle();
+    await harness.deployment.cycle();
+
+    expect(harness.cache.running_job()?.kind).toBe("build-target");
+    expect(harness.store.job(outcome.job_id!)!.progress).toBe("Building host in the Fleet cache");
+  });
+
+  it("switches at once when the cache holds the system, or when no cache tracks the host", async () => {
+    const holding = with_cache();
+    await collect(holding);
+    await holding.deployment.act("switch");
+    expect(holding.agent.last_run("switch-to-configuration")).toBeDefined();
+
+    const untracked = with_cache({ configuration: "other" });
+    await collect(untracked);
+    untracked.agent.answers.push(lacking);
+    await untracked.deployment.act("switch");
+    expect(untracked.agent.last_run("switch-to-configuration")).toBeDefined();
   });
 });
 

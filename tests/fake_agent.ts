@@ -1,5 +1,6 @@
 // A scripted agent and deployment for the tests: the probe answers what a test sets, and long runs end when it says.
 
+import type { Cache } from "../src/server/cache.ts";
 import { AgentError, AgentPool, type Agent, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
 import { deployment_settings, type FlakeSettings } from "../src/server/config.ts";
 import { Deployment } from "../src/server/deployment.ts";
@@ -160,13 +161,13 @@ export interface Harness {
 
 export function make_deployment(
   values: Record<string, unknown> = {},
-  existing: { store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings> } = {},
+  existing: { store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings>; caches?: Cache[] } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...values }, 0, existing.flakes);
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check });
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches });
   return { deployment, agent, store, agents };
 }
 
