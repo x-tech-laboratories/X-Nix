@@ -1211,6 +1211,15 @@ describe("a deployment its cache builds", () => {
     expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: "Fleet cache: error: attribute 'host' missing" });
   });
 
+  it("takes the target of a row saved before rows carried an evaluation error", async () => {
+    const harness = fed();
+    harness.save_check({ eval_error: undefined });
+
+    await collect(harness);
+
+    expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: null });
+  });
+
   it("asks the cache to check when asked to evaluate, and evaluates on its own once pinned", async () => {
     const harness = fed();
     harness.deployment.request_evaluation();

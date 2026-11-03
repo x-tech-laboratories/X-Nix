@@ -481,8 +481,10 @@ export class Deployment {
     const row = reading?.rows.find((candidate) => candidate.name === name);
     if (reading == null || row === undefined || reading.evaluated_epoch == null) return evaluation;
     evaluation.evaluated_epoch = reading.evaluated_epoch;
-    if (row.eval_error !== null) {
-      evaluation.eval_error = `${cache.settings.name} cache: ${row.eval_error}`;
+    // A row saved before the cache's check evaluated deployments has no eval_error at all.
+    const eval_error = row.eval_error ?? null;
+    if (eval_error !== null) {
+      evaluation.eval_error = `${cache.settings.name} cache: ${eval_error}`;
       evaluation.eval_unreachable = false;
     } else if (row.target !== null) {
       evaluation.target = row.target;
