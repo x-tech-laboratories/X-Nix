@@ -719,7 +719,7 @@ describe("a small host evaluated and built elsewhere", () => {
     await deployment.act("build");
     const build = server.last_run("build")!;
     expect(build.command).toContain("--out-link /var/lib/x-nix/build-roots/pi");
-    expect(build.command).toContain("path-info --store https://attic.example/fleet");
+    expect(build.command).toContain("path-info --option narinfo-cache-negative-ttl 0 --store https://attic.example/fleet");
     server.end(build, `${target_closure}\n`, 0);
     await deployment.cycle();
     expect(pi.runs).toHaveLength(0);

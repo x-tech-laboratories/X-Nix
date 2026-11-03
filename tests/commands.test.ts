@@ -125,7 +125,7 @@ describe("the switch from the cache", () => {
   const holds = (plan: string, cache_has_top = true) => {
     const bin = fake_programs({
       nix: [
-        `case "$*" in *"path-info --store"*) exit ${cache_has_top ? 0 : 1};; esac`,
+        `case "$*" in *"path-info --option narinfo-cache-negative-ttl 0 --store"*) exit ${cache_has_top ? 0 : 1};; esac`,
         `printf '%s\\n' ${JSON.stringify(plan)} >&2`,
       ].join("\n"),
     });

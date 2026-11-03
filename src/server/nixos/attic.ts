@@ -132,7 +132,8 @@ function functions(settings: CacheSettings): string {
     '    echo "$out" > "$t/own"',
     "  fi",
     '  report own "$(wc -l < "$t/own" | tr -d " ")"',
-    `  json=$(${nix_command} path-info --stdin --json --store ${shell_quote(settings.cache_url)} < "$t/own" 2>"$t/err")`,
+    // nix remembers a path the cache lacked for an hour, so one checked before its push would read as missing long after.
+    `  json=$(${nix_command} path-info --stdin --json --option narinfo-cache-negative-ttl 0 --store ${shell_quote(settings.cache_url)} < "$t/own" 2>"$t/err")`,
     '  if [ -z "$json" ]; then',
     '    report cache_error "$(tail -c 400 "$t/err")"',
     "    return",

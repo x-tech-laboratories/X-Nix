@@ -34,6 +34,10 @@ function nix(settings: Pick<DeploymentSettings, "nix_bin" | "nix_args">): string
   return [settings.nix_bin, ...settings.nix_args.map(shell_quote)].join(" ");
 }
 
+// Asks the cache afresh: nix remembers a path the cache lacked for an hour, so a system checked before its push would
+// read as missing long after the push.
+const fresh_lookup = "--option narinfo-cache-negative-ttl 0";
+
 // A remote ref is only seen freshly with --refresh; a local path is read from disk every time.
 function refresh_args(settings: DeploymentSettings): string[] {
   return local_path(settings.flake) === null ? ["--refresh"] : [];
@@ -170,7 +174,7 @@ export function build_command(settings: DeploymentSettings, attribute: string | 
   // A closure missing here but already in the cache is not downloaded just to be rooted; any failure falls to the build.
   const evaluate = words(nix(settings), "eval --raw --no-write-lock-file", refresh_args(settings).join(" "), target);
   const cached = `out=$(${evaluate} 2>/dev/null) && [ -n "$out" ] && ! ${nix(settings)} path-info "$out" >/dev/null 2>&1 `
-    + `&& ${nix(settings)} path-info --store ${shell_quote(settings.cache_url)} "$out" >/dev/null 2>&1`;
+    + `&& ${nix(settings)} path-info ${fresh_lookup} --store ${shell_quote(settings.cache_url)} "$out" >/dev/null 2>&1`;
   return `if ${cached}; then echo "$out is already in the cache; not building it"; else ${build}; fi`;
 }
 
@@ -218,7 +222,7 @@ export function is_store_path(value: string): boolean {
 export function cache_holds_command(settings: DeploymentSettings, store_path: string): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const path = shell_quote(store_path);
-  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} ${path} >/dev/null`
+  return `${nix(settings)} path-info ${fresh_lookup} --store ${shell_quote(settings.cache_url ?? "")} ${path} >/dev/null`
     + ` && plan=$(${nix(settings)} build --dry-run --no-link ${path} 2>&1)`
     + ` && ! printf '%s\\n' "$plan" | grep -q -e "know how to build" -e "will be built"`;
 }
