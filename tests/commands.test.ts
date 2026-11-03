@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ConfigError, deployment_settings } from "../src/server/config.ts";
-import { build_command, eval_command, split_eval_output, switch_command, switch_from_cache_command, update_command } from "../src/server/nixos/commands.ts";
+import { build_command, cache_holds_command, eval_command, split_eval_output, switch_command, switch_from_cache_command, update_command } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
 import { current_closure } from "./fake_agent.ts";
@@ -115,9 +115,31 @@ describe("the switch", () => {
 describe("the switch from the cache", () => {
   const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
 
+  // The dry run exits 0 whatever it finds, as nix does, so only its output can fail the check.
+  const holds = (plan: string, cache_has_top = true) => {
+    const bin = fake_programs({
+      nix: [
+        `case "$*" in *"path-info --store"*) exit ${cache_has_top ? 0 : 1};; esac`,
+        `printf '%s\\n' ${JSON.stringify(plan)} >&2`,
+      ].join("\n"),
+    });
+    return run_shell(cache_holds_command(settings({ ...from_cache, nix_bin: join(bin, "nix") }), current_closure)).status;
+  };
+
+  it("holds a closure the host can fetch, taking from upstream what the cache left out", () => {
+    expect(holds("these 1240 paths will be fetched (1.6 GiB download, 4.7 GiB unpacked):")).toBe(0);
+    expect(holds("")).toBe(0);
+  });
+
+  it("does not hold a closure with a path nothing can fetch, or a system the cache lacks", () => {
+    expect(holds("don't know how to build these paths:\n  /nix/store/00000000000000000000000000000000-bash")).toBe(1);
+    expect(holds("these 2 derivations will be built:")).toBe(1);
+    expect(holds("", false)).toBe(1);
+  });
+
   it("fetches the closure, sets the system profile and activates it", () => {
     expect(switch_from_cache_command(settings(from_cache), current_closure)).toBe([
-      `nix --extra-experimental-features 'nix-command flakes' copy --from https://cache.example/fleet ${current_closure}`,
+      `nix --extra-experimental-features 'nix-command flakes' build --no-link ${current_closure}`,
       `nix --extra-experimental-features 'nix-command flakes' path-info --recursive ${current_closure} >/dev/null`,
       `sudo -n nix-env -p /nix/var/nix/profiles/system --set ${current_closure}`,
       `sudo -n ${current_closure}/bin/switch-to-configuration switch`,

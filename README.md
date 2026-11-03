@@ -38,13 +38,16 @@ and compares the two store paths. Update, build, switch, garbage collection and 
 long runs that survive a restart of X-Nix; each lands in the job history with its output.
 
 With `switch_from_cache`, a switch never evaluates or builds on the host: it takes the store path of the latest
-successful evaluation, which may run on `eval_agent`, and fetches it with `nix copy --from <cache_url>`. A `switch` or
+successful evaluation, which may run on `eval_agent`, and fetches it with `nix build`, so the host's Nix daemon
+substitutes it. `cache_url` must therefore be one of the host's substituters; the rest of the closure may come from any
+other, as Attic leaves out what an upstream cache such as cache.nixos.org already serves. A `switch` or
 `boot` then sets it as the system profile's next generation, and every mode runs its own `switch-to-configuration`
 with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
 activating on the switch agent's own host, so it takes no `target_host`. The closure must already be in the cache,
 built and pushed by a cache's Build or Build all (or anything else that pushes, such as `attic watch-store`), and
 signed by a key the host trusts; `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. An automatic
-switch waits until the cache holds the new closure, checking again every cycle, so drift seen before the nightly
+switch waits until the cache holds the new system and the host can fetch every path of its closure, checking again
+every cycle, so drift seen before the nightly
 build reaches the cache switches once it does.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
@@ -78,7 +81,7 @@ whose agent is not connected reads as unreachable.
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
 | `switch_agent`      | the host                          | The host that runs update and switch.                                |
-| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure from `cache_url` and activating it, for a host too small to evaluate or build; not with `target_host`. |
+| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
 | `inhibit_sleep`     | `false`                           | Keep the activated host from idling or sleeping while a switch or rollback runs. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |

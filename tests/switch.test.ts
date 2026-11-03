@@ -287,7 +287,7 @@ describe("a guarded switch from the cache", () => {
 
     expect(run.status).toBe(0);
     expect(switch_verdict(run.output).outcome?.kind).toBe("confirmed");
-    expect(host.read_log()).toContain("copy --from https://cache.example/fleet");
+    expect(host.read_log()).toContain("build --no-link");
     expect(host.system()).toBe(join(host.root, "new"));
     expect(host.profile()).toBe("system-2-link");
   }, 20_000);

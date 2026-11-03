@@ -480,7 +480,7 @@ describe("switch from cache", () => {
     expect((await harness.deployment.act("switch")).ok).toBe(true);
 
     const command = harness.deployment.running_job()!.command;
-    expect(command).toContain(`copy --from https://cache.example/fleet ${target_closure}`);
+    expect(command).toContain(`build --no-link ${target_closure}`);
     expect(command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
     expect(command).not.toContain("nixos-rebuild");
   });
@@ -498,7 +498,7 @@ describe("switch from cache", () => {
 
   it("waits for the cache to hold the new system before switching automatically", async () => {
     const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
-    const missing: [string, ReturnType<typeof result>] = ["path-info --store https://cache.example/fleet --recursive", result(1, "", "path is not valid")];
+    const missing: [string, ReturnType<typeof result>] = ["build --dry-run --no-link", result(1, "", "")];
     harness.agent.answers.push(missing);
     await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
     rewind_drift(harness, 1801);
@@ -542,7 +542,7 @@ describe("switch from cache", () => {
     await cycle(harness);
 
     expect(run.command).toContain("mark phase pre-switch-checks");
-    expect(run.command).toContain(`copy --from https://cache.example/fleet ${target_closure}`);
+    expect(run.command).toContain(`build --no-link ${target_closure}`);
     expect(run.command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
     expect(run.command).toContain("sudo -n /bin/sh -c 'systemctl restart greetd'");
     expect(run.command).toContain("The switch from the cache failed with status");
@@ -558,7 +558,7 @@ describe("switch from cache", () => {
 
     const command = harness.deployment.running_job()!.command;
     expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
-    expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("copy --from"));
+    expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
   });
 
   it("rolls back to an earlier generation on the host's own agent", async () => {
@@ -617,7 +617,7 @@ describe("a small host evaluated and built elsewhere", () => {
 
     const switching = pi.last_run("switch-to-configuration")!;
     expect(deployment.running_job()).toMatchObject({ kind: "switch", agent: "pi", trigger: "automatic" });
-    expect(switching.command).toContain(`copy --from https://attic.example/fleet ${target_closure}`);
+    expect(switching.command).toContain(`build --no-link ${target_closure}`);
     expect(switching.command).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
     expect(switching.command).toContain("x-nix-watchdog");
     expect(switching.command).toContain("systemd-inhibit");

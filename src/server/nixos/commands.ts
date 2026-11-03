@@ -206,17 +206,23 @@ export function is_store_path(value: string): boolean {
 }
 
 // Fetches the evaluated closure from the cache and activates it in the mode asked, so the host neither evaluates nor builds.
-// Exits 0 only when the cache already holds the store path, so a switch from it can fetch it.
+// Exits 0 only when the cache holds the store path and the host can fetch every path of its closure. Caches such as Attic
+// leave out what an upstream cache serves, so the closure is checked against the host's own substituters, not the cache's.
+// The dry run exits 0 even for a path nothing can fetch, so its output is read instead.
 export function cache_holds_command(settings: DeploymentSettings, store_path: string): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
-  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} --recursive ${shell_quote(store_path)} >/dev/null`;
+  const path = shell_quote(store_path);
+  return `${nix(settings)} path-info --store ${shell_quote(settings.cache_url ?? "")} ${path} >/dev/null`
+    + ` && plan=$(${nix(settings)} build --dry-run --no-link ${path} 2>&1)`
+    + ` && ! printf '%s\\n' "$plan" | grep -q -e "know how to build" -e "will be built"`;
 }
 
 export function switch_from_cache_command(settings: DeploymentSettings, store_path: string, mode: SwitchMode = "switch"): string {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const path = shell_quote(store_path);
-  // The copy runs as the agent's user, as the daemon takes signed paths from anyone, so only activation needs sudo.
-  const steps = [`${nix(settings)} copy --from ${shell_quote(settings.cache_url ?? "")} ${path}`, `${nix(settings)} path-info --recursive ${path} >/dev/null`];
+  // The daemon fetches the closure from the host's substituters, the cache among them, taking from upstream what the cache
+  // left out. It runs as the agent's user, as the daemon substitutes for anyone, so only activation needs sudo.
+  const steps = [`${nix(settings)} build --no-link ${path}`, `${nix(settings)} path-info --recursive ${path} >/dev/null`];
   // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
   if (mode === "switch" || mode === "boot") steps.push(`${sudo(settings)}nix-env -p ${system_profile} --set ${path}`);
   steps.push(`${sudo(settings)}${store_path}/bin/switch-to-configuration ${mode}`);
