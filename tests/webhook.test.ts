@@ -180,7 +180,7 @@ describe("/api/webhook", () => {
     const poller = new Poller([harness.deployment]);
     const evaluated: string[] = [];
     const webhook = new Webhook({ secret, debounce_in_seconds: 0, store: harness.store, deployments: poller.deployments, evaluate: (deployment) => evaluated.push(deployment.id) });
-    app = await build_app({ serve_web: false, logger: false, password_hash: hash_password("unused"), store: harness.store, poller, webhook });
+    app = await build_app({ serve_web: false, logger: false, accounts: new Map([["admin", hash_password("unused")]]), store: harness.store, poller, webhook });
     // Spacing a JSON parser would drop must still be signed as sent.
     const body = push_payload().replace("{", "{ ");
 
@@ -196,7 +196,7 @@ describe("/api/webhook", () => {
 
   it("is not there without a secret", async () => {
     const harness = make_deployment();
-    app = await build_app({ serve_web: false, logger: false, password_hash: hash_password("unused"), store: harness.store, poller: new Poller([harness.deployment]) });
+    app = await build_app({ serve_web: false, logger: false, accounts: new Map([["admin", hash_password("unused")]]), store: harness.store, poller: new Poller([harness.deployment]) });
     expect((await app.inject({ method: "POST", url: "/api/webhook", payload: {} })).statusCode).toBe(404);
   });
 });

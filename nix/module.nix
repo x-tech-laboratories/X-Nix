@@ -66,7 +66,7 @@ in
 
     passwordHashFile = mkOption {
       type = types.str;
-      description = "A file holding the login password's hash, written by `npm run hash-password`; read at runtime, never copied to the store.";
+      description = "A file holding the users who may log in, one `name:hash` line each, written by `npm run hash-password`; read at runtime, never copied to the store.";
     };
 
     flakes = mkOption {

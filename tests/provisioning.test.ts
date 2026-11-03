@@ -316,10 +316,10 @@ describe("/api/provisioning", () => {
     const harness = make_provisioner();
     const password = "correct horse battery staple";
     app = await build_app({
-      serve_web: false, logger: false, server_name: "host", password_hash: hash_password(password), store: harness.store,
+      serve_web: false, logger: false, server_name: "host", accounts: new Map([["admin", hash_password(password)]]), store: harness.store,
       poller: new Poller([], null, [], [harness.provisioner]), provisioner: harness.provisioner,
     });
-    const login = await app.inject({ method: "POST", url: "/api/login", payload: { password } });
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
     const cookie = String(login.headers["set-cookie"]).split(";")[0];
     const server = app;
     const post = (url: string, payload: object) => server.inject({ method: "POST", url, headers: { cookie }, payload });
@@ -352,10 +352,10 @@ describe("/api/provisioning", () => {
     await harness.provisioner.cycle();
     const password = "correct horse battery staple";
     app = await build_app({
-      serve_web: false, logger: false, server_name: "host", password_hash: hash_password(password), store: harness.store,
+      serve_web: false, logger: false, server_name: "host", accounts: new Map([["admin", hash_password(password)]]), store: harness.store,
       poller: new Poller([], null, [], [harness.provisioner]), provisioner: harness.provisioner,
     });
-    const login = await app.inject({ method: "POST", url: "/api/login", payload: { password } });
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
     const cookie = String(login.headers["set-cookie"]).split(";")[0];
 
     const response = await app.inject({ method: "GET", url: `/api/provisioning/media/${outcome.job_id}/download?path=netboot.ipxe`, headers: { cookie } });

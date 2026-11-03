@@ -9,7 +9,7 @@ import { Cache } from "./cache.ts";
 import { AgentHub } from "./agents/hub.ts";
 import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
-import { load_password_hash } from "./auth.ts";
+import { load_accounts } from "./auth.ts";
 import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { parse_duration } from "./durations.ts";
@@ -29,7 +29,7 @@ const is_production = process.env.NODE_ENV === "production";
 const state_directory = process.env.X_NIX_STATE_DIR ?? "state";
 const config_path = process.env.X_NIX_CONFIG;
 const server_name = process.env.X_NIX_SERVER_NAME || hostname();
-const password_hash = load_password_hash();
+const accounts = load_accounts();
 // The push webhook is on only when its secret file is named.
 const webhook_secret_file = process.env.X_NIX_WEBHOOK_SECRET_FILE;
 const webhook_debounce = parse_duration(process.env.X_NIX_WEBHOOK_DEBOUNCE || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
@@ -75,7 +75,7 @@ hub.on_pulls = (host, pulls) => {
   for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
   return kept;
 };
-const app = await build_app({ serve_web: is_production, logger: true, server_name, password_hash, store, poller, hub, provisioner, agents, fleet, webhook });
+const app = await build_app({ serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook });
 
 app.addHook("onClose", async () => {
   poller.stop();

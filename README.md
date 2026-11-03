@@ -8,7 +8,7 @@ the Nix store, the Attic cache and boot entries.
 ```sh
 nix develop           # or nix-shell
 npm install
-npm run hash-password # writes the login's hash, which the dev server reads
+npm run hash-password -- admin # adds a user to password.hash, which the dev server reads
 npm run dev:server    # the API on http://127.0.0.1:7720
 npm run dev:web       # the page, reaching the API through Vite's proxy
 ```
@@ -22,7 +22,7 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 | ------------------- | ------------- | ---------------------------------------- |
 | `HOST`              | `127.0.0.1`   | The address the server listens on.       |
 | `PORT`              | `7720`        | The port the server listens on.          |
-| `X_NIX_PASSWORD_HASH_FILE` | required | The login password's hash, from `npm run hash-password`. |
+| `X_NIX_PASSWORD_HASH_FILE` | required | The users who may log in, one `name:hash` line each, from `npm run hash-password`. |
 | `X_NIX_CONFIG`      | none          | The config file naming the flakes, deployments and caches. |
 | `X_NIX_STATE_DIR`   | `state`       | Where the database and job output live.  |
 | `X_NIX_SERVER_NAME` | the hostname  | What the page calls the server's machine. |
@@ -58,6 +58,13 @@ and switch, but has no page and no Update.
 | `require_sudo`   | `true`                        | Update a local checkout under `sudo -n`.                   |
 | `nix_bin`        | `nix`                         | The nix program.                                           |
 | `nix_args`       | the experimental features     | Arguments before nix's subcommand.                         |
+
+## Users
+
+Each line of the `X_NIX_PASSWORD_HASH_FILE` file is a user: `name:scrypt$...`. `npm run hash-password -- <name> [file]`
+adds the user or changes their password, asking for it at a terminal or reading it from stdin; removing a user is
+deleting their line. A line holding only a hash logs in as `admin`. The file is read at start, so a change takes a
+restart, which also logs everyone out.
 
 ## Deployments
 

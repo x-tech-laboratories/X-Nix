@@ -314,6 +314,8 @@ body.logged-out main { margin-left: var(--space-2); }
 .login-brand { display: grid; justify-items: center; gap: var(--space-4); }
 .login-brand img { width: 96px; height: 96px; }
 
+.user-name { color: var(--text-on-navigation); font-size: var(--text-control); }
+
 /* ── Panels, tabs and headers ─────────────────────────────────────────────── */
 
 .panel {

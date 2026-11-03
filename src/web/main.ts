@@ -23,6 +23,7 @@ const main = document.querySelector<HTMLElement>("main")!;
 const sidebar = document.querySelector<HTMLElement>("#sidebar")!;
 const scrim = document.querySelector<HTMLElement>("#scrim")!;
 const menu = document.querySelector<HTMLButtonElement>("#menu")!;
+const user = document.querySelector<HTMLElement>("#user")!;
 
 let current: View | null = null;
 let first_view = true;
@@ -89,6 +90,7 @@ function show_login(): void {
   current = null;
   document.body.classList.add("logged-out");
   document.title = "Log in · X-Nix";
+  const name = h("input", { type: "text", name: "username", autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: true, "aria-label": "User name" });
   const password = h("input", { type: "password", name: "password", autocomplete: "current-password", required: true, "aria-label": "Password" });
   const message = h("p", { class: "tone-bad", role: "alert" });
   const submit = h("button", { type: "submit", class: "accent solid" }, "Log in");
@@ -97,8 +99,8 @@ function show_login(): void {
     submit.disabled = true;
     message.textContent = "";
     try {
-      await api("/api/login", "POST", { password: password.value });
-      start();
+      await api("/api/login", "POST", { name: name.value, password: password.value });
+      start(name.value.trim().toLowerCase());
     } catch (error) {
       message.textContent = error instanceof Error ? error.message : String(error);
       password.select();
@@ -106,13 +108,15 @@ function show_login(): void {
     }
   } },
     h("div", { class: "login-brand" }, h("img", { src: "/icon.svg", alt: "", width: 96, height: 96 }), h("h1", {}, "X-Nix")),
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "User name"), name),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Password"), password),
     submit, message);
   main.replaceChildren(form);
-  password.focus();
+  name.focus();
 }
 
-function start(): void {
+function start(user_name: string | undefined): void {
+  user.textContent = user_name ?? "";
   document.body.classList.remove("logged-out");
   first_view = true;
   show();
@@ -165,7 +169,7 @@ apply();
 // ── Start ────────────────────────────────────────────────────────────────────
 
 // The first request tells whether a session is still open.
-void api("/api/me").then(start, (error) => {
+void api<{ name?: string }>("/api/me").then((me) => start(me.name), (error) => {
   if (error instanceof LoginNeeded) show_login();
-  else start();
+  else start(undefined);
 });

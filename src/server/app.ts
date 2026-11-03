@@ -9,7 +9,7 @@ import fastify_static from "@fastify/static";
 import type { AgentPool } from "./agents/agent.ts";
 import type { AgentHub } from "./agents/hub.ts";
 import { register_agent_route } from "./agents/route.ts";
-import { register_auth } from "./auth.ts";
+import { register_auth, type Accounts } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
@@ -34,8 +34,8 @@ export interface app_options {
   logger: boolean;
   // What the page calls this machine; the system's hostname unless set.
   server_name?: string;
-  // The hash of the one password that logs in.
-  password_hash: string;
+  // Each user who may log in, with their password's hash.
+  accounts: Accounts;
   store: Store;
   poller: Poller;
   // The other hosts' agents; none dial in without it.
@@ -310,7 +310,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
-  register_auth(app, options.password_hash);
+  register_auth(app, options.accounts);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
 

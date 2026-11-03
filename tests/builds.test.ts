@@ -137,8 +137,8 @@ describe("/api/builds", () => {
 
   async function start(store: Store, agent: Agent) {
     const harness = make_deployment({}, { store });
-    app = await build_app({ serve_web: false, logger: false, password_hash: hash_password(password), store, poller: new Poller([harness.deployment]), agents: new AgentPool("host", agent) });
-    const login = await app.inject({ method: "POST", url: "/api/login", payload: { password } });
+    app = await build_app({ serve_web: false, logger: false, accounts: new Map([["admin", hash_password(password)]]), store, poller: new Poller([harness.deployment]), agents: new AgentPool("host", agent) });
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
     const cookie = String(login.headers["set-cookie"]).split(";")[0];
     const server = app;
     return (url: string) => server.inject({ method: "GET", url, headers: { cookie } });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
 import { build_app, type CacheView, type DeploymentView, type FlakeView, type HealthAnswer } from "../src/server/app.ts";
-import { hash_password } from "../src/server/auth.ts";
+import { hash_password, parse_accounts } from "../src/server/auth.ts";
 import { Cache } from "../src/server/cache.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { cache_settings, flake_settings } from "../src/server/config.ts";
@@ -13,15 +13,15 @@ import { clock, FakeAgent, make_deployment, metadata, result, type Harness } fro
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 const password = "correct horse battery staple";
-const password_hash = hash_password(password);
+const accounts = new Map([["admin", hash_password(password)], ["operator", hash_password("another password")]]);
 
 let app: FastifyInstance | null = null;
 
 // The app, and a request helper carrying a logged-in session.
 async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = []) {
   const poller = new Poller([harness.deployment], null, caches, [], flakes);
-  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", password_hash, store: harness.store, poller });
-  const login = await app.inject({ method: "POST", url: "/api/login", payload: { password } });
+  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller });
+  const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
   const cookie = String(login.headers["set-cookie"]).split(";")[0];
   const server = app;
   return {
@@ -138,11 +138,24 @@ describe("logging in", () => {
 
   it("refuses a wrong password, then every try after five", async () => {
     const { server } = await start_app();
-    const attempt = (guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { password: guess } });
+    const attempt = (guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password: guess } });
 
     for (let count = 0; count < 5; count++) expect((await attempt("wrong")).statusCode).toBe(401);
 
     expect((await attempt(password)).statusCode).toBe(429);
+  });
+
+  it("logs each user in with their own password and tells the page who they are", async () => {
+    const { server } = await start_app();
+    const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
+
+    const login = await attempt("Operator", "another password");
+    const cookie = String(login.headers["set-cookie"]).split(";")[0];
+
+    expect(login.statusCode).toBe(204);
+    expect((await server.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json()).toEqual({ logged_in: true, name: "operator" });
+    expect((await attempt("operator", password)).statusCode).toBe(401);
+    expect((await attempt("nobody", password)).statusCode).toBe(401);
   });
 
   it("ends the session on logout", async () => {
@@ -151,6 +164,23 @@ describe("logging in", () => {
     await inject("POST", "/api/logout");
 
     expect((await inject("GET", "/api/deployments")).statusCode).toBe(401);
+  });
+});
+
+describe("the accounts file", () => {
+  it("reads one user per line, and a bare hash as admin", () => {
+    const hash = hash_password("unused");
+
+    const accounts = parse_accounts(`# the operators\n${hash}\n\nalice:${hash}\n`);
+
+    expect([...accounts.keys()]).toEqual(["admin", "alice"]);
+  });
+
+  it("refuses a user named twice or a line without a hash", () => {
+    const hash = hash_password("unused");
+
+    expect(() => parse_accounts(`alice:${hash}\nalice:${hash}`)).toThrow("second time");
+    expect(() => parse_accounts("alice:hunter2")).toThrow("does not hold a hash");
   });
 });
 
@@ -173,7 +203,7 @@ describe("/api/deployments/:id/next-boot", () => {
     harness.agent.boot_probe_result = result(0, `loader=efi\n@@entries\nBootOrder: 0001\nBoot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n`);
     await harness.deployment.cycle();
     const { server, inject } = await start_app(harness);
-    const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { password } })).headers["set-cookie"]).split(";")[0];
+    const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } })).headers["set-cookie"]).split(";")[0];
     const post = (payload: unknown) => server.inject({ method: "POST", url: "/api/deployments/host-deploy/next-boot", headers: { cookie }, payload: payload as object });
 
     expect((await inject("GET", "/api/deployments/host-deploy")).json<DeploymentView>().next_boot_refusal).toBeNull();

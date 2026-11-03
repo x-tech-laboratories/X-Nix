@@ -1,11 +1,17 @@
-// Writes the hash file X_NIX_PASSWORD_HASH_FILE points at. Asks for the password at a terminal, or reads it from stdin,
-// so it never lands in argv or shell history.
+// Adds a user to the accounts file X_NIX_PASSWORD_HASH_FILE points at, or changes their password. Asks for the password
+// at a terminal, or reads it from stdin, so it never lands in argv or shell history.
 
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { text } from "node:stream/consumers";
-import { hash_password } from "./passwords.ts";
+import { account_name_pattern, default_account_name, hash_password } from "./passwords.ts";
 
-const file_path = process.argv[2] ?? "password.hash";
+const name = process.argv[2] ?? "";
+const file_path = process.argv[3] ?? "password.hash";
+
+if (!account_name_pattern.test(name)) {
+  console.error("Usage: npm run hash-password -- <name> [file], the name of lowercase letters, digits, '.', '_' and '-'.");
+  process.exit(1);
+}
 
 // Reads one line without echoing it.
 function ask_hidden(question: string): Promise<string> {
@@ -49,5 +55,14 @@ if (!password) {
   process.exit(1);
 }
 
-writeFileSync(file_path, hash_password(password) + "\n", { mode: 0o600 });
-console.error(`Wrote ${file_path}; point X_NIX_PASSWORD_HASH_FILE at it.`);
+// The user's own line goes, whether it carries their name or, for the default user, only a hash.
+function names_user(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.startsWith(`${name}:`)) return true;
+  return name === default_account_name && trimmed.startsWith("scrypt$");
+}
+
+const kept_lines = existsSync(file_path) ? readFileSync(file_path, "utf8").split("\n").filter((line) => line.trim() !== "" && !names_user(line)) : [];
+const lines = [...kept_lines, `${name}:${hash_password(password)}`];
+writeFileSync(file_path, lines.join("\n") + "\n", { mode: 0o600 });
+console.error(`Set ${name}'s password in ${file_path}; point X_NIX_PASSWORD_HASH_FILE at it.`);
