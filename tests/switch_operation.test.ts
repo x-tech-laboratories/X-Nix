@@ -90,6 +90,41 @@ describe("a switch on the agent", () => {
     expect(ran.map((argv) => argv[0])).toEqual(["/bin/sh", "nixos-rebuild", "/bin/sh"]);
   });
 
+  it("fetches from the cache before its watchdog starts, so a slow download leaves the activation its whole time", async () => {
+    const watched = watch({ token: token(), require_sudo: false, activation_timeout: 1, confirm_window: 1 });
+    const { context, ran, output } = fake_context();
+    const fetch = ["nix", "build", "--no-link", "/nix/store/00000000000000000000000000000000-new"];
+    const answer = context.program;
+    let fetched = false;
+    // Only the first fetch downloads; the steps' own fetch finds the closure there.
+    context.program = async (inner, argv, options) => {
+      if (argv.join(" ") === fetch.join(" ") && !fetched) {
+        fetched = true;
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+      return answer(inner, argv, options);
+    };
+
+    await switch_system(context, plain_switch({ fetch_steps: [{ argv: fetch }], steps: [{ argv: fetch }, { argv: ["switch-to-configuration", "switch"] }], watch: watched }));
+
+    const text = output();
+    expect(text.indexOf("phase fetch")).toBeLessThan(text.indexOf("phase watch"));
+    expect(ran.map((argv) => argv[0])).toEqual(["nix", "nix", "switch-to-configuration"]);
+    expect(switch_verdict(text).outcome?.kind).toBe("kept");
+  }, 20_000);
+
+  it("ends unchanged, before any watchdog, when the fetch from the cache fails", async () => {
+    const watched = watch({ token: token() });
+    const { context, ran, output } = fake_context((argv) => (argv[0] === "nix" ? { exit_code: 1 } : {}));
+
+    const status = await switch_system(context, plain_switch({ fetch_steps: [{ argv: ["nix", "build"] }], watch: watched }));
+
+    expect(status).toBe(1);
+    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "The fetch from the cache failed with status 1" });
+    expect(ran).toEqual([["nix", "build"]]);
+    expect(existsSync(watch_folder(watched.token))).toBe(false);
+  });
+
   it("asks its watchdog to roll back a failing health check, with the check's output as the reason", async () => {
     const watched = watch({ token: token(), require_sudo: false, health_commands: ["curl -f localhost"], health_timeout: 0 });
     const { context, output } = fake_context((argv) => (argv[2] === "curl -f localhost" ? { exit_code: 1, stdout: "nginx is down\n" } : {}));

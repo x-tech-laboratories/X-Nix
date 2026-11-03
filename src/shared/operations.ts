@@ -165,6 +165,9 @@ export interface SwitchOperation {
   mode: "switch" | "boot" | "test" | "dry-activate";
   // What failed activations are called, such as "nixos-rebuild switch".
   activation_name: string;
+  // Fetches the closure before the watchdog starts, so a slow download never counts against activation_timeout; absent
+  // from an older server's switch. The steps fetch it again for an agent too old to know these, at no cost once fetched.
+  fetch_steps?: Step[];
   steps: Step[];
   // Runs after the activation whatever it returned, without changing the switch's status.
   post_switch: Argv | null;

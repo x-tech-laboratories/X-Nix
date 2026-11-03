@@ -23,7 +23,7 @@ import {
   innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
   type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
-import { cache_switch_steps, post_switch_argv, rebuild_steps, sudo, system_profile, type SwitchMode } from "./commands.ts";
+import { cache_fetch_steps, cache_switch_steps, post_switch_argv, rebuild_steps, sudo, system_profile, type SwitchMode } from "./commands.ts";
 
 export type { Generation } from "../../shared/facts.ts";
 export { switch_mark } from "../../shared/operations.ts";
@@ -80,6 +80,7 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
     kind: "switch",
     mode,
     activation_name: store_path === null ? `nixos-rebuild ${mode}` : `The ${mode} from the cache`,
+    fetch_steps: store_path === null ? [] : cache_fetch_steps(settings, store_path),
     steps,
     post_switch: post_switch_argv(settings),
     pre_switch_checks: guarded ? settings.pre_switch_checks : [],

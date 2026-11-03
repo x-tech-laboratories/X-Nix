@@ -140,14 +140,20 @@ export function rebuild_steps(settings: DeploymentSettings, mode: SwitchMode): S
 // fetches the closure from the host's substituters, the cache among them, taking from upstream what the cache left out;
 // it substitutes for anyone, so only activation needs sudo.
 export function cache_switch_steps(settings: DeploymentSettings, store_path: string, mode: SwitchMode): Step[] {
+  const steps: Step[] = [];
+  // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
+  if (mode === "switch" || mode === "boot") steps.push({ argv: [...sudo(settings), "nix-env", "-p", system_profile, "--set", store_path] });
+  steps.push({ argv: [...sudo(settings), `${store_path}/bin/switch-to-configuration`, mode] });
+  return [...cache_fetch_steps(settings, store_path), ...steps.map((step) => ({ ...step, argv: [...settings.switch_wrapper, ...step.argv] }))];
+}
+
+// Fetches the closure and checks the host holds all of it, changing nothing the host runs.
+export function cache_fetch_steps(settings: DeploymentSettings, store_path: string): Step[] {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const steps: Step[] = [
     { argv: [...nix(settings), "build", "--no-link", store_path] },
     { argv: [...nix(settings), "path-info", "--recursive", store_path], quiet: true },
   ];
-  // Only switch and boot make the closure the system profile's next generation, which the boot loader lists.
-  if (mode === "switch" || mode === "boot") steps.push({ argv: [...sudo(settings), "nix-env", "-p", system_profile, "--set", store_path] });
-  steps.push({ argv: [...sudo(settings), `${store_path}/bin/switch-to-configuration`, mode] });
   return steps.map((step) => ({ ...step, argv: [...settings.switch_wrapper, ...step.argv] }));
 }
 

@@ -1,4 +1,5 @@
-// A switch: its pre-switch checks, its watchdog, the activation, post_switch and its health checks, printing marker
+// A switch: its pre-switch checks, the fetch of a closure from the cache, its watchdog, the activation, post_switch and
+// its health checks, printing marker
 // lines that tell the server how it went; and the files X-Nix writes to confirm a switch or to have it rolled back.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -44,6 +45,17 @@ export async function switch_system(context: Context, operation: SwitchOperation
       }
     }
     say("Every pre-switch check passed");
+  }
+
+  // Fetched before the watchdog starts, so a slow download never uses up the time the activation has.
+  const fetch_steps = operation.fetch_steps ?? [];
+  if (fetch_steps.length > 0) {
+    mark("phase fetch");
+    const fetched = await run_steps(context, fetch_steps);
+    if (fetched !== 0) {
+      mark(`outcome unchanged The fetch from the cache failed with status ${fetched}`);
+      return fetched;
+    }
   }
 
   const watch = operation.watch;
