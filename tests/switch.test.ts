@@ -5,18 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ConfigError, deployment_settings } from "../src/server/config.ts";
+import { ConfigError, deployment_settings, host_settings } from "../src/server/config.ts";
 import { switch_command } from "../src/server/nixos/commands.ts";
 import {
   confirm_command, guarded_switch_command, is_guarded, kept_awake, parse_generations, rollback_command, switch_job_command, switch_verdict, watch_folder,
   watch_token,
 } from "../src/server/nixos/switch.ts";
-import { target_closure } from "./fake_agent.ts";
+import { host_values, target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 function settings(values: Record<string, unknown> = {}) {
-  return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...values });
+  const [own, of_host] = host_values(values);
+  return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...own }, 0, undefined, () => host_settings({ id: "odin", ...of_host }));
 }
 
 const folders: string[] = [];

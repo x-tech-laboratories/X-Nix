@@ -51,8 +51,7 @@ export function deployment_view(id: string): View {
     badge.replaceChildren(status_badge(deployment.reading?.status ?? null));
     buttons.replaceChildren(
       h("button", { onclick: () => void run_refresh() }, "Check now"),
-      // Collect Garbage lives on the deployment's Store page.
-      ...deployment.actions.filter((action) => action.id !== "collect").map((action) => action_button(deployment, action, () => refresh(true))),
+      ...deployment.actions.map((action) => action_button(deployment, action, () => refresh(true))),
     );
     return [
       tiles(deployment),
@@ -147,7 +146,7 @@ function details(deployment: Deployment): HTMLElement {
   const when = (epoch: number | null | undefined) => (epoch ? h("span", { title: stamp(epoch) }, age(epoch)) : "—");
   const code = (text: string | null | undefined) => (text ? h("code", {}, text) : "—");
   const rows: [string, ReturnType<typeof when> | string, string?][] = [
-    ["Host", deployment.host ?? "this server"],
+    ["Host", deployment.host_name === null ? deployment.host ?? "this server" : h("a", { href: link(["hosts", deployment.host_name]) }, deployment.host ?? `${deployment.host_name} (this server)`)],
     ["Flake", flake_link(deployment.flake_id, deployment.flake)],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
     ["Tags", deployment.tags.length === 0 ? "—" : tag_chips(deployment.tags)],

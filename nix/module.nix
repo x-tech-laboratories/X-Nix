@@ -22,14 +22,19 @@ let
   credentials_directory = "/run/credentials/x-nix.service";
 
   config_file = json.generate "x-nix.json" {
+    hosts = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.hosts;
     flakes = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.flakes;
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-    inherit (cfg) agents provisioning fleet;
-    wake_on_lan = cfg.wakeOnLan;
+    inherit (cfg) provisioning fleet;
   };
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [ "services" "x-nix" "agents" ] "Set each host's agent_key under services.x-nix.hosts.")
+    (lib.mkRemovedOptionModule [ "services" "x-nix" "wakeOnLan" ] "Set each host's wake_on_lan under services.x-nix.hosts.")
+  ];
+
   options.services.x-nix = {
     enable = mkEnableOption "X-Nix, a web portal for managing NixOS deployments";
 
@@ -114,30 +119,27 @@ in
       description = "The Attic caches to watch, by id, each with the settings README.md lists; ids are shared with flakes and deployments.";
     };
 
-    agents = mkOption {
-      type = types.attrsOf types.str;
+    hosts = mkOption {
+      type = types.attrsOf json.type;
       default = { };
-      example = {
-        odin = "ssh-ed25519 AAAA... x-nix-agent-odin";
-      };
-      description = ''
-        Each other host's agent key, as the OpenSSH public key line of the key its
-        `services.x-nix-agent.keyFile` holds. Only a host named here can dial in on `/api/agent`.
+      example = lib.literalExpression ''
+        {
+          odin = {
+            agent_key = "ssh-ed25519 AAAA... x-nix-agent-odin";
+            gc.max_generation_age = "30d";
+          };
+          thor = {
+            agent_key = "ssh-ed25519 AAAA... x-nix-agent-thor";
+            wake_on_lan = "aa:bb:cc:dd:ee:ff";
+          };
+        }
       '';
-    };
-
-    wakeOnLan = mkOption {
-      type = json.type;
-      default = { };
-      example = {
-        thor = "aa:bb:cc:dd:ee:ff";
-        odin = {
-          mac = "aa:bb:cc:dd:ee:01";
-          broadcast = "192.168.1.255";
-          timeout = "5m";
-        };
-      };
-      description = "The hosts woken by a magic packet before an operation on them, each by its MAC address or the settings README.md lists.";
+      description = ''
+        The machines X-Nix reaches, by the name their agent answers to, each with the settings README.md
+        lists: `agent_key`, the OpenSSH public key line of the key its `services.x-nix-agent.keyFile`
+        holds, so only a host named here can dial in on `/api/agent`; `wake_on_lan`; `keep_awake`; `gc`;
+        `boot` and `require_sudo`. A host a deployment names needs no entry of its own.
+      '';
     };
 
     provisioning = mkOption {

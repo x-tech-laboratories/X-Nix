@@ -7,8 +7,9 @@ import type { FastifyBaseLogger } from "fastify";
 import type { Cache } from "./cache.ts";
 import type { Deployment } from "./deployment.ts";
 import type { Flake } from "./flake.ts";
+import type { Host } from "./host.ts";
 
-// What the poller drives; flakes, deployments and caches share one id space, so their timers never collide.
+// What the poller drives; flakes, deployments and caches share one id space and hosts have their own, so their timers never collide.
 export interface Watched {
   readonly id: string;
   readonly settings: { interval: number; job_poll: number };
@@ -24,22 +25,27 @@ export class Poller {
   readonly deployments: Map<string, Deployment>;
   readonly caches: Map<string, Cache>;
   readonly flakes: Map<string, Flake>;
+  // By the name their agents answer to.
+  readonly hosts: Map<string, Host>;
   // Anything else that follows long runs, such as the provisioner, each with an id no flake, deployment or cache can take.
   private readonly others: Watched[];
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly log: FastifyBaseLogger | null;
   private running = false;
 
-  constructor(deployments: Deployment[], log: FastifyBaseLogger | null = null, caches: Cache[] = [], others: Watched[] = [], flakes: Flake[] = []) {
+  constructor(
+    deployments: Deployment[], log: FastifyBaseLogger | null = null, caches: Cache[] = [], others: Watched[] = [], flakes: Flake[] = [], hosts: Host[] = [],
+  ) {
     this.deployments = new Map(deployments.map((deployment) => [deployment.id, deployment]));
     this.caches = new Map(caches.map((cache) => [cache.id, cache]));
     this.flakes = new Map(flakes.map((flake) => [flake.id, flake]));
+    this.hosts = new Map(hosts.map((host) => [host.name, host]));
     this.others = others;
     this.log = log;
   }
 
   private watched(): Watched[] {
-    return [...this.flakes.values(), ...this.deployments.values(), ...this.caches.values(), ...this.others];
+    return [...this.hosts.values(), ...this.flakes.values(), ...this.deployments.values(), ...this.caches.values(), ...this.others];
   }
 
   start(): void {

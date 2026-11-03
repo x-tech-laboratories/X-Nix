@@ -1,8 +1,9 @@
-// Reads the config file: the flakes X-Nix updates, and the deployments and caches it watches, each naming a flake.
+// Reads the config file: the hosts X-Nix reaches, the flakes it updates, and the deployments and caches it watches, each naming a flake.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
 
 import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
 import type { WakeSettings } from "./agents/wake.ts";
@@ -40,6 +41,25 @@ export interface GcSettings {
   max_generation_age: number | null;
   gc_bin: string;
   gc_args: string[];
+}
+
+// One machine X-Nix reaches through its agent: how it is woken, its Nix store and its boot entries.
+export interface HostSettings {
+  // The name its agent answers to.
+  id: string;
+  name: string;
+  // Its agent's OpenSSH public key line; null for the server's own host, or a host X-Nix provisioned.
+  agent_key: string | null;
+  wake: WakeSettings | null;
+  // Whether every job on the host, and every switch activating it, holds off idle and sleep until it ends.
+  keep_awake: boolean;
+  interval: number;
+  job_poll: number;
+  require_sudo: boolean;
+  // Null when the store is not watched.
+  gc: GcSettings | null;
+  // Whether the boot entries are read, and the next boot may be picked.
+  boot: boolean;
 }
 
 // One flake whose lock X-Nix keeps up to date, which deployments and caches name instead of repeating its reference.
@@ -95,7 +115,7 @@ export interface DeploymentSettings {
   switch_agent: string | null;
   // Switch by fetching the evaluated closure from cache_url and activating it, rather than rebuilding on the host.
   switch_from_cache: boolean;
-  // Hold off idle and sleep on the activated host while a switch or rollback runs.
+  // Hold off idle and sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
   inhibit_sleep: boolean;
   target_host: string | null;
   auto_switch: boolean;
@@ -116,10 +136,6 @@ export interface DeploymentSettings {
   health_timeout: number;
   // Whether Build reads nix's structured log, so its job shows what is building and downloading.
   build_progress: boolean;
-  // Null when the store is not watched.
-  gc: GcSettings | null;
-  // Whether the host's boot entries are read, and its next boot may be picked.
-  boot: boolean;
   // Names a fleet selector picks the deployment by, as @tag.
   tags: string[];
   // The commit or tag evaluation, build and switch use instead of the branch head; null follows the head.
@@ -198,14 +214,17 @@ export interface ProvisioningSettings {
 }
 
 export interface Config {
+  // Every declared host, and every host a deployment names, the server's own included.
+  hosts: HostSettings[];
   flakes: FlakeSettings[];
   deployments: DeploymentSettings[];
   caches: CacheSettings[];
   provisioning: ProvisioningSettings;
-  // Each other host's agent key, as its OpenSSH public key line.
+  // Each other host's agent key, as its OpenSSH public key line, taken from hosts.
   agents: Map<string, string>;
-  // How each host that sleeps is woken before an operation on it.
+  // How each host that sleeps is woken before an operation on it, taken from hosts.
   wake_on_lan: Map<string, WakeSettings>;
+  keep_awake: Set<string>;
   fleet: FleetSettings;
 }
 
@@ -224,25 +243,36 @@ export function worse(first: Status, second: Status): Status {
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
-export function load_config(path: string): Config {
+export function load_config(path: string, own_host = hostname()): Config {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
     throw new ConfigError(`Could not read the config at ${path}: ${(error as Error).message}`);
   }
-  return parse_config(raw);
+  return parse_config(raw, own_host);
 }
 
-export function parse_config(raw: unknown): Config {
-  const list = (key: "flakes" | "deployments" | "caches"): unknown[] => {
-    const entries = (raw as Record<string, unknown> | null)?.[key] ?? [];
+// Reads the whole config; a deployment naming no host is on own_host, the server's own.
+export function parse_config(raw: unknown, own_host = hostname()): Config {
+  const values = (raw ?? {}) as Record<string, unknown>;
+  const list = (key: "hosts" | "flakes" | "deployments" | "caches"): unknown[] => {
+    const entries = values[key] ?? [];
     if (!Array.isArray(entries)) throw new ConfigError(`\`${key}\` must be a list`);
     return entries;
   };
+  for (const key of ["agents", "wake_on_lan"]) {
+    if (values[key] !== undefined && values[key] !== null) throw new ConfigError(`\`${key}\` belongs to each host: set agent_key and wake_on_lan under hosts`);
+  }
+  const hosts = new Map(list("hosts").map((entry, index) => host_settings(entry, index)).map((host) => [host.id, host]));
+  const host_of = (name: string | null): HostSettings => {
+    const id = name ?? own_host;
+    if (!hosts.has(id)) hosts.set(id, host_settings({ id }));
+    return hosts.get(id)!;
+  };
   const flakes = list("flakes").map((entry, index) => flake_settings(entry, index));
   const by_id = new Map(flakes.map((flake) => [flake.id, flake]));
-  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id));
+  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id, host_of));
   const parsed_caches = list("caches").map((entry, index) => cache_settings(entry, index, by_id));
   // Jobs and events are kept by id, so no two flakes, deployments or caches may share one.
   const seen = new Set<string>();
@@ -250,11 +280,34 @@ export function parse_config(raw: unknown): Config {
     if (seen.has(id)) throw new ConfigError(`Two flakes, deployments or caches are named '${id}'`);
     seen.add(id);
   }
+  const every_host = [...hosts.values()];
   return {
-    flakes, deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings((raw as { provisioning?: unknown } | null)?.provisioning),
-    agents: agent_keys((raw as { agents?: unknown } | null)?.agents),
-    wake_on_lan: wake_settings((raw as { wake_on_lan?: unknown } | null)?.wake_on_lan),
-    fleet: fleet_settings((raw as { fleet?: unknown } | null)?.fleet),
+    hosts: every_host, flakes, deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings(values.provisioning),
+    agents: new Map(every_host.filter((host) => host.agent_key !== null).map((host) => [host.id, host.agent_key!])),
+    wake_on_lan: new Map(every_host.filter((host) => host.wake !== null).map((host) => [host.id, host.wake!])),
+    keep_awake: new Set(every_host.filter((host) => host.keep_awake).map((host) => host.id)),
+    fleet: fleet_settings(values.fleet),
+  };
+}
+
+export function host_settings(entry: unknown, index = 0): HostSettings {
+  if (typeof entry !== "object" || entry === null) throw new ConfigError(`Host ${index + 1} must be an object`);
+  const values = entry as Record<string, unknown>;
+  const read = new Reader(values, `host ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
+  const id = read.text("id");
+  if (id === null || !/^[A-Za-z0-9_.-]+$/.test(id)) throw new ConfigError(`Host ${index + 1} needs an \`id\`, its agent's name, of letters, digits, ., - and _`);
+  const wake = wake_settings(values.wake_on_lan, id);
+  return {
+    id,
+    name: read.text("name") ?? id,
+    agent_key: agent_key(read.text("agent_key"), id),
+    wake,
+    keep_awake: read.flag("keep_awake", wake !== null),
+    interval: read.duration("interval", "5m"),
+    job_poll: read.duration("job_poll", "30s"),
+    require_sudo: read.flag("require_sudo", true),
+    gc: gc_settings(values.gc, read.owner),
+    boot: read.flag("boot", true),
   };
 }
 
@@ -294,6 +347,9 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
 const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"];
 
+// The settings that describe the machine, which only a host under hosts takes.
+const host_only_keys = ["gc", "boot", "require_sudo", "inhibit_sleep"];
+
 export function provisioning_settings(entry: unknown): ProvisioningSettings {
   if (entry !== undefined && entry !== null && (typeof entry !== "object" || Array.isArray(entry))) throw new ConfigError("`provisioning` must be an object");
   const read = new Reader((entry ?? {}) as Record<string, unknown>, "provisioning");
@@ -324,43 +380,30 @@ export function fleet_settings(entry: unknown): FleetSettings {
   return { parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m") };
 }
 
-function agent_keys(raw: unknown): Map<string, string> {
-  if (raw === undefined || raw === null) return new Map();
-  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("`agents` must map each host to its agent's public key line");
-  const keys = new Map<string, string>();
-  for (const [host, line] of Object.entries(raw)) {
-    if (typeof line !== "string") throw new ConfigError(`The agent key of '${host}' must be its OpenSSH public key line`);
-    try {
-      parse_public_key(line);
-    } catch (error) {
-      if (error instanceof AgentKeyError) throw new ConfigError(`The agent key of '${host}' ${error.message}`);
-      throw error;
-    }
-    keys.set(host, line);
+// The host's agent key, checked as an OpenSSH public key line.
+function agent_key(line: string | null, host: string): string | null {
+  if (line === null) return null;
+  try {
+    parse_public_key(line);
+  } catch (error) {
+    if (error instanceof AgentKeyError) throw new ConfigError(`The agent key of '${host}' ${error.message}`);
+    throw error;
   }
-  return keys;
+  return line;
 }
 
-// Each host maps to its MAC address, or to an object of `mac`, `broadcast`, `port`, `timeout`, `via` and `keep_awake`.
-function wake_settings(raw: unknown): Map<string, WakeSettings> {
-  if (raw === undefined || raw === null) return new Map();
-  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigError("`wake_on_lan` must map each host to its MAC address or wake settings");
-  const settings = new Map<string, WakeSettings>();
-  for (const [host, entry] of Object.entries(raw)) {
-    const fields = typeof entry === "string" ? { mac: entry } : entry;
-    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) throw new ConfigError(`The wake-on-LAN settings of '${host}' must be its MAC address or an object`);
-    const owner = `the wake-on-LAN settings of '${host}'`;
-    const read = new Reader(fields as Record<string, unknown>, owner);
-    const mac = read.text("mac");
-    if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
-    const port = read.limit("port", 9) ?? 9;
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
-    settings.set(host, {
-      mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"),
-      via: read.text("via"), keep_awake: read.flag("keep_awake", true),
-    });
-  }
-  return settings;
+// The host's MAC address, or an object of `mac`, `broadcast`, `port`, `timeout` and `via`; null when it is never woken.
+function wake_settings(entry: unknown, host: string): WakeSettings | null {
+  if (entry === undefined || entry === null) return null;
+  const fields = typeof entry === "string" ? { mac: entry } : entry;
+  if (typeof fields !== "object" || fields === null || Array.isArray(fields)) throw new ConfigError(`The wake-on-LAN settings of '${host}' must be its MAC address or an object`);
+  const owner = `the wake-on-LAN settings of '${host}'`;
+  const read = new Reader(fields as Record<string, unknown>, owner);
+  const mac = read.text("mac");
+  if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
+  const port = read.limit("port", 9) ?? 9;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
+  return { mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"), via: read.text("via") };
 }
 
 export function cache_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): CacheSettings {
@@ -410,7 +453,10 @@ function default_info_url(cache_url: string): string | null {
   return /^https?:\/\//.test(cache_url) ? `${cache_url.replace(/\/+$/, "")}/nix-cache-info` : null;
 }
 
-export function deployment_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): DeploymentSettings {
+// The settings of one deployment, with the flake it names resolved and its host's sudo and sleep settings.
+export function deployment_settings(
+  entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>(), host_of: (name: string | null) => HostSettings = (name) => host_settings({ id: name ?? "localhost" }),
+): DeploymentSettings {
   if (typeof entry !== "object" || entry === null) throw new ConfigError(`Deployment ${index + 1} must be an object`);
   const values = entry as Record<string, unknown>;
   const read = new Reader(values, `deployment ${typeof values.id === "string" ? `'${values.id}'` : index + 1}`);
@@ -418,6 +464,9 @@ export function deployment_settings(entry: unknown, index = 0, flakes = new Map<
   if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Deployment ${index + 1} needs an \`id\` of letters, digits, - and _`);
   const moved = flake_only_keys.find((key) => values[key] !== undefined && values[key] !== null);
   if (moved !== undefined) throw new ConfigError(`\`${moved}\` of ${read.owner} belongs to its flake: declare the flake under flakes and name its id in \`flake\``);
+  const of_host = host_only_keys.find((key) => values[key] !== undefined && values[key] !== null);
+  if (of_host !== undefined) throw new ConfigError(`\`${of_host}\` of ${read.owner} belongs to its host: set it under hosts`);
+  const host = host_of(read.text("host"));
   const switch_agent = read.text("switch_agent");
   const eval_interval = read.duration("eval_interval", "1h");
   const cache_url = read.text("cache_url");
@@ -445,7 +494,7 @@ export function deployment_settings(entry: unknown, index = 0, flakes = new Map<
     job_poll: read.duration("job_poll", "30s"),
     drift_status: read.status("drift_status", "warning"),
     reboot_status: read.status("reboot_status", "warning"),
-    require_sudo: read.flag("require_sudo", true),
+    require_sudo: host.require_sudo,
     nix_bin: read.text("nix_bin") ?? "nix",
     rebuild_bin: read.text("rebuild_bin") ?? "nixos-rebuild",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
@@ -457,7 +506,7 @@ export function deployment_settings(entry: unknown, index = 0, flakes = new Map<
     cache_url,
     switch_agent,
     switch_from_cache,
-    inhibit_sleep: read.flag("inhibit_sleep", false),
+    inhibit_sleep: host.keep_awake,
     target_host: read.text("target_host"),
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),
@@ -473,8 +522,6 @@ export function deployment_settings(entry: unknown, index = 0, flakes = new Map<
     health_period: Math.max(1, read.duration("health_period", "5s")),
     health_timeout: read.duration("health_timeout", "2m"),
     build_progress: read.flag("build_progress", true),
-    gc: gc_settings(values.gc, read.owner),
-    boot: read.flag("boot", true),
     tags,
     pin,
   };

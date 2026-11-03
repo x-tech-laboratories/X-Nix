@@ -66,6 +66,7 @@ export class AgentPool {
   readonly own_host: string;
   private readonly send_wake: SendWake;
   private wake_settings = new Map<string, WakeSettings>();
+  private kept_awake = new Set<string>();
   // Who waits on each host's agent to dial in after waking it.
   private readonly waiting = new Map<string, Set<() => void>>();
   // The long runs waiting on their host to wake before they start.
@@ -77,9 +78,10 @@ export class AgentPool {
     this.send_wake = send_wake;
   }
 
-  // Takes how each host that sleeps is woken.
-  set_wake(settings: Map<string, WakeSettings>): void {
+  // Takes how each host that sleeps is woken, and which hosts are kept awake through every job.
+  set_wake(settings: Map<string, WakeSettings>, kept_awake: Set<string> = new Set(settings.keys())): void {
     this.wake_settings = settings;
+    this.kept_awake = kept_awake;
   }
 
   add(host: string, agent: Agent): void {
@@ -134,7 +136,7 @@ export class AgentPool {
 
   // Whether every job on a host holds off idle and sleep until it ends.
   keeps_awake(host: string | null): boolean {
-    return this.wake_settings.get(host ?? this.own_host)?.keep_awake === true;
+    return this.kept_awake.has(host ?? this.own_host);
   }
 
   // Whether a host's agent is away and the host can be woken.

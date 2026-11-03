@@ -2,8 +2,9 @@
 
 import type { Cache } from "../src/server/cache.ts";
 import { AgentError, AgentPool, type Agent, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
-import { deployment_settings, type FlakeSettings } from "../src/server/config.ts";
+import { deployment_settings, host_settings, type FlakeSettings } from "../src/server/config.ts";
 import { Deployment } from "../src/server/deployment.ts";
+import { Host } from "../src/server/host.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
 import { probe_script } from "../src/server/nixos/probe.ts";
 import { Store } from "../src/server/store.ts";
@@ -154,6 +155,7 @@ export class FakeAgent implements Agent {
 
 export interface Harness {
   deployment: Deployment;
+  host: Host;
   agent: FakeAgent;
   store: Store;
   agents: AgentPool;
@@ -166,9 +168,37 @@ export function make_deployment(
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
-  const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...values }, 0, existing.flakes);
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches });
-  return { deployment, agent, store, agents };
+  const [own, of_host] = host_values(values);
+  const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now });
+  const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...own }, 0, existing.flakes, () => host.settings);
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host });
+  return { deployment, host, agent, store, agents };
+}
+
+// Splits test values into the deployment's and its host's, as inhibit_sleep is the host's keep_awake.
+export function host_values(values: Record<string, unknown>): [deployment: Record<string, unknown>, host: Record<string, unknown>] {
+  const deployment: Record<string, unknown> = {};
+  const host: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (key === "inhibit_sleep") host.keep_awake = value;
+    else if (["gc", "boot", "require_sudo"].includes(key)) host[key] = value;
+    else deployment[key] = value;
+  }
+  return [deployment, host];
+}
+
+export interface HostHarness {
+  host: Host;
+  agent: FakeAgent;
+  store: Store;
+}
+
+// A host named "host", served as the pool's own, with these host settings.
+export function make_host(values: Record<string, unknown> = {}): HostHarness {
+  const store = new Store(":memory:");
+  const agent = new FakeAgent();
+  const host = new Host(host_settings({ id: "host", ...values }), { store, agents: new AgentPool("host", agent), now: () => clock.now });
+  return { host, agent, store };
 }
 
 // The evaluation runs a cycle launched, or undefined when it launched none.

@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
-import { build_app, type CacheView, type DeploymentView, type FlakeView, type HealthAnswer } from "../src/server/app.ts";
+import { build_app, type CacheView, type DeploymentView, type FlakeView, type HealthAnswer, type HostView } from "../src/server/app.ts";
 import { hash_password, parse_accounts } from "../src/server/auth.ts";
 import { Cache } from "../src/server/cache.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { cache_settings, flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
+import type { Host } from "../src/server/host.ts";
 import { Poller } from "../src/server/poller.ts";
 import { clock, FakeAgent, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
@@ -18,8 +19,8 @@ const accounts = new Map([["admin", hash_password(password)], ["operator", hash_
 let app: FastifyInstance | null = null;
 
 // The app, and a request helper carrying a logged-in session.
-async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = []) {
-  const poller = new Poller([harness.deployment], null, caches, [], flakes);
+async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = [], hosts: Host[] = []) {
+  const poller = new Poller([harness.deployment], null, caches, [], flakes, hosts);
   app = await build_app({ serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller });
   const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
   const cookie = String(login.headers["set-cookie"]).split(";")[0];
@@ -96,10 +97,9 @@ describe("/api/deployments", () => {
     const [deployment] = (await inject("GET", "/api/deployments")).json<DeploymentView[]>();
 
     expect(deployment.id).toBe("host-deploy");
-    expect(deployment.actions.map((action) => action.id)).toEqual(["build", "switch", "reboot", "collect", "boot", "test", "dry-activate"]);
+    expect(deployment.actions.map((action) => action.id)).toEqual(["build", "switch", "reboot", "boot", "test", "dry-activate"]);
     expect(deployment.actions[2].confirm).toContain("Reboot");
-    expect(deployment.actions[3].confirm).toContain("Collect garbage");
-    expect(deployment.gc?.command).toBe("sudo -n nix-collect-garbage --delete-older-than 7d");
+    expect(deployment.host_name).toBe("host");
   });
 
   it("starts an action, then refuses a second one with 409", async () => {
@@ -197,16 +197,30 @@ describe("an unknown path", () => {
   });
 });
 
-describe("/api/deployments/:id/next-boot", () => {
+describe("/api/hosts", () => {
+  it("lists each host with its store's collection and its deployments", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [harness.host]);
+
+    const [host] = (await inject("GET", "/api/hosts")).json<HostView[]>();
+
+    expect(host).toMatchObject({ name: "host", deployments: [{ id: "host-deploy" }] });
+    expect(host.gc?.command).toBe("sudo -n nix-collect-garbage --delete-older-than 7d");
+    expect(host.actions.map((action) => action.id)).toEqual(["collect", "reboot"]);
+    expect((await inject("POST", "/api/hosts/host/actions/collect")).statusCode).toBe(200);
+    expect((await inject("POST", "/api/hosts/host/actions/collect")).statusCode).toBe(409);
+    expect((await inject("GET", "/api/hosts/missing")).statusCode).toBe(404);
+  });
+
   it("sets the next boot to a known entry and refuses others", async () => {
     const harness = make_deployment();
     harness.agent.boot_probe_result = result(0, `loader=efi\n@@entries\nBootOrder: 0001\nBoot0001* Linux Boot Manager\tHD(1)\nBoot0003* Windows Boot Manager\tHD(1)\n`);
-    await harness.deployment.cycle();
-    const { server, inject } = await start_app(harness);
+    await harness.host.cycle();
+    const { server, inject } = await start_app(harness, [], [], [harness.host]);
     const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } })).headers["set-cookie"]).split(";")[0];
-    const post = (payload: unknown) => server.inject({ method: "POST", url: "/api/deployments/host-deploy/next-boot", headers: { cookie }, payload: payload as object });
+    const post = (payload: unknown) => server.inject({ method: "POST", url: "/api/hosts/host/next-boot", headers: { cookie }, payload: payload as object });
 
-    expect((await inject("GET", "/api/deployments/host-deploy")).json<DeploymentView>().next_boot_refusal).toBeNull();
+    expect((await inject("GET", "/api/hosts/host")).json<HostView>().next_boot_refusal).toBeNull();
     expect((await post({ entry: "0003" })).statusCode).toBe(200);
     expect(harness.agent.commands).toContain("sudo -n efibootmgr --bootnext 0003");
     expect((await post({ entry: "9999" })).statusCode).toBe(409);

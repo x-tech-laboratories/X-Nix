@@ -568,6 +568,6 @@ describe("config", () => {
   });
 
   it("shares one id space with deployments", () => {
-    expect(() => parse_config({ deployments: [{ id: "fleet" }], caches: [base] })).toThrow("Two deployments or caches");
+    expect(() => parse_config({ deployments: [{ id: "fleet" }], caches: [base] })).toThrow("Two flakes, deployments or caches");
   });
 });

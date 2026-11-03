@@ -27,7 +27,8 @@ export type JobKind =
   | "eval" | "update" | "build" | "switch" | "boot" | "test" | "dry-activate" | "rollback" | "diff" | "reboot" | "collect" | "check" | "build-target"
   | "build-all" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
-export type ActionId = "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
+export type ActionId = "build" | "switch" | "reboot" | "boot" | "test" | "dry-activate";
+export type HostActionId = "collect" | "reboot";
 
 export interface Message {
   level: EventLevel;
@@ -47,8 +48,6 @@ export interface Reading {
   up_to_date: boolean | null;
   reboot_required: boolean | null;
   flake_reachable: boolean | null;
-  store: StoreReading | null;
-  boot: Boot | null;
 }
 
 export interface BootEntry {
@@ -112,7 +111,6 @@ export interface Evaluation {
   inputs_last_modified_epoch: number | null;
   drift_since_epoch: number | null;
   scheduled: Partial<Record<"build", number>>;
-  last_collection: Collection | null;
   last_diff: ClosureDiff | null;
 }
 
@@ -210,6 +208,7 @@ export interface Deployment {
   host: string | null;
   flake: string;
   flake_id: string | null;
+  host_name: string | null;
   configuration: string | null;
   tags: string[];
   pin: string | null;
@@ -220,13 +219,11 @@ export interface Deployment {
   schedule: { build: string | null };
   auto_switch: boolean;
   switch_from_cache: boolean;
-  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
   evaluation: Evaluation;
   evaluating: boolean;
   running_job: Job | null;
   actions: ActionView[];
-  next_boot_refusal: string | null;
   safety: {
     pre_switch_checks: string[];
     magic_rollback: boolean;
@@ -238,6 +235,33 @@ export interface Deployment {
     health_timeout: number;
     inhibit_sleep: boolean;
   };
+}
+
+export interface HostReading {
+  status: Status;
+  checked_epoch: number;
+  store: StoreReading | null;
+  boot: Boot | null;
+}
+
+export interface Host {
+  name: string;
+  display_name: string;
+  own: boolean;
+  agent_key: boolean;
+  agent: { agent_version: string; connected_epoch: number } | null;
+  wake: { mac: string; broadcast: string; via: string | null; timeout: number } | null;
+  keep_awake: boolean;
+  interval: number;
+  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
+  boot: boolean;
+  reading: HostReading | null;
+  state: { last_collection: Collection | null };
+  running_job: Job | null;
+  actions: { id: HostActionId; label: string; refusal: string | null; confirm: string | null }[];
+  next_boot_refusal: string | null;
+  system: { current: string | null; booted: string | null; version: string | null; reboot_required: boolean | null } | null;
+  deployments: { id: string; name: string }[];
 }
 
 export type FleetActionId = "build" | "switch" | "reboot";

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { AgentError } from "../src/server/agents/agent.ts";
-import { ConfigError, deployment_settings } from "../src/server/config.ts";
+import { ConfigError, host_settings } from "../src/server/config.ts";
 import { format_bytes } from "../src/server/nixos/garbage.ts";
-import { clock, make_deployment, result, type Harness } from "./fake_agent.ts";
+import { clock, make_host, result, type HostHarness as Harness } from "./fake_agent.ts";
 
 const gib = 2 ** 30;
 const day = 86400;
@@ -67,21 +67,21 @@ function gc_probe(options: GcProbeOptions = {}) {
 }
 
 function watched(gc: Record<string, unknown> = {}, values: Record<string, unknown> = {}): Harness {
-  return make_deployment({ gc, ...values });
+  return make_host({ gc, ...values });
 }
 
 // Runs one cycle with the store's probe answering this.
 async function read(harness: Harness, probe = gc_probe()): Promise<void> {
   harness.agent.gc_probe_result = probe;
-  await harness.deployment.cycle();
+  await harness.host.cycle();
 }
 
 function store_of(harness: Harness) {
-  return harness.deployment.reading()!.store!;
+  return harness.host.reading()!.store!;
 }
 
 function last_of(harness: Harness) {
-  return harness.deployment.evaluation().last_collection;
+  return harness.host.state().last_collection;
 }
 
 function messages(harness: Harness, level: string | null = null): string[] {
@@ -90,9 +90,9 @@ function messages(harness: Harness, level: string | null = null): string[] {
 
 // Starts Collect Garbage and ends its run with this output and exit code.
 async function manual_collection(harness: Harness, output: string, exit_code: number | null): Promise<void> {
-  expect((await harness.deployment.act("collect")).ok).toBe(true);
+  expect((await harness.host.act("collect")).ok).toBe(true);
   harness.agent.end(harness.agent.last_run("nix-collect-garbage")!, output, exit_code);
-  await harness.deployment.cycle();
+  await harness.host.cycle();
 }
 
 // ── Freshness ────────────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ describe("freshness", () => {
     await read(harness, gc_probe({ last_gc: clock.now - 21 * day }));
     expect(store_of(harness).status).toBe("warning");
 
-    expect(watched({ stale_status: "catastrophe" }).deployment.settings.gc?.stale_status).toBe("failed");
+    expect(watched({ stale_status: "catastrophe" }).host.settings.gc?.stale_status).toBe("failed");
   });
 
   it("never calls a running collection stale", async () => {
@@ -178,11 +178,10 @@ describe("freshness", () => {
     expect(last_of(harness)).toBeNull();
   });
 
-  it("keeps its status apart from the deployment's", async () => {
+  it("notes a change of its status as an event", async () => {
     const harness = watched();
     await read(harness, gc_probe({ outcome: "failed" }));
-    expect(harness.deployment.reading()?.status).not.toBe("failed");
-    expect(harness.store.events(harness.deployment.id).map((event) => event.message)).toContain("Store now failed: The last collection failed");
+    expect(harness.store.events(harness.host.id).map((event) => event.message)).toContain("Store now failed: The last collection failed");
   });
 });
 
@@ -312,16 +311,16 @@ describe("store", () => {
   });
 
   it("is left alone with gc set to false", async () => {
-    const harness = make_deployment({ gc: false });
+    const harness = make_host({ gc: false });
     await read(harness);
-    expect(harness.deployment.reading()?.store).toBeNull();
+    expect(harness.host.reading()?.store).toBeNull();
     expect(harness.agent.commands.some((command) => command.includes("journalctl"))).toBe(false);
-    expect(harness.deployment.action_refusal("collect")).toContain("gc is off");
+    expect(harness.host.action_refusal("collect")).toContain("gc is off");
   });
 
   it("rejects a gc that is not an object and a limit that is not a number", () => {
-    expect(() => deployment_settings({ id: "host", gc: "yes" })).toThrow(ConfigError);
-    expect(() => deployment_settings({ id: "host", gc: { warning: "80%" } })).toThrow(ConfigError);
+    expect(() => host_settings({ id: "host", gc: "yes" })).toThrow(ConfigError);
+    expect(() => host_settings({ id: "host", gc: { warning: "80%" } })).toThrow(ConfigError);
   });
 });
 
@@ -364,43 +363,41 @@ describe("profiles", () => {
 describe("collect garbage", () => {
   it("runs the configured collection under sudo on the host", async () => {
     const harness = watched({ gc_args: ["--delete-older-than", "14d"] });
-    expect((await harness.deployment.act("collect")).message).toBe("Collection started");
-    const job = harness.deployment.running_job()!;
-    expect([job.kind, job.command, job.agent]).toEqual(["collect", "sudo -n nix-collect-garbage --delete-older-than 14d", null]);
+    expect((await harness.host.act("collect")).message).toBe("Collection started");
+    const job = harness.host.running_job()!;
+    expect([job.kind, job.command, job.agent]).toEqual(["collect", "sudo -n nix-collect-garbage --delete-older-than 14d", "host"]);
   });
 
   it("runs without sudo when require_sudo is off", async () => {
     const harness = watched({}, { require_sudo: false });
-    await harness.deployment.act("collect");
-    expect(harness.deployment.running_job()?.command).toBe("nix-collect-garbage --delete-older-than 7d");
+    await harness.host.act("collect");
+    expect(harness.host.running_job()?.command).toBe("nix-collect-garbage --delete-older-than 7d");
   });
 
   it("keeps a collection that could not start in the history", async () => {
     const harness = watched();
     harness.agent.start_error = new AgentError("Could not start sh.");
-    const outcome = await harness.deployment.act("collect");
+    const outcome = await harness.host.act("collect");
     expect(outcome).toMatchObject({ ok: false, message: "Could not start the collection: Could not start sh." });
-    expect(harness.deployment.running_job()).toBeNull();
+    expect(harness.host.running_job()).toBeNull();
   });
 
   it("refuses a second job while one runs", async () => {
     const harness = watched();
-    await harness.deployment.act("collect");
-    expect((await harness.deployment.act("collect")).message).toContain("already running");
-    expect((await harness.deployment.act("switch")).message).toContain("already running");
+    await harness.host.act("collect");
+    expect((await harness.host.act("collect")).message).toContain("already running");
   });
 
   it("shows its progress and finishes by its exit code", async () => {
     const harness = watched();
-    await harness.deployment.act("collect");
+    await harness.host.act("collect");
     harness.agent.write(harness.agent.last_run("nix-collect-garbage")!, "deleting unused links...\n");
-    await harness.deployment.cycle();
-    expect(harness.deployment.running_job()?.progress).toBe("deleting unused links...");
+    await harness.host.cycle();
+    expect(harness.host.running_job()?.progress).toBe("deleting unused links...");
 
     harness.agent.end(harness.agent.last_run("nix-collect-garbage")!, "21482 store paths deleted, 44.4 GiB freed\n", 0);
-    await harness.deployment.cycle();
+    await harness.host.cycle();
     expect(harness.store.jobs()[0]).toMatchObject({ kind: "collect", state: "succeeded" });
-    expect(harness.deployment.due_for_evaluation()).toBe(true);
   });
 
   it("becomes the last collection, which an older timer run in the journal does not undo", async () => {

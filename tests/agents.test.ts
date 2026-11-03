@@ -56,9 +56,9 @@ describe("agent keys", () => {
 
   it("are declared in the config by host, and checked there", () => {
     const { public_line } = make_key(folder, "config");
-    expect(parse_config({ agents: { odin: public_line } }).agents.get("odin")).toBe(public_line);
-    expect(() => parse_config({ agents: { odin: "ssh-ed25519 not*base64" } })).toThrow(ConfigError);
-    expect(() => parse_config({ agents: ["odin"] })).toThrow(ConfigError);
+    expect(parse_config({ hosts: [{ id: "odin", agent_key: public_line }] }).agents.get("odin")).toBe(public_line);
+    expect(() => parse_config({ hosts: [{ id: "odin", agent_key: "ssh-ed25519 not*base64" }] })).toThrow(ConfigError);
+    expect(() => parse_config({ agents: { odin: public_line } })).toThrow(/belongs to each host/);
   });
 });
 

@@ -1,4 +1,22 @@
 {
+  "hosts": [
+    {
+      "id": "workstation",
+      "gc": {
+        "max_generation_age": "30d",
+        "warning": 90,
+        "threshold": 96
+      }
+    },
+    {
+      "id": "server"
+    },
+    {
+      "id": "pi",
+      "keep_awake": true,
+      "wake_on_lan": "aa:bb:cc:dd:ee:ff"
+    }
+  ],
   "flakes": [
     {
       "id": "workstation-config",
@@ -20,8 +38,9 @@
       "flake": "workstation-config",
       "configuration": "workstation",
       "build_at": "03:00",
-      "gc": { "max_generation_age": "30d", "warning": 90, "threshold": 96 },
-      "tags": ["desktop"]
+      "tags": [
+        "desktop"
+      ]
     },
     {
       "id": "server",
@@ -29,13 +48,22 @@
       "flake": "fleet",
       "auto_switch": true,
       "auto_switch_after": "30m",
-      "tags": ["canary", "servers"],
+      "tags": [
+        "canary",
+        "servers"
+      ],
       "pin": "v2026.10",
-      "pre_switch_checks": ["test \"$(df --output=pcent /boot | tail -1 | tr -dc 0-9)\" -lt 90"],
+      "pre_switch_checks": [
+        "test \"$(df --output=pcent /boot | tail -1 | tr -dc 0-9)\" -lt 90"
+      ],
       "magic_rollback": true,
       "confirm_timeout": "30s",
-      "health_commands": ["systemctl is-active --quiet nginx.service"],
-      "health_urls": ["https://server.example/health"]
+      "health_commands": [
+        "systemctl is-active --quiet nginx.service"
+      ],
+      "health_urls": [
+        "https://server.example/health"
+      ]
     },
     {
       "id": "pi",
@@ -48,14 +76,16 @@
       "cache_url": "https://attic.example/fleet",
       "switch_from_cache": true,
       "auto_switch": true,
-      "inhibit_sleep": true,
       "magic_rollback": true,
       "post_switch": "systemctl restart display-manager.service"
     }
   ],
   "fleet": {
     "parallel": 2,
-    "stages": ["@canary", "@servers"],
+    "stages": [
+      "@canary",
+      "@servers"
+    ],
     "sync_timeout": "30m"
   },
   "caches": [
@@ -63,19 +93,22 @@
       "id": "fleet-cache",
       "name": "Fleet cache",
       "flake": "fleet",
-      "configurations": ["workstation", "server", "pi"],
+      "configurations": [
+        "workstation",
+        "server",
+        "pi"
+      ],
       "cache_url": "https://attic.example/fleet",
       "build_root_dir": "/var/lib/x-nix/build-roots",
-      "drop_pushed": ["server"],
+      "drop_pushed": [
+        "server"
+      ],
       "push_command": "attic push fleet",
       "eval_workers": 2,
       "health_url": "https://attic.example/health",
       "metrics_url": "https://attic.example/metrics"
     }
   ],
-  "wake_on_lan": {
-    "pi": "aa:bb:cc:dd:ee:ff"
-  },
   "provisioning": {
     "ssh_key": "/var/lib/x-nix/install_key",
     "agent_url": "wss://nix.example.org/api/agent"

@@ -7,7 +7,7 @@ import { kept_awake_job, magic_packet, send_magic_packet, type WakeSettings } fr
 import { start_run } from "../src/server/runs.ts";
 import { ConfigError, parse_config } from "../src/server/config.ts";
 
-const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null, keep_awake: true };
+const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null };
 
 function fake_agent(name: string, commands: string[] = [], exit_code = 0): Agent {
   return {
@@ -120,7 +120,7 @@ describe("a job on a host that sleeps", () => {
     const pool = new AgentPool("server", fake_agent("server"));
     pool.add("thor", fake_agent("thor", thor_commands));
     pool.add("odin", fake_agent("odin", odin_commands));
-    pool.set_wake(new Map([["thor", thor], ["odin", { ...thor, keep_awake: false }]]));
+    pool.set_wake(new Map([["thor", thor], ["odin", thor]]), new Set(["thor"]));
 
     await start_run(pool, "thor", "run-1", "nix build");
     await start_run(pool, "odin", "run-2", "nix build");
@@ -150,17 +150,27 @@ describe("a job on a host that sleeps", () => {
 // ── Config ───────────────────────────────────────────────────────────────────
 
 describe("wake-on-LAN settings", () => {
-  it("take a bare MAC address or an object, with defaults", () => {
-    const settings = parse_config({ wake_on_lan: { thor: "aa:bb:cc:dd:ee:ff", odin: { mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: "5m" } } }).wake_on_lan;
+  const hosts = (wake: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    parse_config({ hosts: Object.entries(wake).map(([id, wake_on_lan]) => ({ id, wake_on_lan, ...extra })) });
 
-    expect(settings.get("thor")).toEqual({ mac: "aa:bb:cc:dd:ee:ff", broadcast: "255.255.255.255", port: 9, timeout: 180, via: null, keep_awake: true });
-    expect(settings.get("odin")).toEqual({ mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: 300, via: null, keep_awake: true });
-    expect(parse_config({ wake_on_lan: { thor: { mac: "aa:bb:cc:dd:ee:ff", via: "heimdall", keep_awake: false } } }).wake_on_lan.get("thor")).toMatchObject({ via: "heimdall", keep_awake: false });
+  it("take a bare MAC address or an object, with defaults, and keep the host awake unless told not to", () => {
+    const config = hosts({ thor: "aa:bb:cc:dd:ee:ff", odin: { mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: "5m" } });
+
+    expect(config.wake_on_lan.get("thor")).toEqual({ mac: "aa:bb:cc:dd:ee:ff", broadcast: "255.255.255.255", port: 9, timeout: 180, via: null });
+    expect(config.wake_on_lan.get("odin")).toEqual({ mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: 300, via: null });
+    expect([...config.keep_awake].sort()).toEqual(["odin", "thor"]);
+    const quiet = hosts({ thor: { mac: "aa:bb:cc:dd:ee:ff", via: "heimdall" } }, { keep_awake: false });
+    expect(quiet.wake_on_lan.get("thor")).toMatchObject({ via: "heimdall" });
+    expect(quiet.keep_awake.size).toBe(0);
+  });
+
+  it("belong to each host, not a top-level map", () => {
+    expect(() => parse_config({ wake_on_lan: { thor: "aa:bb:cc:dd:ee:ff" } })).toThrow(/belongs to each host/);
   });
 
   it("refuse a bad MAC address, port or shape", () => {
-    expect(() => parse_config({ wake_on_lan: { thor: "aa:bb:cc" } })).toThrow(ConfigError);
-    expect(() => parse_config({ wake_on_lan: { thor: { mac: "aa:bb:cc:dd:ee:ff", port: 70000 } } })).toThrow(ConfigError);
-    expect(() => parse_config({ wake_on_lan: ["thor"] })).toThrow(ConfigError);
+    expect(() => hosts({ thor: "aa:bb:cc" })).toThrow(ConfigError);
+    expect(() => hosts({ thor: { mac: "aa:bb:cc:dd:ee:ff", port: 70000 } })).toThrow(ConfigError);
+    expect(() => hosts({ thor: ["thor"] })).toThrow(ConfigError);
   });
 });

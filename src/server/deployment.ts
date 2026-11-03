@@ -7,9 +7,7 @@
 // settings name, one at a time, and every action lands in the job history with its output. With `auto_switch`, drift
 // lasting `auto_switch_after` starts a switch once per target closure, and `build_at` starts a daily build. Updating
 // the flake's lock is the flake's own job (see flake.ts).
-// Unless `gc` is false, every cycle also reads the host's Nix store and its garbage collection, judged apart from the
-// deployment's own status, and Collect Garbage runs the same collection the timer does. Unless `boot` is false, every
-// cycle also reads the boot loader's entries, and the next boot can be set to any of them once. A pin, from the settings
+// The store, boot entries and reboot are the host's own (see host.ts). A pin, from the settings
 // or set on the page, fixes evaluation, build and switch at one commit or tag instead of the branch head.
 //
 // A switch runs in one of nixos-rebuild's modes, from the cache with switch_from_cache, and with pre_switch_checks,
@@ -29,24 +27,20 @@ import { randomBytes } from "node:crypto";
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { built_store_path, record_builds } from "./builds.ts";
 import type { Cache } from "./cache.ts";
+import type { Host } from "./host.ts";
 import { parse_report } from "./nixos/attic.ts";
-import { level_of_status, worse, type DeploymentSettings, type GcSettings, type Status, type TimeOfDay } from "./config.ts";
+import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
 import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import { closure_command, diff_command, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
-  build_command, cache_holds_command, eval_command, reboot_command, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
+  build_command, cache_holds_command, eval_command, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
   confirm_command, generations_script, parse_generations, rollback_command, rollback_signal_command, switch_job_command, switch_verdict, watch_token,
   type Generation,
 } from "./nixos/switch.ts";
-import { boot_script, next_boot_command, parse_boot, type Boot } from "./nixos/boot.ts";
 import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
-import {
-  assess_store, collect_command, finished_collection, fold_collection, gc_probe_script, observed_collection, parse_gc_probe, unread_store,
-  type Collection, type StoreReading,
-} from "./nixos/garbage.ts";
 import { parse_probe, probe_script, reboot_required, type ProbeFields } from "./nixos/probe.ts";
 import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
@@ -54,9 +48,9 @@ import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
 export type ScheduledKind = "build";
-export type ActionId = "build" | "switch" | "reboot" | "collect" | "boot" | "test" | "dry-activate";
+export type ActionId = "build" | "switch" | "reboot" | "boot" | "test" | "dry-activate";
 
-export const action_ids: ActionId[] = ["build", "switch", "reboot", "collect", "boot", "test", "dry-activate"];
+export const action_ids: ActionId[] = ["build", "switch", "reboot", "boot", "test", "dry-activate"];
 
 // The actions that run as a job of their own kind.
 type JobAction = Exclude<ActionId, "reboot">;
@@ -78,8 +72,6 @@ export interface Evaluation {
   auto_switch_target: string | null;
   // The last slot of each daily job that has been handled.
   scheduled: Partial<Record<ScheduledKind, number>>;
-  // The last garbage collection seen, kept after the journal has rotated past it.
-  last_collection: Collection | null;
   // The pin set on the page, null to follow the branch head, or absent to use the settings' pin.
   pin_override?: string | null;
   // The last package diff between a running closure and a built one.
@@ -119,10 +111,6 @@ export interface Reading {
   up_to_date: boolean | null;
   reboot_required: boolean | null;
   flake_reachable: boolean | null;
-  // The host's Nix store, with its own status; null when it is not watched.
-  store: StoreReading | null;
-  // The host's boot entries; null when they are not read, or could not be.
-  boot: Boot | null;
 }
 
 export interface ActionOutcome {
@@ -140,6 +128,8 @@ export interface DeploymentOptions {
   http_check?: (url: string) => Promise<string | null>;
   // The caches that may build a system a switch from the cache finds missing.
   caches?: Cache[];
+  // The host the deployment runs on, which reboots it.
+  host?: Host;
 }
 
 // What a request for the package diff answers: the diff, or why there is none.
@@ -151,14 +141,13 @@ export interface DiffOutcome {
 const empty_evaluation: Evaluation = {
   evaluated_epoch: null, target: null, eval_error: null, eval_unreachable: false, metadata_error: null, flake_revision: null,
   flake_last_modified_epoch: null, oldest_input: null, inputs_last_modified_epoch: null, drift_target: null, drift_since_epoch: null,
-  auto_switch_target: null, scheduled: {}, last_collection: null, last_diff: null,
+  auto_switch_target: null, scheduled: {}, last_diff: null,
 };
 
 // The jobs that hold the deployment's buttons, and any update still running under its id; an evaluation runs beside them.
 const main_job_kinds: JobKind[] = ["update", "build", "switch", "boot", "test", "dry-activate", "rollback", "collect"];
 
 const probe_timeout_in_seconds = 60;
-const reboot_timeout_in_seconds = 60;
 const diff_timeout_in_seconds = 300;
 const closure_timeout_in_seconds = 120;
 // How long confirming a switch or telling its watchdog to roll back may take.
@@ -194,6 +183,7 @@ export class Deployment {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly http_check: (url: string) => Promise<string | null>;
   private readonly caches: Cache[];
+  readonly host: Host | null;
   // Switch jobs this server has confirmed or told to roll back, which need nothing more from it.
   private readonly tended_switches = new Set<number>();
   // When each switch first waited for its HTTP checks.
@@ -206,6 +196,7 @@ export class Deployment {
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
     this.http_check = options.http_check ?? fetch_check;
     this.caches = options.caches ?? [];
+    this.host = options.host ?? null;
   }
 
   get id(): string {
@@ -244,7 +235,6 @@ export class Deployment {
 
   // Why an action cannot run now, or null when it can.
   action_refusal(action: ActionId): string | null {
-    if (action === "collect" && this.settings.gc === null) return "The store is not watched for this deployment; its gc is off";
     if (is_switch_kind(action) && this.settings.switch_from_cache && this.cached_target() === null) {
       return "Switching from the cache needs the store path of a successful evaluation; evaluate first";
     }
@@ -334,28 +324,18 @@ export class Deployment {
     if (evaluation_job !== null) evaluating = this.poll_evaluation(evaluation_job);
     // An evaluation on another host needs the target's attribute name, which the first probe supplies.
     else if (this.due_for_evaluation() && !(this.settings.eval_agent !== null && this.attribute() === null)) evaluating = this.launch_evaluation();
-    const agent = this.agents.get(this.settings.host);
-    const gc = this.settings.gc;
-    const [probe, gc_probe, boot_probe, folded] = await Promise.all([
-      agent.run(probe_script(), probe_timeout_in_seconds),
-      gc === null ? null : agent.run(gc_probe_script(gc), probe_timeout_in_seconds),
-      this.settings.boot ? agent.run(boot_script(this.settings.require_sudo), probe_timeout_in_seconds) : null,
-      evaluating,
-    ]);
+    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_script(), probe_timeout_in_seconds), evaluating]);
     const evaluation = folded ?? this.evaluation();
-    const store = gc === null ? null : this.read_store(gc, gc_probe!, evaluation);
-    // A boot read that reached nothing keeps the entries last seen.
-    const boot = boot_probe === null ? null : boot_probe.stdout.trim() === "" ? this.reading()?.boot ?? null : parse_boot(boot_probe.stdout);
 
     if (probe.exit_code !== 0 && probe.stdout.trim() === "") {
-      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200)}`, evaluation, store, boot);
+      return this.save_unavailable(`Could not read the deployed system: ${clip(probe.stderr || probe.stdout, 200)}`, evaluation);
     }
     const fields = parse_probe(probe.stdout);
-    if (fields.current === null) return this.save_unavailable("/run/current-system is unreadable; is this a NixOS host?", evaluation, store, boot);
-    this.assemble(fields, evaluation, folded !== null, store, boot);
+    if (fields.current === null) return this.save_unavailable("/run/current-system is unreadable; is this a NixOS host?", evaluation);
+    this.assemble(fields, evaluation, folded !== null);
   }
 
-  private save_unavailable(text: string, evaluation: Evaluation, store: StoreReading | null, boot: Boot | null): void {
+  private save_unavailable(text: string, evaluation: Evaluation): void {
     this.store.save_evaluation(this.id, evaluation);
     const previous = this.reading();
     this.save_reading({
@@ -363,28 +343,11 @@ export class Deployment {
       status: "unavailable",
       checked_epoch: this.now(),
       messages: [{ level: "warning", text }],
-      store,
-      boot,
     });
-  }
-
-  // Reads the store from its probe, folding the last collection it shows into the evaluation.
-  private read_store(gc: GcSettings, result: RunResult, evaluation: Evaluation): StoreReading {
-    const unavailable = (text: string): StoreReading => ({
-      ...(this.reading()?.store ?? unread_store(gc)),
-      status: "unavailable",
-      checked_epoch: this.now(),
-      messages: [{ level: "warning", text }],
-    });
-    if (result.exit_code !== 0 && result.stdout.trim() === "") return unavailable(`Could not read the Nix store: ${clip(result.stderr || result.stdout, 200)}`);
-    const fields = parse_gc_probe(result.stdout);
-    if (fields.df === "") return unavailable(`${gc.store} is unreadable; is Nix installed on this host?`);
-    evaluation.last_collection = fold_collection(evaluation.last_collection, observed_collection(fields));
-    return assess_store(gc, fields, evaluation.last_collection, this.now());
   }
 
   // Turns the probe's facts and the evaluation into this cycle's reading and worst-of status.
-  private assemble(fields: ProbeFields, evaluation: Evaluation, evaluated: boolean, store: StoreReading | null, boot: Boot | null): void {
+  private assemble(fields: ProbeFields, evaluation: Evaluation, evaluated: boolean): void {
     const now = this.now();
     const messages: Message[] = [];
     let status: Status = "online";
@@ -453,17 +416,14 @@ export class Deployment {
       status, checked_epoch: now, messages,
       hostname: fields.hostname, current: fields.current, booted: fields.booted, version: fields.version, generation: fields.generation,
       switched_epoch: fields.switched_epoch, up_to_date, reboot_required: reboot, flake_reachable: evaluation.evaluated_epoch === null ? null : evaluation.metadata_error === null,
-      store,
-      boot,
     });
   }
 
-  // Saves the reading, noting a change of the deployment's or the store's status as an event.
+  // Saves the reading, noting a change of the deployment's status as an event.
   private save_reading(reading: Reading): void {
     const previous = this.reading();
     this.store.save_reading(this.id, reading);
     this.note_change(previous?.status ?? null, reading.status, reading.messages, reading.checked_epoch, "Now");
-    if (reading.store !== null) this.note_change(previous?.store?.status ?? null, reading.store.status, reading.store.messages, reading.store.checked_epoch, "Store now");
   }
 
   private note_change(previous: Status | null, status: Status, messages: Message[], epoch: number, prefix: string): void {
@@ -636,7 +596,7 @@ export class Deployment {
     return this.serial(async () => {
       const refusal = this.action_refusal(action);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      if (action === "reboot") return this.reboot(trigger);
+      if (action === "reboot") return this.host === null ? { ok: false, message: "No host to reboot", job_id: null } : this.host.act("reboot", trigger);
       const command = this.command_for(action);
       if (is_switch_kind(action)) {
         const waiting = await this.build_in_cache_first(action, command, trigger);
@@ -757,60 +717,7 @@ export class Deployment {
     this.store.save_evaluation(this.id, evaluation);
   }
 
-  // The reboot is for the probed host itself, and runs as a command rather than a job that would die with it.
-  private async reboot(trigger: string): Promise<ActionOutcome> {
-    const command = reboot_command(this.settings);
-    const result = await (await this.agents.awake(this.settings.host)).run(command, reboot_timeout_in_seconds);
-    const job_id = this.store.create_job({
-      deployment_id: this.id, kind: "reboot", command, agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
-    });
-    this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
-    const ok = result.exit_code === 0;
-    this.store.finish_job(job_id, ok ? "succeeded" : "failed", result.exit_code, ok ? null : `Exited with status ${result.exit_code}`, this.now());
-    this.store.add_event(this.id, this.now(), ok ? "info" : "error", ok ? "Reboot requested" : `Could not reboot: ${clip(result.stderr || result.stdout, 200)}`);
-    return { ok, message: ok ? "Reboot requested" : `Could not reboot: ${clip(result.stderr || result.stdout, 200)}`, job_id };
-  }
-
-  // Why the next boot cannot be set to this entry now, or null when it can.
-  next_boot_refusal(entry: string): string | null {
-    if (!this.settings.boot) return "Boot entries are not read for this deployment; its boot is off";
-    const boot = this.reading()?.boot ?? null;
-    if (boot === null || boot.loader === "none") return "No boot loader X-Nix can set has been read on this host";
-    if (!boot.entries.some((candidate) => candidate.id === entry)) return `'${entry}' is not one of the host's boot entries`;
-    if (this.running_job() !== null) return "A job is already running for this deployment";
-    return null;
-  }
-
-  // Sets the entry the host boots into once, then reboots when asked; a command rather than a job, as a reboot ends it.
-  set_next_boot(entry: string, reboot: boolean): Promise<ActionOutcome> {
-    return this.serial(async () => {
-      const refusal = this.next_boot_refusal(entry);
-      if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      const reading = this.reading()!;
-      const boot = reading.boot!;
-      const title = boot.entries.find((candidate) => candidate.id === entry)!.title;
-      const command = next_boot_command(boot, entry, reboot, this.settings.require_sudo);
-      const result = await (await this.agents.awake(this.settings.host)).run(command, reboot_timeout_in_seconds);
-      const job_id = this.store.create_job({
-        deployment_id: this.id, kind: "next-boot", command, agent: this.settings.host, run_id: null, trigger: "manual", started_epoch: this.now(),
-      });
-      this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
-      const ok = result.exit_code === 0;
-      this.store.finish_job(job_id, ok ? "succeeded" : "failed", result.exit_code, ok ? null : `Exited with status ${result.exit_code}`, this.now());
-      const message = ok
-        ? `Next boot set to ${title}${reboot ? "; rebooting" : ""}`
-        : `Could not set the next boot to ${title}: ${clip(result.stderr || result.stdout, 200)}`;
-      this.store.add_event(this.id, this.now(), ok ? "info" : "error", message);
-      if (ok) {
-        // Shown at once, rather than after the next cycle reads it back.
-        this.store.save_reading(this.id, { ...reading, boot: { ...boot, next: entry, entries: boot.entries.map((candidate) => ({ ...candidate, next: candidate.id === entry })) } });
-      }
-      return { ok, message, job_id };
-    });
-  }
-
   private command_for(kind: JobAction): string {
-    if (kind === "collect") return collect_command(this.settings.gc!, this.settings.require_sudo);
     if (kind === "build") return build_command(this.effective_settings(), this.attribute());
     const store_path = this.settings.switch_from_cache ? this.cached_target() : null;
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
@@ -829,7 +736,7 @@ export class Deployment {
   agent_for(kind: JobKind): string | null {
     if (kind === "eval") return this.settings.eval_agent ?? this.settings.host;
     if (kind === "build") return this.settings.build_agent ?? this.settings.host;
-    if (kind === "reboot" || kind === "collect" || kind === "diff") return this.settings.host;
+    if (kind === "reboot" || kind === "diff") return this.settings.host;
     return this.settings.switch_agent ?? this.settings.host;
   }
 
@@ -899,15 +806,8 @@ export class Deployment {
     this.tended_switches.delete(job.id);
     this.http_checks_started.delete(job.id);
     let finished = this.store.job(job.id)!;
-    if (job.kind === "collect") {
-      // A manual collection is the last collection, just as a timer run would be.
-      const evaluation = this.evaluation();
-      evaluation.last_collection = finished_collection(finished.output, finished.state === "succeeded", finished.error, this.now());
-      this.store.save_evaluation(this.id, evaluation);
-    } else {
-      // Whatever the job changed, the next cycle evaluates afresh.
-      this.force_eval = true;
-    }
+    // Whatever the job changed, the next cycle evaluates afresh.
+    this.force_eval = true;
     if (job.kind === "build") {
       const target = this.attribute() ?? this.id;
       await record_builds(this.store, this.agents, finished, [{ target, store_path: built_store_path(finished.output), succeeded: finished.state === "succeeded" }], this.now());
@@ -1099,7 +999,7 @@ function is_switch_kind(kind: JobKind): kind is SwitchMode {
 function blank_reading(): Reading {
   return {
     status: "unavailable", checked_epoch: 0, messages: [], hostname: null, current: null, booted: null, version: null, generation: null,
-    switched_epoch: null, up_to_date: null, reboot_required: null, flake_reachable: null, store: null, boot: null,
+    switched_epoch: null, up_to_date: null, reboot_required: null, flake_reachable: null,
   };
 }
 

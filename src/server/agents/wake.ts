@@ -18,8 +18,6 @@ export interface WakeSettings {
   timeout: number;
   // The host whose agent sends the packet, for a host on another network; the server sends it itself when null.
   via: string | null;
-  // Whether every job on the host holds off idle and sleep until it ends.
-  keep_awake: boolean;
 }
 
 export type SendWake = (settings: WakeSettings) => Promise<void>;

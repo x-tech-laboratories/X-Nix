@@ -10,6 +10,7 @@ import { cache_view, caches_view } from "./views/cache.ts";
 import { closure_view } from "./views/closure.ts";
 import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { flake_view, flakes_view } from "./views/flakes.ts";
+import { host_view, hosts_view } from "./views/hosts.ts";
 import { fleet_run_view, fleet_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
@@ -32,6 +33,8 @@ let first_view = true;
 
 function view_for(parts: string[]): View {
   const [section, id, page] = parts;
+  if (section === "hosts" && id) return host_view(id);
+  if (section === "hosts") return hosts_view();
   if (section === "flakes" && id) return flake_view(id);
   if (section === "flakes") return flakes_view();
   if (section === "deployments" && id && page === "closure") return closure_view(id);

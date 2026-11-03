@@ -4,18 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ConfigError, deployment_settings, flake_settings, parse_config } from "../src/server/config.ts";
+import { ConfigError, deployment_settings, flake_settings, host_settings, parse_config } from "../src/server/config.ts";
 import {
   build_command, cache_holds_command, eval_command, metadata_command, split_eval_output, switch_command, switch_from_cache_command, update_command,
 } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
-import { current_closure } from "./fake_agent.ts";
+import { current_closure, host_values } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 function settings(values: Record<string, unknown> = {}) {
-  return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...values });
+  const [own, of_host] = host_values(values);
+  return deployment_settings({ id: "odin-deploy", flake: "/etc/nixos", ...own }, 0, undefined, () => host_settings({ id: "odin", ...of_host }));
 }
 
 function flake(values: Record<string, unknown> = {}) {
@@ -303,6 +304,21 @@ describe("a flake in the config", () => {
 
   it.each(["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"])("takes %s, which a deployment refuses", (key) => {
     expect(() => deployment_settings({ id: "odin", [key]: key === "update_at" ? "02:00" : "7d" })).toThrow(/belongs to its flake/);
+  });
+});
+
+// ── Hosts in the config ──────────────────────────────────────────────────────
+
+describe("a host in the config", () => {
+  it.each(["gc", "boot", "require_sudo", "inhibit_sleep"])("takes %s, which a deployment refuses", (key) => {
+    expect(() => deployment_settings({ id: "odin", [key]: false })).toThrow(/belongs to its host/);
+  });
+
+  it("gives its deployments its sudo and keep_awake, and is made for any host a deployment names", () => {
+    const config = parse_config({ hosts: [{ id: "thor", require_sudo: false, wake_on_lan: "aa:bb:cc:dd:ee:ff" }], deployments: [{ id: "thor", host: "thor" }, { id: "own" }] }, "heimdall");
+
+    expect(config.deployments.map(({ require_sudo, inhibit_sleep }) => [require_sudo, inhibit_sleep])).toEqual([[false, true], [true, false]]);
+    expect(config.hosts.map((host) => host.id)).toEqual(["thor", "heimdall"]);
   });
 });
 

@@ -109,7 +109,6 @@ whose agent is not connected reads as unreachable.
 | `job_poll`          | `30s`                             | How often a running job is read.                                     |
 | `drift_status`      | `warning`                         | The status drift raises.                                             |
 | `reboot_status`     | `warning`                         | The status a needed reboot raises.                                   |
-| `require_sudo`      | `true`                            | Run switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
 | `nix_bin`           | `nix`                             | The nix program.                                                     |
 | `rebuild_bin`       | `nixos-rebuild`                   | The nixos-rebuild program.                                           |
 | `nix_args`          | flakes enabled                    | Arguments before every nix command.                                  |
@@ -122,7 +121,6 @@ whose agent is not connected reads as unreachable.
 | `cache_url`         | none                              | Skip a build this cache already holds.                               |
 | `switch_agent`      | the host                          | The host that runs switch.                                           |
 | `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
-| `inhibit_sleep`     | `false`                           | Keep the activated host from idling or sleeping while a switch or rollback runs. |
 | `target_host`       | none                              | `--target-host` for the switch.                                      |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
@@ -138,8 +136,6 @@ whose agent is not connected reads as unreachable.
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
 | `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |
 | `build_progress`    | `true`                            | Read Build's structured log into counts of what builds and downloads. |
-| `gc`                | the defaults below                | How the host's Nix store is watched, or `false` to leave it alone.   |
-| `boot`              | `true`                            | Read the host's boot entries, and let the Boot page set the next boot. |
 | `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
 | `pin`               | none                              | A commit hash or tag that evaluation, build and switch use instead of the branch head. |
 
@@ -185,18 +181,40 @@ well above it.
 `post_switch` runs after the activation, inside the guarded switch before its health checks, as
 root through `sudo -n /bin/sh -c` when `require_sudo` is on, so it can restart a system service such
 as a display manager; it runs on the switch agent's host and its status never changes the switch's.
-With `inhibit_sleep`, a switch or rollback holds a `systemd-inhibit --what=idle:sleep --mode=block`
+When the host sets `keep_awake`, a switch or rollback holds a `systemd-inhibit --what=idle:sleep --mode=block`
 inhibitor on the activated host from its first step, the download from the cache included, until
 the job ends however it ends: the inhibitor reads a pipe only the job's own shell holds open, so the
 job ending, failing or being stopped releases it, and nothing the switch leaves running keeps it.
+
+## Hosts
+
+The config file may list `hosts`, each a machine by the name its agent answers to; a host a
+deployment names needs no entry of its own, and the server's own host is the one named by
+`X_NIX_SERVER_NAME`. A host holds what is true of the machine whatever runs on it: its agent's key,
+how it is woken and kept awake, its Nix store and its boot entries. Every `interval` its agent
+reads the store and the boot entries, and the Hosts, Store and Boot pages show them, with Collect
+Garbage, Reboot and Set next boot. A deployment's Reboot reboots its host.
+
+| Setting        | Default               | Meaning                                                           |
+| -------------- | --------------------- | ----------------------------------------------------------------- |
+| `id`           | required              | The name the host's agent answers to.                             |
+| `name`         | the id                | What the page calls it.                                           |
+| `agent_key`    | none                  | Its agent's public key line (see Agents); none for the server's own host. |
+| `wake_on_lan`  | none                  | Its MAC address, or the Wake-on-LAN settings below.               |
+| `keep_awake`   | `true` with `wake_on_lan` | Hold off idle and sleep on the host through every job, switch and rollback. |
+| `interval`     | `5m`                  | How often the store and boot entries are read.                    |
+| `job_poll`     | `30s`                 | How often a running collection is read.                           |
+| `require_sudo` | `true`                | Run switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
+| `gc`           | the defaults below    | How the Nix store is watched, or `false` to leave it alone.       |
+| `boot`         | `true`                | Read the boot entries, and let the Boot page set the next boot.   |
 
 ### Store
 
 Every cycle also reads the host's Nix store: how full it is, its path and GC root counts, every
 profile's generations, the collection unit and timer, and the last collection's summary from the
 journal. The last collection is kept after the journal rotates past it, and Collect Garbage runs the
-timer's collection as a job that counts as the last collection once it ends. The store has its own
-status, apart from the deployment's, set by these keys of `gc`:
+timer's collection as a job that counts as the last collection once it ends. The store's status is
+the host's, set by these keys of `gc`:
 
 | Setting              | Default                     | Meaning                                                      |
 | -------------------- | --------------------------- | ------------------------------------------------------------ |
@@ -368,10 +386,10 @@ Builds that ended before this history existed are only in the job history.
 Every host other than the server's own runs `x-nix-agent`, which dials out to the server's
 `/api/agent` over a WebSocket, so nothing listens on the host. It logs in with the host's own
 ed25519 key: the server sends a nonce, the agent signs it, and the server checks the signature
-against the public key line the config file declares for that host under `agents`:
+against the public key line the config file declares as that host's `agent_key`:
 
 ```json
-{ "agents": { "odin": "ssh-ed25519 AAAA... x-nix-agent-odin" } }
+{ "hosts": [{ "id": "odin", "agent_key": "ssh-ed25519 AAAA... x-nix-agent-odin" }] }
 ```
 
 Make each key with `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>` and keep the private half
@@ -382,21 +400,20 @@ connected.
 
 ### Wake-on-LAN
 
-A host listed under `wake_on_lan` is woken before an operation on it when its agent is not connected:
+A host with `wake_on_lan` is woken before an operation on it when its agent is not connected:
 X-Nix sends a magic packet, from the server or from the agent `via` names, and waits for the agent
 to dial in, then starts the operation. A job appears at once with the progress `Waking <host>` and starts its run once the agent
 is back, or fails with the reason when it does not come back within `timeout`; Reboot, Set next boot
 and a download wait for the host instead. Update, Build, switches, rollbacks, Collect Garbage, Reboot, Set next boot, a cache's
 Build, Push and Build all, an install or media build run by that host, and a build product's download
 all wake it, whether started by hand, on a schedule or by a fleet run. The periodic read, evaluation
-and cache check never do, so a sleeping host reads as unreachable until something wakes it. With
-`keep_awake`, every job on the host, woken or not, holds a `systemd-inhibit --what=idle:sleep`
-inhibitor there until it ends, the same way `inhibit_sleep` holds one for a switch, so the host's own
-idle suspend cannot cut it off. Each
-host maps to its MAC address, or to an object of these settings:
+and cache check never do, so a sleeping host reads as unreachable until something wakes it. With the
+host's `keep_awake`, every job on it, woken or not, holds a `systemd-inhibit --what=idle:sleep`
+inhibitor there until it ends, so the host's own idle suspend cannot cut it off. `wake_on_lan` is
+the host's MAC address, or an object of these settings:
 
 ```json
-{ "wake_on_lan": { "thor": "aa:bb:cc:dd:ee:ff", "odin": { "mac": "aa:bb:cc:dd:ee:01", "broadcast": "192.168.1.255" } } }
+{ "hosts": [{ "id": "thor", "wake_on_lan": "aa:bb:cc:dd:ee:ff" }, { "id": "odin", "wake_on_lan": { "mac": "aa:bb:cc:dd:ee:01", "broadcast": "192.168.1.255" } }] }
 ```
 
 | Setting     | Default           | Meaning                                                       |
@@ -406,7 +423,6 @@ host maps to its MAC address, or to an object of these settings:
 | `port`      | `9`               | The UDP port the packet is sent to.                           |
 | `timeout`   | `3m`              | How long to wait for the agent before the operation fails.    |
 | `via`       | the server        | The host whose agent sends the packet with `wakeonlan`, for a host on another network. |
-| `keep_awake` | `true`           | Hold off idle and sleep on the host while any job runs there. |
 
 ### Pull mode
 
@@ -432,9 +448,8 @@ job history of every deployment on that host with the trigger `agent pull`.
 ## Package
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
-`services.x-nix`, whose `deployments` and `caches` attribute sets take the settings above by id,
-whose `provisioning` takes the Provisioning settings, whose `agents` takes each host's key line, whose
-`wakeOnLan` takes the Wake-on-LAN settings, and whose `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
+`services.x-nix`, whose `hosts`, `flakes`, `deployments` and `caches` attribute sets take the settings above by id,
+whose `provisioning` takes the Provisioning settings, and whose `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
 sudo rules below. Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent`
 builds the agent, and `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile`, `host` and
 `sudoRules`, and pull mode under `pull` with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs`
@@ -475,7 +490,7 @@ and the watchdog (`nix-env ... --switch-generation *` and the system profile's
 `switch-to-configuration switch`), a flake's Update on a local checkout (`nix ... flake update --flake
 *`), `systemctl reboot`, `nix-collect-garbage`, the boot loader's reads and one-shot setters
 (`bootctl list --json=short`, `cat /boot/grub/grub.cfg`, `grub-editenv list`, `bootctl
-set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`), the `inhibit_sleep` inhibitor,
+set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`), the `keep_awake` inhibitors,
 `/bin/sh -c *` for `post_switch`, and `ssh` for `target_host`. Each command is matched by its path
 under `/run/current-system/sw/bin`, where both services find it. The service user activates whole
 systems and so is root-equivalent, which is why some rules take any arguments. Set `sudoRules =

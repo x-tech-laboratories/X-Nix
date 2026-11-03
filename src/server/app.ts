@@ -16,6 +16,7 @@ import type { CacheServerReading } from "./cache_server.ts";
 import { fleet_settings, type DeploymentSettings, type TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Flake, FlakeReading, UpdateOutcome } from "./flake.ts";
+import { host_action_ids, type Host, type HostActionId, type HostReading, type HostState } from "./host.ts";
 import { Fleet, type FleetRequest, type FleetRun } from "./fleet.ts";
 import type { Poller } from "./poller.ts";
 import { build_link, targets } from "./nixos/attic.ts";
@@ -116,12 +117,49 @@ export interface FlakeView {
   caches: FlakeUser[];
 }
 
+// How the store is watched: its units, path, limits and the collection Collect Garbage runs.
+export interface GcView {
+  unit: string;
+  timer: string;
+  store: string;
+  max_age: number;
+  warning: number | null;
+  threshold: number | null;
+  command: string;
+}
+
+export interface HostView {
+  name: string;
+  display_name: string;
+  // Whether it is the server's own host, which needs no agent.
+  own: boolean;
+  agent_key: boolean;
+  // Its agent's connection, or null when it is not connected.
+  agent: { agent_version: string; connected_epoch: number } | null;
+  wake: { mac: string; broadcast: string; via: string | null; timeout: number } | null;
+  keep_awake: boolean;
+  interval: number;
+  gc: GcView | null;
+  boot: boolean;
+  reading: HostReading | null;
+  state: HostState;
+  running_job: Job | null;
+  actions: ActionView[];
+  // Why the next boot cannot be set now, or null when it can.
+  next_boot_refusal: string | null;
+  // The running and booted system, as its first deployment last read them.
+  system: { current: string | null; booted: string | null; version: string | null; reboot_required: boolean | null } | null;
+  deployments: FlakeUser[];
+}
+
 export interface DeploymentView {
   id: string;
   name: string;
   host: string | null;
   flake: string;
   flake_id: string | null;
+  // The host it runs on, by its agent's name.
+  host_name: string | null;
   configuration: string | null;
   tags: string[];
   // The commit or tag evaluation, build and switch use, or null for the branch head.
@@ -138,14 +176,12 @@ export interface DeploymentView {
   // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
   switch_from_cache: boolean;
   // How the store is watched, or null when it is not.
-  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
   reading: Reading | null;
   evaluation: Evaluation;
   evaluating: boolean;
   running_job: Job | null;
   actions: ActionView[];
   // Why the next boot cannot be set now, or null when it can.
-  next_boot_refusal: string | null;
   // What guards a switch.
   safety: {
     pre_switch_checks: string[];
@@ -189,13 +225,12 @@ export interface CacheView {
 }
 
 const action_labels: Record<ActionId, string> = {
-  build: "Build", switch: "Rebuild and switch", reboot: "Reboot", collect: "Collect garbage",
+  build: "Build", switch: "Rebuild and switch", reboot: "Reboot",
   boot: "Rebuild for next boot", test: "Rebuild and test", "dry-activate": "Dry activate",
 };
 
 const confirmations: Partial<Record<ActionId, (name: string) => string>> = {
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
-  collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
   switch: (name) => `Switch ${name} to the flake's system now, and boot it from now on?`,
   boot: (name) => `Make the flake's system the one ${name} boots next, without activating it now?`,
   test: (name) => `Activate the flake's system on ${name} now, without making it the one it boots?`,
@@ -228,10 +263,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     schedule: { build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
     switch_from_cache: settings.switch_from_cache,
-    gc: settings.gc === null ? null : {
-      unit: settings.gc.unit, timer: settings.gc.timer, store: settings.gc.store, max_age: settings.gc.max_age,
-      warning: settings.gc.warning, threshold: settings.gc.threshold, command: collect_command(settings.gc, settings.require_sudo),
-    },
+    host_name: deployment.host?.name ?? null,
     reading: deployment.reading(),
     evaluation: deployment.evaluation(),
     evaluating: deployment.running_evaluation() !== null,
@@ -242,7 +274,6 @@ function deployment_view(deployment: Deployment): DeploymentView {
       refusal: deployment.action_refusal(id),
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
-    next_boot_refusal: deployment.next_boot_refusal(deployment.reading()?.boot?.entries[0]?.id ?? ""),
     safety: {
       pre_switch_checks: settings.pre_switch_checks, magic_rollback: settings.magic_rollback, activation_timeout: settings.activation_timeout,
       confirm_timeout: settings.confirm_timeout, health_commands: settings.health_commands, health_urls: settings.health_urls,
@@ -271,6 +302,43 @@ function cache_view(cache: Cache): CacheView {
       name, installable, build_link: build_link(settings, name), kept_only_in_cache: settings.drop_pushed.includes(name),
       refusals: { build: cache.action_refusal("build", name), push: cache.action_refusal("push", name) },
     })),
+  };
+}
+
+const host_action_labels: Record<HostActionId, string> = { collect: "Collect garbage", reboot: "Reboot" };
+
+const host_confirmations: Record<HostActionId, (name: string) => string> = {
+  collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
+  reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
+};
+
+function host_view(host: Host, poller: Poller, hub: AgentHub | undefined, own_host: string): HostView {
+  const settings = host.settings;
+  const deployments = [...poller.deployments.values()].filter((deployment) => deployment.host === host);
+  const reading = deployments.map((deployment) => deployment.reading()).find((candidate) => candidate !== null) ?? null;
+  const connection = hub?.statuses().find((entry) => entry.host === host.name)?.status ?? null;
+  const gc = settings.gc;
+  return {
+    name: host.name,
+    display_name: settings.name,
+    own: host.name === own_host,
+    agent_key: settings.agent_key !== null,
+    agent: connection === null ? null : { agent_version: connection.agent_version, connected_epoch: connection.connected_epoch },
+    wake: settings.wake === null ? null : { mac: settings.wake.mac, broadcast: settings.wake.broadcast, via: settings.wake.via, timeout: settings.wake.timeout },
+    keep_awake: settings.keep_awake,
+    interval: settings.interval,
+    gc: gc === null ? null : {
+      unit: gc.unit, timer: gc.timer, store: gc.store, max_age: gc.max_age, warning: gc.warning, threshold: gc.threshold,
+      command: collect_command(gc, settings.require_sudo),
+    },
+    boot: settings.boot,
+    reading: host.reading(),
+    state: host.state(),
+    running_job: host.running_job(),
+    actions: host_action_ids.map((id) => ({ id: id as ActionId, label: host_action_labels[id], refusal: host.action_refusal(id), confirm: host_confirmations[id](settings.name) })),
+    next_boot_refusal: host.next_boot_refusal(host.reading()?.boot?.entries[0]?.id ?? ""),
+    system: reading === null ? null : { current: reading.current, booted: reading.booted, version: reading.version, reboot_required: reading.reboot_required },
+    deployments: deployments.map(({ settings: { id, name } }) => ({ id, name })),
   };
 }
 
@@ -324,6 +392,54 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // Each host with a declared agent key, and whether its agent is connected.
   app.get("/api/agents", async () => options.hub?.statuses() ?? []);
+
+  // ── Hosts ────────────────────────────────────────────────────────────────
+
+  const find_host = (name: string, reply: FastifyReply): Host | null => {
+    const host = poller.hosts.get(name) ?? null;
+    if (host === null) void reply.code(404).send({ error: `No host named '${name}'` });
+    return host;
+  };
+  const view_of = (host: Host) => host_view(host, poller, options.hub, server_name);
+
+  app.get("/api/hosts", async (): Promise<HostView[]> => [...poller.hosts.values()].map(view_of));
+
+  app.get<{ Params: { name: string } }>("/api/hosts/:name", async (request, reply) => {
+    const host = find_host(request.params.name, reply);
+    return host === null ? reply : view_of(host);
+  });
+
+  // Reads the store and the boot entries now, unless a collection is running.
+  app.post<{ Params: { name: string } }>("/api/hosts/:name/refresh", async (request, reply) => {
+    const host = find_host(request.params.name, reply);
+    if (host === null) return reply;
+    await poller.refresh(host);
+    return view_of(host);
+  });
+
+  app.post<{ Params: { name: string; action: string } }>("/api/hosts/:name/actions/:action", async (request, reply) => {
+    const host = find_host(request.params.name, reply);
+    if (host === null) return reply;
+    const action = request.params.action as HostActionId;
+    if (!host_action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
+    const outcome = await host.act(action);
+    if (outcome.ok) poller.soon(host);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // Sets the entry the host boots into once, rebooting into it at once when asked.
+  app.post<{ Params: { name: string }; Body: { entry?: unknown; reboot?: unknown } }>("/api/hosts/:name/next-boot", async (request, reply) => {
+    const host = find_host(request.params.name, reply);
+    if (host === null) return reply;
+    if (typeof request.body?.entry !== "string") return reply.code(400).send({ error: "Name the boot entry as `entry`" });
+    const outcome = await host.set_next_boot(request.body.entry, request.body.reboot === true);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  app.get<{ Params: { name: string } }>("/api/hosts/:name/events", async (request, reply): Promise<EventRow[] | FastifyReply> => {
+    const host = find_host(request.params.name, reply);
+    return host === null ? reply : store.events(host.id);
+  });
 
   // ── Flakes ───────────────────────────────────────────────────────────────
 
@@ -385,15 +501,6 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (!action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
     const outcome = await deployment.act(action);
     if (outcome.ok) poller.soon(deployment);
-    return reply.code(outcome.ok ? 200 : 409).send(outcome);
-  });
-
-  // Sets the entry the host boots into once, rebooting into it at once when asked.
-  app.post<{ Params: { id: string }; Body: { entry?: unknown; reboot?: unknown } }>("/api/deployments/:id/next-boot", async (request, reply) => {
-    const deployment = find(request.params.id, reply);
-    if (deployment === null) return reply;
-    if (typeof request.body?.entry !== "string") return reply.code(400).send({ error: "Name the boot entry as `entry`" });
-    const outcome = await deployment.set_next_boot(request.body.entry, request.body.reboot === true);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 

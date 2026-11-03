@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
-import { cache_settings, deployment_settings } from "../src/server/config.ts";
+import { cache_settings, deployment_settings, host_settings } from "../src/server/config.ts";
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { Store } from "../src/server/store.ts";
 import {
@@ -704,8 +704,8 @@ describe("a small host evaluated and built elsewhere", () => {
     const settings = deployment_settings({
       id: "pi", host: "pi", flake: "github:example/nixos-config", configuration: "pi", eval_agent: "server", build_agent: "server",
       build_root_dir: "/var/lib/x-nix/build-roots", cache_url: "https://attic.example/fleet", switch_from_cache: true, auto_switch: true,
-      auto_switch_after: "30m", magic_rollback: true, inhibit_sleep: true, post_switch: "systemctl restart greetd",
-    });
+      auto_switch_after: "30m", magic_rollback: true, post_switch: "systemctl restart greetd",
+    }, 0, undefined, () => host_settings({ id: "pi", keep_awake: true }));
     const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
 
     await deployment.cycle();
@@ -1116,7 +1116,7 @@ describe("live build progress", () => {
 // ── Sleeping host ────────────────────────────────────────────────────────────
 
 describe("a sleeping host that can be woken", () => {
-  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null, keep_awake: true }]]);
+  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null }]]);
 
   it("gets its job at once as waking, and the run starts once its agent dials in", async () => {
     const pi = new FakeAgent();

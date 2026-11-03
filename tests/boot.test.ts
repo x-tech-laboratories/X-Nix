@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { boot_script, grub_menu_entries, next_boot_command, parse_boot } from "../src/server/nixos/boot.ts";
-import { make_deployment, result, type Harness } from "./fake_agent.ts";
+import { make_host, result, type HostHarness as Harness } from "./fake_agent.ts";
 
 const bootctl = JSON.stringify([
   { type: "type1", id: "nixos-generation-101.conf", title: "NixOS", showTitle: "NixOS (Generation 101)", isDefault: true, isSelected: true },
@@ -50,9 +50,9 @@ function systemd_boot(oneshot = ""): string {
 
 // A deployment that has read these boot entries.
 async function read(output = systemd_boot(), values: Record<string, unknown> = {}): Promise<Harness> {
-  const harness = make_deployment(values);
+  const harness = make_host(values);
   harness.agent.boot_probe_result = result(0, output);
-  await harness.deployment.cycle();
+  await harness.host.cycle();
   return harness;
 }
 
@@ -117,16 +117,16 @@ describe("the read", () => {
     expect(parse_boot(run.stdout)).toMatchObject({ loader: "systemd-boot", default: "nixos-generation-101.conf" });
   });
 
-  it("keeps the entries a deployment last read when a read answers nothing", async () => {
+  it("keeps the entries a host last read when a read answers nothing", async () => {
     const harness = await read();
     harness.agent.boot_probe_result = result(-1, "", "timed out");
-    await harness.deployment.cycle();
-    expect(harness.deployment.reading()?.boot?.entries).toHaveLength(3);
+    await harness.host.cycle();
+    expect(harness.host.reading()?.boot?.entries).toHaveLength(3);
   });
 
   it("is left alone with boot set to false", async () => {
     const harness = await read(systemd_boot(), { boot: false });
-    expect(harness.deployment.reading()?.boot).toBeNull();
+    expect(harness.host.reading()?.boot).toBeNull();
     expect(harness.agent.commands.some((command) => command.includes("bootctl"))).toBe(false);
   });
 });
@@ -148,27 +148,25 @@ describe("next boot", () => {
 
   it("is set on the host, kept in the history and shown at once", async () => {
     const harness = await read();
-    const outcome = await harness.deployment.set_next_boot("nixos-generation-100.conf", false);
+    const outcome = await harness.host.set_next_boot("nixos-generation-100.conf", false);
     expect(outcome).toMatchObject({ ok: true, message: "Next boot set to NixOS (Generation 100)" });
     expect(harness.agent.commands).toContain("sudo -n bootctl set-oneshot nixos-generation-100.conf");
     expect(harness.store.jobs()[0]).toMatchObject({ kind: "next-boot", state: "succeeded" });
-    expect(harness.deployment.reading()?.boot?.next).toBe("nixos-generation-100.conf");
+    expect(harness.host.reading()?.boot?.next).toBe("nixos-generation-100.conf");
   });
 
-  it("refuses an unknown entry, a host not read yet, and a busy deployment", async () => {
+  it("refuses an unknown entry and a host not read yet", async () => {
     const harness = await read();
-    expect((await harness.deployment.set_next_boot("other", false)).message).toContain("not one of the host's boot entries");
-    expect((await make_deployment().deployment.set_next_boot("nixos-generation-100.conf", false)).message).toContain("No boot loader");
-    await harness.deployment.act("switch");
-    expect((await harness.deployment.set_next_boot("nixos-generation-100.conf", false)).message).toContain("already running");
+    expect((await harness.host.set_next_boot("other", false)).message).toContain("not one of the host's boot entries");
+    expect((await make_host().host.set_next_boot("nixos-generation-100.conf", false)).message).toContain("No boot loader");
   });
 
   it("keeps a failure's output", async () => {
     const harness = await read();
     harness.agent.command_result = result(1, "", "sudo: a password is required");
-    const outcome = await harness.deployment.set_next_boot("nixos-generation-100.conf", true);
+    const outcome = await harness.host.set_next_boot("nixos-generation-100.conf", true);
     expect(outcome.ok).toBe(false);
     expect(outcome.message).toContain("password is required");
-    expect(harness.deployment.reading()?.boot?.next).toBeNull();
+    expect(harness.host.reading()?.boot?.next).toBeNull();
   });
 });

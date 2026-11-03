@@ -1,7 +1,7 @@
 // What every view hands the router, and what several views show the same way.
 
 import {
-  api, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type FleetHostState, type FleetRunState, type Job,
+  api, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type Host, type FleetHostState, type FleetRunState, type Job,
   type Message, type PackageChange,
 } from "../api.ts";
 import { age, bytes, h, stamp, type Child } from "../dom.ts";
@@ -153,7 +153,7 @@ export function action_button(deployment: Deployment, action: ActionView, done: 
     confirm_dialog(`${action.label} ${deployment.name}`, [h("p", {}, action.confirm), body], action.label, run, true);
   };
   const button: HTMLButtonElement = h("button", {
-    class: action.id === "reboot" ? "danger" : action.id === "switch" || action.id === "collect" ? "accent solid" : null,
+    class: action.id === "reboot" ? "danger" : action.id === "switch" ? "accent solid" : null,
     disabled: action.refusal !== null,
     title: action.refusal,
     onclick: () => {
@@ -163,6 +163,25 @@ export function action_button(deployment: Deployment, action: ActionView, done: 
     },
   }, action.label);
   return button;
+}
+
+// A button that runs one of the host's actions, asking first, then calls done.
+export function host_action_button(host: Host, action: Host["actions"][number], done: () => Promise<unknown>): HTMLElement {
+  const run = async () => {
+    try {
+      const outcome = await api<ActionOutcome>(`/api/hosts/${encodeURIComponent(host.name)}/actions/${action.id}`, "POST");
+      toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
+    } catch (error) {
+      toast((error as Error).message, "bad");
+    }
+    await done();
+  };
+  return h("button", {
+    class: action.id === "reboot" ? "danger" : "accent solid",
+    disabled: action.refusal !== null,
+    title: action.refusal,
+    onclick: () => (action.confirm === null ? void run() : confirm_dialog(`${action.label} ${host.display_name}`, action.confirm, action.label, run)),
+  }, action.label);
 }
 
 // ── Package diff ─────────────────────────────────────────────────────────────
@@ -237,6 +256,7 @@ const provision_job_kinds = new Set<Job["kind"]>(["install", "media"]);
 export function job_owner_link(job: Job): string {
   if (provision_job_kinds.has(job.kind)) return link(["provision"]);
   if (job.kind === "update") return link(["flakes", job.deployment_id]);
+  if (job.deployment_id.startsWith("host:")) return link(["hosts", job.deployment_id.slice("host:".length)]);
   return link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]);
 }
 
