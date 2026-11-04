@@ -1,10 +1,11 @@
-// The Builds page: every finished build of a deployment or cache target with its result, duration, store path, log and
+// The Builds tab of the Jobs page: every finished build of a deployment or cache target with its result, duration, store path, log and
 // products, filtered by deployment or cache and target.
 
 import { api, type BuildRecord, type BuildsAnswer } from "../api.ts";
 import { age, bytes, h, stamp } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { data_table, empty, load, section } from "../ui.ts";
+import { jobs_tabs } from "./jobs.ts";
 import { duration, refresh_interval_in_milliseconds, type View } from "./shared.ts";
 
 // ── List ─────────────────────────────────────────────────────────────────────
@@ -33,7 +34,8 @@ export function builds_view(): View {
   return {
     title: "Builds",
     root: h("div", { class: "page" },
-      h("h1", {}, "Builds"),
+      h("h1", {}, "Jobs"),
+      jobs_tabs("builds"),
       h("p", { class: "muted" }, "Every finished build, newest first, with its log and what it made. Products that are files inside their build's store path can be downloaded."),
       section("History", [filters, list]),
     ),

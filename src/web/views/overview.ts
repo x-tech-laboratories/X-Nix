@@ -1,57 +1,91 @@
-// The Overview: one tile per NixOS deployment with its generation and whether it is in sync, the fleet's status as one
-// table, the agents on the other hosts, and the server itself.
+// The Overview: the fleet in counts, the hosts that need attention and why, and the jobs running now. Each host's own
+// state is on the Hosts page, which every row here links to.
 
-import { api, type AgentEntry, type Deployment, type Health } from "../api.ts";
+import { api, type Health, type Job, type Status } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
-import { data_table, empty, facts, load, section } from "../ui.ts";
-import { deployment_card, fleet_status_table, refresh_interval_in_milliseconds, type View } from "./shared.ts";
+import { link } from "../router.ts";
+import { data_table, empty, load, section, status_badge } from "../ui.ts";
+import { host_rows, row_status, type Row } from "./hosts.ts";
+import { drift_state, jobs_table, refresh_interval_in_milliseconds, tile, type View } from "./shared.ts";
+import { last_collection_tone } from "./store.ts";
 
 export function overview_view(): View {
-  const deployments = h("div");
-  const fleet = h("div");
-  const server = h("div");
-  const agents = h("div");
-  const refresh = (quiet: boolean) => load(deployments, async () => {
-    const list = await api<Deployment[]>("/api/deployments");
-    fleet.replaceChildren(list.length === 0 ? empty("No deployments yet.") : fleet_status_table(list));
-    if (list.length === 0) return empty("No deployments yet.", "Name each NixOS host and its flake under deployments in the config file.");
-    return h("div", { class: "grid" }, ...list.map(deployment_card));
-  }, { quiet });
+  const summary = h("div");
+  const jobs = h("div");
+  const server = h("p", { class: "muted" });
+
+  const refresh = (quiet: boolean) => Promise.all([
+    load(summary, async () => {
+      const rows = await host_rows();
+      if (rows.length === 0) return empty("No hosts yet.", "Name each NixOS host and its flake under deployments in the config file.");
+      const attention = rows.filter((row) => reasons(row).length > 0 || troubled.has(row_status(row) ?? "online"));
+      return [
+        tiles(rows),
+        section("Needs attention", attention.length === 0 ? empty("Nothing needs attention.") : attention_table(attention)),
+      ];
+    }, { quiet }),
+    load(jobs, async () => {
+      const running = (await api<Job[]>("/api/jobs?limit=100")).filter((job) => job.state === "running");
+      return running.length === 0 ? empty("Nothing is running.") : jobs_table(running, true);
+    }, { quiet }),
+  ]);
   void refresh(false);
-  const refresh_agents = (quiet: boolean) => load(agents, async () => {
-    const list = await api<AgentEntry[]>("/api/agents");
-    if (list.length === 0) return empty("No other hosts.", "Declare each host's agent key under agents in the config, and run x-nix-agent there.");
-    return data_table<AgentEntry>([
-      { label: "Host", cell: (entry) => entry.host },
-      { label: "Agent", cell: (entry) => (entry.status === null ? h("span", { class: "tone-warn" }, "Not connected") : h("span", { class: "tone-good" }, "Connected")) },
-      { label: "Since", cell: (entry) => (entry.status === null ? "" : h("span", { title: stamp(entry.status.connected_epoch) }, age(entry.status.connected_epoch))) },
-      { label: "Version", cell: (entry) => entry.status?.agent_version ?? "" },
-    ], list, "Agents");
-  }, { quiet });
-  void refresh_agents(false);
-  void load(server, async () => {
-    const health = await api<Health>("/api/health");
-    return facts([
-      ["Server", health.server_name],
-      ["Version", health.version],
-      ["Started", h("span", { title: stamp(health.started_epoch) }, age(health.started_epoch))],
-    ]);
-  });
-  const timer = setInterval(() => {
-    void refresh(true);
-    void refresh_agents(true);
-  }, refresh_interval_in_milliseconds);
+  void api<Health>("/api/health").then((health) => server.replaceChildren(
+    `X-Nix ${health.version} on ${health.server_name}, started `, h("span", { title: stamp(health.started_epoch) }, age(health.started_epoch)), "."));
+  const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
 
   return {
     title: "Overview",
     root: h("div", { class: "page" },
       h("h1", {}, "Overview"),
-      h("p", { class: "muted" }, "X-Nix watches and deploys NixOS machines from their flake."),
-      section("NixOS deployments", deployments),
-      section("Fleet status", fleet),
-      section("Agents", agents),
-      section("Server", server),
+      server,
+      summary,
+      section("Running now", jobs),
     ),
     dispose: () => clearInterval(timer),
   };
+}
+
+// The statuses that put a host on the attention list even when no reason below names why; its page says.
+const troubled = new Set<Status>(["unavailable", "warning", "failed"]);
+
+// ── Parts ────────────────────────────────────────────────────────────────────
+
+function tiles(rows: Row[]): HTMLElement {
+  const deployed = rows.flatMap((row) => (row.deployment === null ? [] : [row.deployment]));
+  const counted = (number: number, tone: "warn" | "bad") => [String(number), number > 0 ? `tone-edge-${tone}` : null] as const;
+  const in_sync = deployed.filter((deployment) => drift_state(deployment)[1] === "good").length;
+  return h("div", { class: "tiles" },
+    tile("Hosts", String(rows.length)),
+    tile("In sync", `${in_sync} of ${deployed.length}`, in_sync < deployed.length ? "tone-edge-warn" : null),
+    tile("Failing", ...counted(rows.filter((row) => row_status(row) === "failed").length, "bad")),
+    tile("Reboot needed", ...counted(deployed.filter((deployment) => deployment.reading?.reboot_required === true).length, "warn")),
+    tile("Agents offline", ...counted(rows.filter(({ host }) => agent_offline(host)).length, "warn")),
+  );
+}
+
+function attention_table(rows: Row[]): HTMLElement {
+  return data_table<Row>([
+    { label: "Host", cell: ({ host }) => h("a", { href: link(["hosts", host.name]) }, host.display_name) },
+    { label: "Status", cell: (row) => status_badge(row_status(row)) },
+    { label: "Why", cell: (row) => h("span", { class: "chips inline-chips" }, ...reasons(row).map(([text, tone]) => h("span", { class: `badge tone-${tone}` }, text))) },
+  ], rows, "Needs attention");
+}
+
+// What is wrong with a host and its deployment, each in a word or two with a tone.
+function reasons({ host, deployment }: Row): [text: string, tone: "warn" | "bad"][] {
+  const found: [string, "warn" | "bad"][] = [];
+  if (agent_offline(host)) found.push(["Agent offline", "warn"]);
+  if (deployment !== null) {
+    const [drift, tone] = drift_state(deployment);
+    if (tone === "warn" || tone === "bad") found.push([drift, tone]);
+    if (deployment.reading?.reboot_required === true) found.push(["Reboot needed", "warn"]);
+  }
+  const store = host.gc === null ? "none" : last_collection_tone(host);
+  if (store === "warn" || store === "bad") found.push(["Garbage collection", store]);
+  return found;
+}
+
+function agent_offline(host: Row["host"]): boolean {
+  return !host.own && host.agent === null;
 }

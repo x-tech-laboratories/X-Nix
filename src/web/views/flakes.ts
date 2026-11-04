@@ -122,8 +122,7 @@ function tiles(flake: Flake): HTMLElement {
     tile("Revision", short_revision(reading?.revision ?? null)),
     tile("Last changed", reading?.last_modified_epoch ? age(reading.last_modified_epoch) : "—"),
     tile("Oldest input", reading?.inputs_last_modified_epoch ? age(reading.inputs_last_modified_epoch) : "—", is_stale(flake, reading?.inputs_last_modified_epoch ?? null) ? "tone-edge-warn" : null),
-    tile("Last update", last_update_word(flake), failed ? "tile-bad" : null),
-    tile("Daily update", flake.update_at ?? "Off"),
+    tile("Last update", flake.last_update === null ? "—" : h("a", { href: link(["jobs", String(flake.last_update.job_id)]), title: flake.last_update.summary }, last_update_word(flake)), failed ? "tile-bad" : null),
   );
 }
 
@@ -176,7 +175,7 @@ function details(flake: Flake): HTMLElement {
   if (flake.pushes_to !== null) rows.push(["Commit author", flake.commit_author], ["Commit message", h("code", {}, flake.commit_message)]);
   if (flake.max_input_age !== null) rows.push(["Input age limit", duration(flake.max_input_age)]);
   if (flake.last_update !== null) {
-    rows.push(["Last update", h("span", {}, when(flake.last_update.finished_epoch), " ", h("a", { href: link(["jobs", String(flake.last_update.job_id)]) }, `job #${flake.last_update.job_id}`), `: ${flake.last_update.summary}`)]);
+    rows.push(["Last update changed", flake.last_update.summary]);
   }
   if (reading?.metadata_error) rows.push(["Read error", h("pre", { class: "output" }, reading.metadata_error)]);
   return facts(rows, "rows");

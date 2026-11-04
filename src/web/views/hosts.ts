@@ -1,14 +1,17 @@
 // The Hosts pages: every machine X-Nix reaches in one table to run actions across, and one host with the System it
 // runs, its Store, its Boot entries and the Machine itself as tabs under one header.
 
-import { api, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Status } from "../api.ts";
-import { age, bytes, h, nodes, stamp, type Child } from "../dom.ts";
+import {
+  api, type ActionOutcome, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type ProvisionedAgent, type Provisioning,
+  type Status,
+} from "../api.ts";
+import { age, h, nodes, stamp, type Child } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
 import { boot_tab } from "./boot.ts";
 import { action_labels, runs_table } from "./fleet.ts";
 import {
-  action_button, duration, events_list, host_action_button, refresh_interval_in_milliseconds, short_revision, tag_chips, tile, waiting_on, type View,
+  action_button, duration, events_list, host_action_button, refresh_interval_in_milliseconds, short_revision, tag_chips, waiting_on, type View,
 } from "./shared.ts";
 import { last_collection_tone, store_tab } from "./store.ts";
 import { generations_section, system_tab } from "./system.ts";
@@ -22,15 +25,22 @@ const tab_labels: Record<HostTab, string> = { system: "System", store: "Store", 
 const status_severity: Record<Status, number> = { online: 0, info: 1, unavailable: 2, warning: 3, failed: 4 };
 
 // A host and the deployment it runs, if any.
-interface Row {
+export interface Row {
   host: Host;
   deployment: Deployment | null;
 }
 
 // The worse of the host's own status and its deployment's.
-function row_status({ host, deployment }: Row): Status | null {
+export function row_status({ host, deployment }: Row): Status | null {
   const statuses = [host.reading?.status, deployment?.reading?.status].filter((status): status is Status => status !== undefined);
   return statuses.length === 0 ? null : statuses.reduce((worst, status) => (status_severity[status] > status_severity[worst] ? status : worst));
+}
+
+// Every host with the deployment it runs.
+export async function host_rows(): Promise<Row[]> {
+  const [hosts, deployments] = await Promise.all([api<Host[]>("/api/hosts"), api<Deployment[]>("/api/deployments")]);
+  const by_host = new Map(deployments.flatMap((deployment) => (deployment.host_name === null ? [] : [[deployment.host_name, deployment] as const])));
+  return hosts.map((host) => ({ host, deployment: by_host.get(host.name) ?? null }));
 }
 
 // ── List ─────────────────────────────────────────────────────────────────────
@@ -109,9 +119,8 @@ export function hosts_view(): View {
 
   let first = true;
   const refresh = (quiet: boolean) => load(runs, async () => {
-    const [hosts, list, fleet] = await Promise.all([api<Host[]>("/api/hosts"), api<Deployment[]>("/api/deployments"), api<Fleet>("/api/fleet")]);
-    const by_host = new Map(list.flatMap((deployment) => (deployment.host_name === null ? [] : [[deployment.host_name, deployment] as const])));
-    rows = hosts.map((host) => ({ host, deployment: by_host.get(host.name) ?? null }));
+    const [found, fleet] = await Promise.all([host_rows(), api<Fleet>("/api/fleet")]);
+    rows = found;
     draw_table();
     if (first) {
       first = false;
@@ -228,7 +237,7 @@ export function host_view(name: string, asked: HostTab | null = null): View {
     if (tab === "system") return current === null ? empty("Nothing is deployed to this host.", "Name it as a deployment's host in the config file.") : system_tab(current, () => refresh(true));
     if (tab === "store") return store_tab(host);
     if (tab === "boot") return boot_tab(host, () => refresh(true));
-    return machine_tab(host);
+    return machine_tab(host, () => refresh(true));
   }, { quiet });
 
   const run_refresh = async () => {
@@ -271,34 +280,53 @@ export function deployment_redirect(id: string, page: string | undefined): View 
 
 // ── Machine ──────────────────────────────────────────────────────────────────
 
-async function machine_tab(host: Host): Promise<Child> {
-  const events = await api<EventRow[]>(`/api/hosts/${encodeURIComponent(host.name)}/events`);
+// The machine itself: its agent and the key it logs in with, how it is woken and read, and its events. It holds no
+// tiles, as its one changing state, the agent's connection, shows in the page's status.
+async function machine_tab(host: Host, refresh: () => Promise<unknown>): Promise<Child> {
+  const [events, provisioning] = await Promise.all([
+    api<EventRow[]>(`/api/hosts/${encodeURIComponent(host.name)}/events`),
+    api<Provisioning>("/api/provisioning"),
+  ]);
+  const made = provisioning.provisioned_agents.find((agent) => agent.host === host.name) ?? null;
   return [
-    h("div", { class: "tiles" },
-      tile("Agent", agent_text(host), host.agent === null && !host.own ? "tone-edge-warn" : null),
-      tile("Woken by", host.wake === null ? "Never woken" : "Wake-on-LAN"),
-      tile("Read every", duration(host.interval)),
-    ),
-    section("Details", details(host)),
+    section("Details", details(host, made), made && h("button", { class: "danger", onclick: () => forget_key(made, refresh) }, "Forget the key")),
     section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
   ];
 }
 
-function details(host: Host): HTMLElement {
-  const store = host.reading?.store ?? null;
+function details(host: Host, made: ProvisionedAgent | null): HTMLElement {
+  const when = (epoch: number) => h("span", { title: stamp(epoch) }, age(epoch));
   const rows: Parameters<typeof facts>[0] = [
-    ["Agent", host.own ? "the server itself" : host.agent === null ? (host.agent_key ? "declared, not connected" : "no key declared here") : h("span", {}, `version ${host.agent.agent_version}, connected `, h("span", { title: stamp(host.agent.connected_epoch) }, age(host.agent.connected_epoch)))],
+    ["Agent", host.own ? "the server itself" : host.agent === null ? "not connected" : h("span", {}, `version ${host.agent.agent_version}, connected `, when(host.agent.connected_epoch))],
+  ];
+  if (!host.own) rows.push(["Agent key", key_text(host, made)]);
+  rows.push(
     ["Woken by", host.wake === null ? "never woken" : h("span", {}, "wake-on-LAN to ", h("code", {}, host.wake.mac), ` via ${host.wake.via ?? "the server"} on ${host.wake.broadcast}, waiting up to ${duration(host.wake.timeout)}`)],
     ["Kept awake", host.keep_awake ? "through every job and switch" : "no"],
-    ["Store", host.gc === null ? "not watched" : h("a", { href: link(["hosts", host.name, "store"]) }, store?.size_bytes == null ? host.gc.store : `${host.gc.store}, ${bytes(store.used_bytes ?? 0)} of ${bytes(store.size_bytes)}`)],
-    ["Boot entries", host.boot ? h("a", { href: link(["hosts", host.name, "boot"]) }, `${host.reading?.boot?.entries.length ?? 0} read`) : "not read"],
-  ];
+    ["Read every", duration(host.interval)],
+  );
   return facts(rows, "rows");
 }
 
-// ── Wording ──────────────────────────────────────────────────────────────────
+// Where the agent's key comes from: the config, or an install that made it.
+function key_text(host: Host, made: ProvisionedAgent | null): Child {
+  if (made === null) return host.agent_key ? "declared in the config" : "none declared";
+  return h("span", {},
+    made.overridden ? "declared in the config, used instead of the one made by " : "made by ",
+    h("a", { href: link(["jobs", String(made.job_id)]) }, `install #${made.job_id}`), " ",
+    h("span", { title: stamp(made.added_epoch) }, age(made.added_epoch)), ", ",
+    h("code", { class: "small", title: made.public_line }, made.fingerprint));
+}
 
-function agent_text(host: Host): string {
-  if (host.own) return "This server";
-  return host.agent === null ? "Not connected" : "Connected";
+export function forget_key(agent: ProvisionedAgent, done: () => Promise<unknown>): void {
+  confirm_dialog(`Forget ${agent.host}'s key`,
+    `Stop accepting the agent key X-Nix made for ${agent.host}? Its agent is hung up on and cannot log in again unless the config declares its key.`,
+    "Forget", async () => {
+      try {
+        toast((await api<ActionOutcome>(`/api/provisioning/agents/${encodeURIComponent(agent.host)}/forget`, "POST")).message, "good");
+      } catch (error) {
+        toast((error as Error).message, "bad");
+      }
+      await done();
+    });
 }

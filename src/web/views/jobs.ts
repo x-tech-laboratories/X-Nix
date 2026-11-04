@@ -1,10 +1,19 @@
 // The Jobs pages: every update, build, switch, reboot, collection, cache build and push, and one job with its whole output.
+// The Builds tab beside the list is builds.ts.
 
 import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { crumbs, empty, facts, job_badge, load, section } from "../ui.ts";
 import { job_owner_link, jobs_table, refresh_interval_in_milliseconds, tile, type View } from "./shared.ts";
+
+// The tabs over the job history: every job, or the finished builds with what they made.
+export function jobs_tabs(active: "jobs" | "builds"): HTMLElement {
+  const tab = (choice: "jobs" | "builds", label: string) => h("a", {
+    class: choice === active ? "tab active" : "tab", href: link([choice]), "aria-current": choice === active ? "page" : null,
+  }, label);
+  return h("nav", { class: "tabs", "aria-label": "Jobs" }, tab("jobs", "All jobs"), tab("builds", "Builds"));
+}
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -22,6 +31,7 @@ export function jobs_view(): View {
     title: "Jobs",
     root: h("div", { class: "page" },
       h("h1", {}, "Jobs"),
+      jobs_tabs("jobs"),
       h("p", { class: "muted" }, "Every update, build, switch, reboot, collection, cache build and push, install and media build, newest first. ",
         h("a", { href: link(["jobs"], { evaluations: show_evaluations ? null : "1" }) }, show_evaluations ? "Hide evaluations and checks" : "Show evaluations and checks")),
       section("History", list),

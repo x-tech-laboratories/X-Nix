@@ -29,7 +29,7 @@ let first_view = true;
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 // Old addresses whose pages now live under another sidebar section, which they light up.
-const parent_sections: Record<string, string> = { deployments: "hosts", fleet: "hosts", store: "hosts", boot: "hosts" };
+const parent_sections: Record<string, string> = { builds: "jobs", deployments: "hosts", fleet: "hosts", store: "hosts", boot: "hosts" };
 
 function view_for(parts: string[]): View {
   const [section, id, page] = parts;

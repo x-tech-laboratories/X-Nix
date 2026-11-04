@@ -183,7 +183,6 @@ function server_details(cache: Cache): HTMLElement[] {
   for (const [key, value] of Object.entries(server.info ?? {})) rows.push([key, value]);
   if (cache.server_urls.health !== null) rows.push(["Health", h("span", {}, code(cache.server_urls.health), ` ${server.healthy === null ? "" : server.healthy ? "healthy" : "not healthy"}`)]);
   if (cache.server_urls.metrics !== null) rows.push(["Metrics", code(cache.server_urls.metrics)]);
-  if (server.size_bytes !== null) rows.push(["Size", bytes(server.size_bytes)]);
   rows.push(["Last read", h("span", { title: stamp(server.checked_epoch) }, age(server.checked_epoch))]);
   const parts = [messages_list(server.messages), facts(rows, "rows")];
   if (server.metrics.length > 0) {
@@ -205,7 +204,6 @@ function details(cache: Cache): HTMLElement {
     ["Daily Build all", cache.build_at === null ? "off" : h("span", {}, `at ${cache.build_at}, last slot `, cache.scheduled_build ? h("span", { title: stamp(cache.scheduled_build) }, age(cache.scheduled_build)) : "—")],
     ["Builds for", cache.deployments.length === 0 ? "no deployment names it" : h("span", {}, ...cache.deployments.flatMap((deployment, index) => [
       index === 0 ? "" : ", ", h("a", { href: link(["deployments", deployment.id]) }, deployment.name)]))],
-    ["Last checked", cache.reading ? h("span", { title: stamp(cache.reading.checked_epoch) }, age(cache.reading.checked_epoch)) : "—"],
   ];
   for (const target of cache.targets) {
     const where = target.build_link === null ? "not rooted" : `rooted at ${target.build_link}${target.kept_only_in_cache ? ", dropped once pushed" : ""}`;

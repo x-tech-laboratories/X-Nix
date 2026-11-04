@@ -4,7 +4,7 @@ import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventR
 import { age, h, stamp, type Child } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, data_table, empty, facts, load, section, toast } from "../ui.ts";
-import { diff_view, drift_state, events_list, flake_link, jobs_table, messages_list, short_revision, tag_chips, tile } from "./shared.ts";
+import { diff_view, drift_state, events_list, flake_link, jobs_table, messages_list, tag_chips, tile } from "./shared.ts";
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
 
@@ -41,18 +41,16 @@ export function generations_section(deployment: Deployment, refresh: () => Promi
 
 // ── Parts ────────────────────────────────────────────────────────────────────
 
+// The system's state at a glance; what it is configured to do is under Details.
 function tiles(deployment: Deployment): HTMLElement {
   const reading = deployment.reading;
-  const evaluation = deployment.evaluation;
   const [drift, tone] = drift_state(deployment);
   return h("div", { class: "tiles" },
     tile("Flake", drift, tone === "bad" ? "tile-bad" : null),
     tile("Reboot", reading?.reboot_required === true ? "Needed" : reading?.reboot_required === false ? "Not needed" : "—"),
     tile("Generation", String(reading?.generation ?? "—")),
     tile("Last switch", reading?.switched_epoch ? age(reading.switched_epoch) : "—"),
-    tile("Revision", short_revision(evaluation.flake_revision)),
-    tile("Pin", deployment.pin === null ? "Head" : short_revision(deployment.pin), deployment.pin === null ? null : "tile-info"),
-    tile("Oldest input", evaluation.inputs_last_modified_epoch ? age(evaluation.inputs_last_modified_epoch) : "—"),
+    tile("NixOS", reading?.version ?? "—"),
   );
 }
 
@@ -93,16 +91,22 @@ function details(deployment: Deployment): HTMLElement {
     ["Flake", flake_link(deployment.flake_id, deployment.flake)],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
     ["Tags", deployment.tags.length === 0 ? "—" : tag_chips(deployment.tags)],
-    ["NixOS version", reading?.version ?? "—"],
     ["Running closure", code(reading?.current), "path"],
     ["Flake closure", code(evaluation.target), "path"],
-    ["Flake revision", code(evaluation.flake_revision)],
-    ["Flake last changed", when(evaluation.flake_last_modified_epoch)],
-    ["Oldest input", h("span", {}, evaluation.oldest_input ?? "—", " (", when(evaluation.inputs_last_modified_epoch), ")")],
+  ];
+  // A declared flake followed at its head shows its revision and inputs on its own page.
+  if (deployment.flake_id === null || deployment.pin !== null) {
+    rows.push(
+      ["Flake revision", code(evaluation.flake_revision)],
+      ["Flake last changed", when(evaluation.flake_last_modified_epoch)],
+      ["Oldest input", h("span", {}, evaluation.oldest_input ?? "—", " (", when(evaluation.inputs_last_modified_epoch), ")")],
+    );
+  }
+  rows.push(
     ["Last evaluated", h("span", {}, deployment.evaluating ? "evaluating now" : when(evaluation.evaluated_epoch),
       deployment.evaluated_by === null ? "" : [" by the ", h("a", { href: link(["cache", deployment.evaluated_by]) }, deployment.evaluated_by), " cache's check"])],
     ["Last read", when(reading?.checked_epoch)],
-  ];
+  );
   if (deployment.agents.eval !== deployment.host) rows.push(["Evaluates on", deployment.agents.eval ?? "this server"]);
   if (deployment.build_agents.length > 1) rows.push(["Builds on", deployment.build_agents.join(", then ")]);
   else if (deployment.agents.build !== deployment.host) rows.push(["Builds on", deployment.agents.build ?? "this server"]);

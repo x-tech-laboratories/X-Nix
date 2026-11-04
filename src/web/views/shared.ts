@@ -6,7 +6,7 @@ import {
 } from "../api.ts";
 import { age, bytes, h, stamp, type Child } from "../dom.ts";
 import { link } from "../router.ts";
-import { confirm_dialog, data_table, empty, job_badge, level_badge, status_badge, toast } from "../ui.ts";
+import { confirm_dialog, data_table, empty, job_badge, level_badge, toast } from "../ui.ts";
 
 // ── Views ────────────────────────────────────────────────────────────────────
 
@@ -29,26 +29,6 @@ export function drift_state(deployment: Deployment): [text: string, tone: "good"
   return up_to_date ? ["In sync", "good"] : ["Drifting", "warn"];
 }
 
-// The page a deployment is shown on: the System tab of its host's page.
-export function deployment_link(deployment: Deployment): string {
-  return deployment.host_name === null ? link(["deployments", deployment.id]) : link(["hosts", deployment.host_name]);
-}
-
-export function deployment_card(deployment: Deployment): HTMLElement {
-  const [drift, tone] = drift_state(deployment);
-  const reading = deployment.reading;
-  const job = deployment.running_job;
-  return h("a", { class: `card tone-edge-${tone}`, href: deployment_link(deployment) },
-    h("div", { class: "card-head" }, h("strong", {}, deployment.name), status_badge(reading?.status ?? null)),
-    h("div", { class: "muted card-host" }, deployment.host ?? "this server"),
-    h("dl", {},
-      h("dt", {}, "Flake"), h("dd", { class: tone === "none" ? null : `tone-${tone}` }, drift),
-      h("dt", {}, "Generation"), h("dd", {}, reading?.generation ?? "—"),
-      h("dt", {}, "Reboot"), h("dd", {}, reading?.reboot_required === true ? "Needed" : reading?.reboot_required === false ? "Not needed" : "—"),
-      job && [h("dt", {}, "Running"), h("dd", {}, `${job.kind}${job.progress ? `: ${job.progress}` : ""}`)],
-    ));
-}
-
 // ── Fleet ────────────────────────────────────────────────────────────────────
 
 // What the deployment waits on before it runs what its flake describes: a rebuild for drift, a sync for a fresh evaluation.
@@ -67,28 +47,6 @@ export function waiting_on(deployment: Deployment): HTMLElement {
 
 export function tag_chips(tags: string[]): HTMLElement | string {
   return tags.length === 0 ? "" : h("span", { class: "chips inline-chips" }, ...tags.map((tag) => h("span", { class: "badge tone-none" }, `@${tag}`)));
-}
-
-// Every deployment's last update, NixOS version and what it waits on, with a checkbox each when a selection is given.
-export function fleet_status_table(deployments: Deployment[], selection: { selected: Set<string>; changed: () => void } | null = null): HTMLElement {
-  const pick = (deployment: Deployment) => h("input", {
-    type: "checkbox", checked: selection!.selected.has(deployment.id), "aria-label": `Select ${deployment.name}`,
-    onchange: (event: Event) => {
-      if ((event.target as HTMLInputElement).checked) selection!.selected.add(deployment.id);
-      else selection!.selected.delete(deployment.id);
-      selection!.changed();
-    },
-  });
-  return data_table<Deployment>([
-    ...(selection === null ? [] : [{ label: "Pick", cell: pick }]),
-    { label: "Deployment", cell: (deployment) => h("a", { href: deployment_link(deployment) }, deployment.name) },
-    { label: "Tags", cell: (deployment) => tag_chips(deployment.tags) },
-    { label: "NixOS", cell: (deployment) => deployment.reading?.version ?? "—" },
-    { label: "Updated", cell: (deployment) => (deployment.reading?.switched_epoch ? h("span", { title: stamp(deployment.reading.switched_epoch) }, age(deployment.reading.switched_epoch)) : "—") },
-    { label: "Pin", cell: (deployment) => (deployment.pin === null ? h("span", { class: "muted" }, "head") : h("code", {}, short_revision(deployment.pin))) },
-    { label: "Waiting on", cell: waiting_on },
-    { label: "Running", cell: (deployment) => (deployment.running_job === null ? "" : h("a", { href: link(["jobs", String(deployment.running_job.id)]) }, deployment.running_job.kind)) },
-  ], deployments, "Fleet status");
 }
 
 const fleet_host_tones: Record<FleetHostState, string> = { queued: "none", running: "info", verifying: "info", succeeded: "good", failed: "bad", skipped: "none" };

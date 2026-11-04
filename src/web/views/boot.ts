@@ -19,14 +19,10 @@ export async function boot_tab(host: Host, refresh: () => Promise<unknown>): Pro
       tile("Loader", loader_names[boot.loader]),
       tile("Default", title_of(boot, boot.default)),
       tile("Next boot", next_boot_text(boot), boot.next ? "tile-info" : null),
-      tile("Reboot", reboot_text(host.system?.reboot_required ?? null), host.system?.reboot_required ? "tone-edge-warn" : null),
     ),
     section("Boot entries", boot.entries.length === 0 ? empty("No entries read.", "Reading them may need sudo for bootctl.") : entries_table(host, boot, refresh)),
     section("Changes", jobs.length === 0 ? empty("No next boot set from here yet.") : jobs_table(jobs, false)),
-    section("Details", facts([
-      ["Booted system", host.system?.booted ? h("code", {}, host.system.booted) : "—"],
-      ["Running system", host.system?.current ? h("code", {}, host.system.current) : "—"],
-    ], "rows")),
+    section("Details", facts([["Booted system", host.system?.booted ? h("code", {}, host.system.booted) : "—"]], "rows")),
   ];
 }
 
@@ -68,11 +64,7 @@ function title_of(boot: Boot, id: string | null): string {
   return boot.entries.find((entry) => entry.id === id)?.title ?? id;
 }
 
-export function next_boot_text(boot: Boot | null): string {
+function next_boot_text(boot: Boot | null): string {
   if (boot === null) return "—";
   return boot.next ? `${title_of(boot, boot.next)} (once)` : title_of(boot, boot.default);
-}
-
-export function reboot_text(reboot: boolean | null): string {
-  return reboot === true ? "Needed" : reboot === false ? "Not needed" : "—";
 }

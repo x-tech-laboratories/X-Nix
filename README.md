@@ -255,7 +255,7 @@ database and advanced every few seconds, so it carries on after a restart of X-N
 A staged rollout goes through its stages in order, each a selector, with hosts no stage names in a
 last stage; with no stages it goes one host at a time. A staged switch waits for each host to read
 as in sync against an evaluation made after the switch before the next host starts, and the first
-failure, drift or `sync_timeout` stops the rollout. The Overview's fleet status table shows each
+failure, drift or `sync_timeout` stops the rollout. The Hosts table shows each
 host's NixOS version, when it last switched, its pin, and whether it waits on a rebuild (drift) or a
 sync (an evaluation running or due). The config file's `fleet` object sets:
 
@@ -360,7 +360,8 @@ install succeeds X-Nix accepts that key, so the agent logs in on first boot, pro
 configuration already enables `services.x-nix-agent` with that `keyFile` (the page shows the
 lines). The page then shows what to add to the config to declare the key and watch the host as a
 deployment; X-Nix never writes the config file itself. A key the config declares for
-the same host wins, and a made key can be forgotten from the page.
+the same host wins. A made key shows on the Provision page until the config names its host, then on
+the host's Machine tab, and either can forget it.
 
 The page also builds install media for a deployment or any flake and attribute: an installer ISO,
 the netboot (iPXE) files or a kexec tarball. It builds the configuration's own
@@ -385,7 +386,7 @@ These keys of `provisioning` in the config file set it up:
 | `job_poll`            | `30s`                     | How often a running install or media build is read.                  |
 ## Builds
 
-The Builds page lists every finished build, newest first and filtered by deployment or cache and
+The Builds tab of the Jobs page lists every finished build, newest first and filtered by deployment or cache and
 target: a deployment's Build, a cache target's Build, and each target of a Build all. Each shows its
 result, how long it took, its store path, a link to its job and so its whole log, and the products
 its store path lists in Hydra's `nix-support/hydra-build-products`, read once when the build ends. A
@@ -414,8 +415,8 @@ config, such as `pre_switch_checks`, `health_commands`, `post_switch` and `push_
 `/bin/sh -c` exactly as written. A job's page shows its operation, and its output shows each program
 as it starts. Long runs run in a runner process of their own, outlive the agent and are followed
 again once it reconnects. The protocol is X-Backups'
-agent protocol without its streams. The Overview lists each declared host and whether its agent is
-connected.
+agent protocol without its streams. The Overview counts the hosts whose agent is not
+connected and lists them under Needs attention, and each host's Machine tab shows its agent.
 
 ### Wake-on-LAN
 

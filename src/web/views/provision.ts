@@ -1,13 +1,15 @@
 // The Provision page: install NixOS on a new host with nixos-anywhere, see each install with its hardware configuration
-// and the snippets that keep the host, the agent keys X-Nix made, and build install media to download.
+// and the snippets that keep the host, the agent keys X-Nix made for hosts the config does not name yet, and build install
+// media to download. A named host shows its key on its Machine tab.
 
 import {
-  api, type ActionOutcome, type AgentEntry, type Deployment, type Health, type InstallView, type MediaFormat, type MediaView, type ProvisionedAgent,
+  api, type ActionOutcome, type AgentEntry, type Deployment, type Health, type Host, type InstallView, type MediaFormat, type MediaView, type ProvisionedAgent,
   type Provisioning,
 } from "../api.ts";
 import { age, bytes, h, stamp } from "../dom.ts";
 import { link } from "../router.ts";
 import { confirm_dialog, data_table, empty, facts, job_badge, load, section, toast } from "../ui.ts";
+import { forget_key } from "./hosts.ts";
 import { refresh_interval_in_milliseconds, type View } from "./shared.ts";
 
 const format_labels: Record<MediaFormat, string> = { iso: "Installer ISO", netboot: "Netboot (iPXE)", kexec: "Kexec tarball" };
@@ -27,7 +29,11 @@ export function provision_view(): View {
       const found = (await fetch_provisioning()).installs;
       return found.length === 0 ? empty("No installs yet.") : found.map(install_card);
     }, { quiet }),
-    load(keys, async () => keys_table((await fetch_provisioning()).provisioned_agents, () => refresh(true)), { quiet }),
+    load(keys, async () => {
+      const [provisioning, hosts] = await Promise.all([fetch_provisioning(), api<Host[]>("/api/hosts")]);
+      const named = new Set(hosts.map((host) => host.name));
+      return keys_table(provisioning.provisioned_agents.filter((agent) => !named.has(agent.host)), () => refresh(true));
+    }, { quiet }),
     load(media, async () => media_table((await fetch_provisioning()).media, () => refresh(true)), { quiet }),
   ]);
 
@@ -47,7 +53,7 @@ export function provision_view(): View {
       h("p", { class: "muted" }, "Install NixOS on a reachable Linux host with nixos-anywhere, and build install media for a configuration."),
       section("Install NixOS on a host", install_form),
       section("Installs", installs),
-      section("Agent keys made here", keys),
+      section("Agent keys for unnamed hosts", keys),
       section("Build install media", media_form),
       section("Install media", media),
     ),
@@ -154,25 +160,14 @@ function install_card(install: InstallView): HTMLElement {
 // ── Keys ─────────────────────────────────────────────────────────────────────
 
 function keys_table(agents: ProvisionedAgent[], done: () => Promise<unknown>): HTMLElement {
-  if (agents.length === 0) return empty("No keys made yet.", "A full install makes its host's agent key, which is accepted once the install succeeds.");
-  const forget = (agent: ProvisionedAgent) => confirm_dialog(`Forget ${agent.host}'s key`,
-    `Stop accepting the agent key X-Nix made for ${agent.host}? Its agent is hung up on and cannot log in again unless the config declares its key.`,
-    "Forget", async () => {
-      try {
-        toast((await api<ActionOutcome>(`/api/provisioning/agents/${encodeURIComponent(agent.host)}/forget`, "POST")).message, "good");
-      } catch (error) {
-        toast((error as Error).message, "bad");
-      }
-      await done();
-    });
+  if (agents.length === 0) return empty("No keys waiting.", "A full install makes its host's agent key; once the config names the host, its Machine tab shows the key.");
   return data_table<ProvisionedAgent>([
     { label: "Host", cell: (agent) => h("strong", {}, agent.host) },
     { label: "Fingerprint", cell: (agent) => h("code", { class: "small", title: agent.public_line }, agent.fingerprint) },
     { label: "Install", cell: (agent) => h("a", { href: link(["jobs", String(agent.job_id)]) }, `#${agent.job_id}`) },
     { label: "Added", cell: (agent) => h("span", { title: stamp(agent.added_epoch) }, age(agent.added_epoch)) },
-    { label: "State", cell: (agent) => (agent.overridden ? h("span", { class: "muted" }, "The config declares this host's key, which is used instead") : "Accepted") },
-    { label: "Actions", cell: (agent) => h("div", { class: "row-actions" }, h("button", { class: "danger", onclick: () => forget(agent) }, "Forget")) },
-  ], agents, "Agent keys made here");
+    { label: "Actions", cell: (agent) => h("div", { class: "row-actions" }, h("button", { class: "danger", onclick: () => forget_key(agent, done) }, "Forget")) },
+  ], agents, "Agent keys for unnamed hosts");
 }
 
 // ── Media ────────────────────────────────────────────────────────────────────

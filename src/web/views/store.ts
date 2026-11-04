@@ -34,7 +34,7 @@ function tiles(host: Host): HTMLElement {
   const next_tone: Tone = store !== null && !store.timer_active ? "warn" : "none";
   return h("div", { class: "tiles" },
     tile("Last collection", last_collection_text(host), tile_class(last_collection_tone(host))),
-    tile("Last yield", last?.freed_bytes == null ? "—" : bytes(last.freed_bytes)),
+    tile("Last yield", last?.freed_bytes == null ? "—" : last.deleted === null ? bytes(last.freed_bytes) : `${bytes(last.freed_bytes)}, ${last.deleted.toLocaleString()} paths`),
     tile("Next collection", next_text(host), tile_class(next_tone)),
     tile("Store used", store?.used_percent == null ? "—" : `${store.used_percent.toFixed(1)}%`, tile_class(used_tone)),
     tile("Store paths", store?.paths == null ? "—" : store.paths.toLocaleString()),
@@ -63,8 +63,6 @@ function details(host: Host): HTMLElement {
     ["Unit", h("code", {}, gc.unit)],
     ["Timer", h("span", {}, h("code", {}, gc.timer), store === null ? "" : store.timer_active ? " (active)" : store.timer_loaded ? " (inactive)" : " (not installed)")],
     ["Collect Garbage runs", h("code", {}, gc.command)],
-    ["Last collection", last === null ? "none seen" : h("span", {}, when(last.epoch), last.succeeded ? ", succeeded" : ", failed",
-      last.deleted === null ? "" : `, ${last.deleted.toLocaleString()} paths deleted`)],
     ["Oldest generation", when(store?.oldest_generation_epoch)],
     ["Last read", when(store?.checked_epoch)],
   ];
@@ -74,7 +72,7 @@ function details(host: Host): HTMLElement {
 
 // ── Wording ──────────────────────────────────────────────────────────────────
 
-export function last_collection_text(host: Host): string {
+function last_collection_text(host: Host): string {
   const last = host.state.last_collection;
   if (last === null) return host.reading?.store ? "Never seen" : "—";
   return last.succeeded ? age(last.epoch) : `Failed ${age(last.epoch)}`;
