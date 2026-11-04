@@ -10,7 +10,7 @@ import { drift_state, jobs_table, refresh_interval_in_milliseconds, tile, type V
 import { last_collection_tone } from "./store.ts";
 
 export function overview_view(): View {
-  const summary = h("div");
+  const summary = h("div", { class: "stack" });
   const jobs = h("div");
   const server = h("p", { class: "muted" });
 
