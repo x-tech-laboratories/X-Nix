@@ -58,7 +58,7 @@ const caches = config.caches.map((settings) => new Cache(settings, { store, agen
 const deployments = config.deployments.map((settings) => new Deployment(settings, {
   store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),
 }));
-// An update that moved a flake's lock has every deployment and cache naming the flake evaluate afresh.
+// An update or a push that changed a flake has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {
   for (const deployment of deployments.filter((candidate) => candidate.settings.flake_id === flake.id)) {
     deployment.request_evaluation();

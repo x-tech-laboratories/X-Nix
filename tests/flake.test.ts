@@ -59,6 +59,18 @@ describe("a flake", () => {
 
     expect(flake.reading()).toMatchObject({ status: "unavailable", revision: "f".repeat(40), metadata_error: "error: unable to download" });
   });
+
+  it("has everything naming it evaluate once a read finds it changed", async () => {
+    const { flake, agent, updated } = make_flake();
+    await flake.cycle();
+    await flake.cycle();
+    expect(updated).toEqual([]);
+
+    agent.answers.unshift(["flake metadata", metadata({ revision: "a".repeat(40) })]);
+    await flake.cycle();
+
+    expect(updated).toEqual(["config"]);
+  });
 });
 
 // ── Update ───────────────────────────────────────────────────────────────────

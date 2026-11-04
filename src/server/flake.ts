@@ -3,7 +3,8 @@
 // Every `interval` the flake's host reads `nix flake metadata`, which gives the revision, when the flake last changed and
 // each locked input. Update runs as a long run on that host that outlives a restart of the server: a local checkout's
 // lock is written in place, and a github: flake with a `push_ssh_key` is cloned, updated and pushed back. With
-// `update_at` it also runs daily. Once an update ends well, every deployment and cache naming the flake evaluates afresh.
+// `update_at` it also runs daily. Once an update ends well, or a read finds the flake changed since the last one, every
+// deployment and cache naming the flake evaluates afresh.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ export interface FlakeActionOutcome {
 export interface FlakeOptions {
   store: Store;
   agents: AgentPool;
-  // Tells every deployment and cache naming the flake to evaluate afresh, once an update has moved its lock.
+  // Tells every deployment and cache naming the flake to evaluate afresh, once an update or a push has changed it.
   on_updated?: (flake: Flake) => void;
   // The time in seconds, which tests set.
   now?: () => number;
@@ -127,7 +128,7 @@ export class Flake {
       if (job !== null) return this.poll_job(job);
       const slot = this.update_due();
       if (slot !== null) return this.launch_scheduled(slot);
-      return this.read();
+      if (await this.read()) this.on_updated(this);
     });
   }
 
@@ -137,8 +138,9 @@ export class Flake {
     return next;
   }
 
-  // Reads the metadata and lock, keeping the last good values when the read fails.
-  private async read(): Promise<void> {
+  // Reads the metadata and lock, keeping the last good values when the read fails, and answers whether the flake changed
+  // since the last good read.
+  private async read(): Promise<boolean> {
     const result = await this.agents.get(this.settings.host).run(metadata_operation(this.settings), this.settings.timeout);
     const metadata = result.exit_code === 0 ? parse_metadata(result.stdout) : null;
     const previous = this.reading();
@@ -155,6 +157,8 @@ export class Flake {
       inputs: metadata?.inputs ?? previous?.inputs ?? [],
       metadata_error: error,
     });
+    return metadata !== null && previous !== null
+      && (metadata.revision !== previous.revision || metadata.last_modified_epoch !== previous.last_modified_epoch);
   }
 
   // Judges the reading's status and messages from its facts and the last update, then saves it.
@@ -287,8 +291,8 @@ export class Flake {
     const summary = succeeded ? last_line || "Finished" : finished.error ?? "The update failed";
     this.store.save_evaluation(this.id, { ...this.state(), last_update: { job_id: job.id, succeeded, finished_epoch: this.now(), summary } });
     this.store.add_event(this.id, this.now(), succeeded ? "info" : "error", succeeded ? `Update finished: ${summary}` : `Update failed: ${summary}`);
-    await this.read();
-    if (succeeded) this.on_updated(this);
+    const changed = await this.read();
+    if (succeeded || changed) this.on_updated(this);
   }
 }
 
