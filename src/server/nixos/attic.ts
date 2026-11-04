@@ -165,17 +165,20 @@ export function target_row(settings: CacheSettings, name: string, facts: TargetF
   if (facts === undefined) return row;
   if (facts.error !== undefined) return { ...row, status: "failed", summary: `Evaluation failed: ${facts.error.trim()}`, eval_error: facts.error.trim() };
 
-  const built = facts.built === "1";
-  const own = /^\d+$/.test(facts.own ?? "") ? Number(facts.own) : 0;
   const missing = facts.missing;
+  // A target another of the cache's hosts built and pushed is absent from this store, but the cache holds its root.
+  const built_elsewhere = facts.built === "0" && missing.length === 0 && facts.cache_error === undefined;
+  const built = facts.built === "1" || built_elsewhere;
+  const own = /^\d+$/.test(facts.own ?? "") ? Number(facts.own) : 0;
   Object.assign(row, {
-    target: facts.target ?? null, built, local: facts.local !== "0", own,
+    target: facts.target ?? null, built, local: facts.local !== "0" && !built_elsewhere, own,
     missing_count: missing.length, missing: missing.slice(0, settings.missing_limit),
   });
   if (facts.cache_error !== undefined) return { ...row, pushed: "Unknown", summary: `Could not query the cache: ${facts.cache_error.trim()}` };
 
   // An unbuilt target was checked by its root path alone, so its count says nothing about the closure.
-  if (!built) row.pushed = missing.length > 0 ? "No" : "Root only";
+  if (!built) row.pushed = "No";
+  else if (built_elsewhere) row.pushed = "Yes";
   else row.pushed = missing.length > 0 ? `${missing.length} of ${own} missing` : `All ${own}`;
   row.pushed_ok = built && missing.length === 0;
   if (row.pushed_ok) {

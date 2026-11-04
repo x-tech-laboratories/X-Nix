@@ -93,7 +93,9 @@ checking again every cycle.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
-whose agent is not connected reads as unreachable.
+whose agent is not connected reads as unreachable. A deployment's `build_agent` and a cache's `host` may
+also list several hosts, most preferred first: each job runs on the first whose agent is connected,
+else on the first that can be woken, so a build moves to a faster machine whenever it is up.
 
 | Setting             | Default                           | Meaning                                                              |
 | ------------------- | --------------------------------- | -------------------------------------------------------------------- |
@@ -115,7 +117,7 @@ whose agent is not connected reads as unreachable.
 | `rebuild_args`      | none                              | Arguments after the switch.                                          |
 | `eval_agent`        | the host                          | The host that evaluates, for a host too small to evaluate itself.    |
 | `build_host`        | none                              | `--build-host` for the switch.                                       |
-| `build_agent`       | the switch agent                  | The host that runs Build, so one host can warm the cache for others. |
+| `build_agent`       | the switch agent                  | The host that runs Build, or a list of them most preferred first, so one host can warm the cache for others. |
 | `build_args`        | `--keep-going --print-build-logs` | Arguments for Build.                                                 |
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache`             | none                              | The id of the cache that builds this host's system (see Caches); it gives the `cache_url`, and takes the place of `build_at`, `build_agent` and `build_root_dir`. |
@@ -306,7 +308,7 @@ PATH; elsewhere, a host without it fails the job with a message saying so.
 | ---------------- | --------------------------------- | ----------------------------------------------------------------------- |
 | `id`             | required                          | Letters, digits, `-` and `_`.                                           |
 | `name`           | the id                            | What the page calls it.                                                 |
-| `host`           | the server's own host             | The host that evaluates, builds and pushes.                             |
+| `host`           | the server's own host             | The host that evaluates, builds and pushes, or a list of them most preferred first; each needs `build_root_dir` and what `push_command` uses. |
 | `flake`          | `/etc/nixos`                      | The flake reference.                                                    |
 | `configurations` | none                              | `nixosConfigurations` names, tracked by their system toplevel.          |
 | `installables`   | none                              | Any other derivation, as a name and its flake attribute.                |

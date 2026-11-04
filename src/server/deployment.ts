@@ -690,7 +690,7 @@ export class Deployment {
     const target = this.cached_target();
     if (building === null || target === null) return null;
     // Checked from the cache's host, which is awake, unlike a switching host that may sleep until its run wakes it.
-    const holds = await this.cache_holds(target, building.cache.settings.host).catch(() => true);
+    const holds = await this.cache_holds(target, building.cache.host(false)).catch(() => true);
     if (holds) return null;
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     const job_id = this.store.create_job({
@@ -731,11 +731,11 @@ export class Deployment {
     if (build.state === "failed") return this.end_cache_build(job, `The build of ${what} failed: ${build.error}`);
     // The cache builds the flake's head, which may have moved past the evaluation this switch fetches; the switch then
     // takes what the cache built from the same flake, unless a pin holds the deployment at another revision.
-    if (!(await this.cache_holds(waiting.target, cache.settings.host).catch(() => false))) {
+    if (!(await this.cache_holds(waiting.target, cache.host(false)).catch(() => false))) {
       const built = parse_report(build.output).targets.get(waiting.target_name)?.target ?? null;
       const follows_head = cache.settings.flake === this.settings.flake && this.pin() === null;
       const usable = built !== null && built !== waiting.target && is_store_path(built) && follows_head
-        && (await this.cache_holds(built, cache.settings.host).catch(() => false));
+        && (await this.cache_holds(built, cache.host(false)).catch(() => false));
       // Either way the evaluation is behind the flake, so the next cycle evaluates afresh.
       this.force_eval = true;
       if (!usable) return this.end_cache_build(job, `The build of ${what} finished, but the cache still lacks ${waiting.target}; evaluate again and switch`);
@@ -793,10 +793,15 @@ export class Deployment {
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
+  // The hosts that may run Build, most preferred first.
+  build_agents(): (string | null)[] {
+    return this.settings.build_agents.length > 0 ? this.settings.build_agents : [this.settings.host];
+  }
+
   // The host whose agent runs a job of this kind; the build may run apart from the switch.
   agent_for(kind: JobKind): string | null {
     if (kind === "eval") return this.settings.eval_agent ?? this.settings.host;
-    if (kind === "build") return this.settings.build_agent ?? this.settings.host;
+    if (kind === "build") return this.agents.pick(this.build_agents());
     if (kind === "reboot" || kind === "diff") return this.settings.host;
     return this.settings.switch_agent ?? this.settings.host;
   }
@@ -884,7 +889,7 @@ export class Deployment {
     }
     this.store.add_event(this.id, this.now(), event.level, event.text);
     // A build on the host itself is compared with the running system at once, so the page shows what a switch changes.
-    if (job.kind === "build" && finished.state === "succeeded" && this.agent_for("build") === this.settings.host) await this.compute_diff(false, "schedule");
+    if (job.kind === "build" && finished.state === "succeeded" && job.agent === this.settings.host) await this.compute_diff(false, "schedule");
   }
 
   // Reads a finished switch's marker lines, giving its job the reason it was refused or rolled back; null when plain.

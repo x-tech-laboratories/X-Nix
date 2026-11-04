@@ -361,6 +361,21 @@ describe("actions", () => {
     expect(make_deployment({ build_agent: "builder" }).deployment.agent_for("build")).toBe("builder");
     expect(make_deployment({ build_agent: "builder" }).deployment.agent_for("switch")).toBeNull();
   });
+
+  it("runs the build on the most preferred build agent that is connected, else one that can be woken", () => {
+    const agents = new AgentPool("server", new FakeAgent());
+    const settings = deployment_settings({ id: "pi", host: "pi", build_agent: ["odin", "thor", "server"] });
+    const deployment = new Deployment(settings, { store: new Store(":memory:"), agents, now: () => clock.now });
+    expect(deployment.agent_for("build")).toBe("server");
+
+    agents.add("odin", new FakeAgent());
+    expect(deployment.agent_for("build")).toBe("odin");
+
+    agents.set_wake(new Map([["thor", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 60, via: null }]]));
+    agents.remove("odin");
+    expect(agents.pick(["odin", "thor"])).toBe("thor");
+    expect(agents.pick(["odin", "thor"], false)).toBe("odin");
+  });
 });
 
 // ── Job polling ──────────────────────────────────────────────────────────────

@@ -117,6 +117,11 @@ export class Cache {
     return this.store.running_job(this.id, cache_job_kinds);
   }
 
+  // The host that runs the cache's next job: its most preferred host that is up, or that can be woken when waking is allowed.
+  host(wake = true): string | null {
+    return this.agents.pick(this.settings.hosts, wake);
+  }
+
   // Whether the cache is waiting on a long run, so the poller looks again sooner.
   busy(): boolean {
     return this.running_job() !== null;
@@ -337,16 +342,18 @@ export class Cache {
 
   private async launch(kind: JobKind, operation: Operation, trigger = kind === "check" ? "schedule" : "manual"): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    // A sleeping host is woken for a build or push, but not for the periodic check.
+    const wake = kind !== "check";
+    const host = this.host(wake);
     let waking: Promise<void> | null;
     try {
-      // A sleeping host is woken for a build or push, but not for the periodic check.
-      ({ waking } = await start_run(this.agents, this.settings.host, run_id, operation, null, kind !== "check"));
+      ({ waking } = await start_run(this.agents, host, run_id, operation, null, wake));
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error), unreachable: error instanceof AgentError && error.unreachable };
     }
-    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.settings.host, run_id, trigger, started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: host, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
-      track_wake(this.store, job_id, this.settings.host ?? this.agents.own_host, waking, this.now, (error) => {
+      track_wake(this.store, job_id, host ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${kind}: ${error}`);
       });
     }

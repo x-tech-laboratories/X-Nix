@@ -175,6 +175,8 @@ export interface DeploymentView {
   sync_pending: boolean;
   // The hosts other than the deployment's own that its jobs run on.
   agents: { eval: string | null; build: string | null; switch: string | null };
+  // The hosts Build runs on, most preferred first.
+  build_agents: string[];
   schedule: { build: string | null };
   auto_switch: boolean;
   // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
@@ -211,7 +213,10 @@ export interface FleetView {
 export interface CacheView {
   id: string;
   name: string;
+  // The host its next job runs on, picked from hosts.
   host: string | null;
+  // The hosts it builds on, most preferred first; this server when empty.
+  hosts: string[];
   flake: string;
   flake_id: string | null;
   cache_url: string;
@@ -269,6 +274,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     pin_overridden: deployment.pin_overridden(),
     sync_pending: deployment.sync_pending(),
     agents: { eval: deployment.agent_for("eval"), build: deployment.agent_for("build"), switch: deployment.agent_for("switch") },
+    build_agents: settings.build_agents,
     schedule: { build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
     switch_from_cache: settings.switch_from_cache,
@@ -298,7 +304,8 @@ function cache_view(cache: Cache, store_state: Store, deployments: Iterable<Depl
   return {
     id: settings.id,
     name: settings.name,
-    host: settings.host,
+    host: cache.host(),
+    hosts: settings.hosts,
     flake: settings.flake,
     flake_id: settings.flake_id,
     cache_url: settings.cache_url,

@@ -257,7 +257,8 @@ function details(deployment: Deployment): HTMLElement {
     ["Last read", when(reading?.checked_epoch)],
   ];
   if (deployment.agents.eval !== deployment.host) rows.push(["Evaluates on", deployment.agents.eval ?? "this server"]);
-  if (deployment.agents.build !== deployment.host) rows.push(["Builds on", deployment.agents.build ?? "this server"]);
+  if (deployment.build_agents.length > 1) rows.push(["Builds on", deployment.build_agents.join(", then ")]);
+  else if (deployment.agents.build !== deployment.host) rows.push(["Builds on", deployment.agents.build ?? "this server"]);
   if (deployment.agents.switch !== deployment.host) rows.push(["Switches from", deployment.agents.switch ?? "this server"]);
   const build_at = deployment.schedule.build;
   if (build_at !== null) rows.push(["Daily build", h("span", {}, `at ${build_at}, last slot `, when(evaluation.scheduled.build))]);

@@ -198,7 +198,7 @@ function server_details(cache: Cache): HTMLElement[] {
 function details(cache: Cache): HTMLElement {
   const code = (text: string) => h("code", {}, text);
   const rows: Parameters<typeof facts>[0] = [
-    ["Builds on", cache.host ?? "this server"],
+    ["Builds on", cache.hosts.length === 0 ? "this server" : cache.hosts.join(", then ")],
     ["Flake", flake_link(cache.flake_id, cache.flake)],
     ["Cache", code(cache.cache_url)],
     ["Checked every", `${Math.round(cache.interval / 60)} minutes`],

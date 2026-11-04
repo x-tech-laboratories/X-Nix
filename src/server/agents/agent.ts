@@ -146,6 +146,15 @@ export class AgentPool {
     return !this.agents.has(name) && this.wake_settings.has(name);
   }
 
+  // The first host in order of preference whose agent is connected, else the first that can be woken, else the first.
+  pick(ranked: (string | null)[], wake = true): string | null {
+    const hosts = ranked.length === 0 ? [null] : ranked;
+    const connected = hosts.findIndex((host) => this.agents.has(host ?? this.own_host));
+    if (connected !== -1) return hosts[connected];
+    const wakeable = wake ? hosts.findIndex((host) => this.can_wake(host)) : -1;
+    return hosts[wakeable === -1 ? 0 : wakeable];
+  }
+
   // Wakes a host and starts a long run on it, counting the run as starting until then; rejects with why it did not start.
   start_when_awake(host: string | null, run_id: string, operation: Operation, stdin: string | null = null): Promise<void> {
     this.starting.add(run_id);

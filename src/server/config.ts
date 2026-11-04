@@ -108,7 +108,8 @@ export interface DeploymentSettings {
   nix_args: string[];
   rebuild_args: string[];
   build_host: string | null;
-  build_agent: string | null;
+  // The hosts that run Build, most preferred first; the deployment's own host when empty.
+  build_agents: string[];
   build_args: string[];
   build_root_dir: string | null;
   // The cache's URL, taken from the cache the deployment names when it names one.
@@ -159,8 +160,8 @@ export interface FleetSettings {
 export interface CacheSettings {
   id: string;
   name: string;
-  // The host that evaluates, builds and pushes; the server's own host when null.
-  host: string | null;
+  // The hosts that evaluate, build and push, most preferred first; the server's own host when empty.
+  hosts: string[];
   flake: string;
   flake_id: string | null;
   // nixosConfigurations names, tracked by their system toplevel.
@@ -429,7 +430,7 @@ export function cache_settings(entry: unknown, index = 0, flakes = new Map<strin
   return {
     id,
     name: read.text("name") ?? id,
-    host: read.text("host"),
+    hosts: read.ranked("host"),
     ...resolve_flake(read.text("flake") ?? "/etc/nixos", flakes),
     configurations,
     installables,
@@ -479,6 +480,7 @@ export function deployment_settings(
   if (of_host !== undefined) throw new ConfigError(`\`${of_host}\` of ${read.owner} belongs to its host: set it under hosts`);
   const host = host_of(read.text("host"));
   const switch_agent = read.text("switch_agent");
+  const build_agents = read.ranked("build_agent");
   const eval_interval = read.duration("eval_interval", "1h");
   const cache_id = read.text("cache");
   const cache = cache_id === null ? null : caches.get(cache_id) ?? null;
@@ -516,7 +518,7 @@ export function deployment_settings(
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
     rebuild_args: read.list("rebuild_args", []),
     build_host: read.text("build_host"),
-    build_agent: read.text("build_agent") ?? switch_agent,
+    build_agents: build_agents.length > 0 || switch_agent === null ? build_agents : [switch_agent],
     build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
     build_root_dir: read.text("build_root_dir"),
     cache_url,
@@ -605,6 +607,15 @@ class Reader {
     if (value === undefined || value === null) return fallback;
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new ConfigError(`\`${key}\` of ${this.owner} must be a list of text`);
     return value;
+  }
+
+  // One host name, or a list of them in order of preference.
+  ranked(key: string): string[] {
+    const value = this.values[key];
+    if (value === undefined || value === null || value === "") return [];
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value) && value.every((item) => typeof item === "string" && item !== "")) return value;
+    throw new ConfigError(`\`${key}\` of ${this.owner} must be a host name or a list of host names, most preferred first`);
   }
 
   // A list of http or https URLs.

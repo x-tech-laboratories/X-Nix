@@ -218,6 +218,8 @@ export interface Deployment {
   pin_overridden: boolean;
   sync_pending: boolean;
   agents: { eval: string | null; build: string | null; switch: string | null };
+  // The hosts Build runs on, most preferred first.
+  build_agents: string[];
   schedule: { build: string | null };
   auto_switch: boolean;
   switch_from_cache: boolean;
@@ -356,7 +358,10 @@ export interface CacheServerReading {
 export interface Cache {
   id: string;
   name: string;
+  // The host its next job runs on, picked from hosts.
   host: string | null;
+  // The hosts it builds on, most preferred first; this server when empty.
+  hosts: string[];
   flake: string;
   flake_id: string | null;
   cache_url: string;

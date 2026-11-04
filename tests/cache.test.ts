@@ -41,6 +41,7 @@ const metadata = line("@flake", "metadata", JSON.stringify({ lastModified: 1, lo
 interface Harness {
   cache: Cache;
   agent: FakeAgent;
+  agents: AgentPool;
   store: Store;
   // What each URL the cache server is asked for answers, by URL; a missing one cannot be reached.
   answers: Map<string, [status: number, body: string]>;
@@ -61,8 +62,9 @@ function make_cache(values: Record<string, unknown> = {}): Harness {
   const store = new Store(":memory:");
   const agent = new FakeAgent();
   const answers = new Map<string, [number, string]>([["https://cache.example/fleet/nix-cache-info", [200, cache_info]]]);
-  const cache = new Cache(settings(values), { store, agents: new AgentPool("host", agent), now: () => clock.now, fetch: fake_fetch(answers) });
-  return { cache, agent, store, answers };
+  const agents = new AgentPool("host", agent);
+  const cache = new Cache(settings(values), { store, agents, now: () => clock.now, fetch: fake_fetch(answers) });
+  return { cache, agent, agents, store, answers };
 }
 
 // Launches a check and ends it with this output.
@@ -192,12 +194,28 @@ describe("rows", () => {
       + line("Beta", "target", beta) + line("Beta", "built", 0) + line("Beta", "own", 1));
     expect(harness.cache.reading()?.status).toBe("warning");
     expect(rows(harness).Alpha).toMatchObject({ built: false, pushed: "No", summary: "Not built from the latest flake" });
-    expect(rows(harness).Beta.pushed).toBe("Root only");
+    expect(rows(harness).Beta.built).toBe(true);
+  });
+
+  it("run on the most preferred of their hosts that is connected", async () => {
+    const harness = make_cache({ host: ["odin", "host"] });
+    await harness.cache.cycle();
+    expect(harness.store.jobs({ include_evaluations: true })[0].agent).toBe("host");
+
+    harness.agents.add("odin", new FakeAgent());
+    expect(harness.cache.host()).toBe("odin");
+  });
+
+  it("count a target another host built and pushed as kept only in the cache", async () => {
+    const harness = make_cache({ configurations: ["Alpha"], installables: {} });
+    await check(harness, line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1));
+    expect(harness.cache.reading()?.status).toBe("online");
+    expect(rows(harness).Alpha).toMatchObject({ built: true, local: false, pushed: "Yes", summary: "Pushed, kept only in the cache" });
   });
 
   it("take their pending status from pending_status", async () => {
     const harness = make_cache({ configurations: ["Alpha"], installables: {}, pending_status: "failed" });
-    await check(harness, line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1));
+    await check(harness, line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1) + line("Alpha", "missing", alpha));
     expect(harness.cache.reading()?.status).toBe("failed");
   });
 
@@ -283,7 +301,7 @@ describe("checks", () => {
 describe("actions", () => {
   async function checked(values: Record<string, unknown> = {}, alpha_built = true): Promise<Harness> {
     const harness = make_cache(values);
-    const alpha_lines = alpha_built ? built("Alpha", alpha, 1, [alpha]) : line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1);
+    const alpha_lines = alpha_built ? built("Alpha", alpha, 1, [alpha]) : line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1) + line("Alpha", "missing", alpha);
     await check(harness, alpha_lines + built("Beta", beta, 3) + metadata);
     return harness;
   }
@@ -405,6 +423,13 @@ describe("config", () => {
   it("needs a cache_url and something to track", () => {
     expect(() => cache_settings({ id: "c", configurations: ["A"] })).toThrow(ConfigError);
     expect(() => cache_settings({ id: "c", cache_url: "https://c" })).toThrow(ConfigError);
+  });
+
+  it("takes one host or a list of them, most preferred first", () => {
+    expect(settings().hosts).toEqual([]);
+    expect(settings({ host: "odin" }).hosts).toEqual(["odin"]);
+    expect(settings({ host: ["odin", "heimdall"] }).hosts).toEqual(["odin", "heimdall"]);
+    expect(() => settings({ host: ["odin", 3] })).toThrow("must be a host name or a list of host names");
   });
 
   it("shares one id space with deployments", () => {
