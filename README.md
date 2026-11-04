@@ -193,8 +193,8 @@ The config file may list `hosts`, each a machine by the name its agent answers t
 deployment names needs no entry of its own, and the server's own host is the one named by
 `X_NIX_SERVER_NAME`. A host holds what is true of the machine whatever runs on it: its agent's key,
 how it is woken and kept awake, its Nix store and its boot entries. Every `interval` its agent
-reads the store and the boot entries, and the Hosts, Store and Boot pages show them, with Collect
-Garbage, Reboot and Set next boot. A deployment's Reboot reboots its host.
+reads the store and the boot entries, and the host's page shows them on its Store and Boot tabs,
+with Collect Garbage, Reboot and Set next boot. A deployment's Reboot reboots its host.
 
 | Setting        | Default               | Meaning                                                           |
 | -------------- | --------------------- | ----------------------------------------------------------------- |
@@ -207,7 +207,7 @@ Garbage, Reboot and Set next boot. A deployment's Reboot reboots its host.
 | `job_poll`     | `30s`                 | How often a running collection is read.                           |
 | `require_sudo` | `true`                | Run switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`, and read the boot entries with it first. |
 | `gc`           | the defaults below    | How the Nix store is watched, or `false` to leave it alone.       |
-| `boot`         | `true`                | Read the boot entries, and let the Boot page set the next boot.   |
+| `boot`         | `true`                | Read the boot entries, and let the Boot tab set the next boot.    |
 
 ### Store
 
@@ -236,7 +236,7 @@ the host's, set by these keys of `gc`:
 
 Every cycle also reads the host's boot loader: systemd-boot through `bootctl list`, GRUB from its
 environment block and `grub.cfg`, or any other EFI loader through `efibootmgr`, with the default
-and the one-shot next entry. The Boot page sets the next boot with the loader's own one-shot tool
+and the one-shot next entry. The Boot tab sets the next boot with the loader's own one-shot tool
 (`bootctl set-oneshot`, `grub-reboot` or `efibootmgr --bootnext`), and can reboot into it at once.
 Reading `/boot` usually needs root, so the read tries `sudo -n` first and falls back to reading
 unprivileged.

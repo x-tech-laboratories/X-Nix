@@ -4,7 +4,6 @@ import { api, LoginNeeded } from "./api.ts";
 import { h } from "./dom.ts";
 import { current_route } from "./router.ts";
 import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
-import { boot_view, boots_view } from "./views/boot.ts";
 import { builds_view } from "./views/builds.ts";
 import { cache_view, caches_view } from "./views/cache.ts";
 import { closure_view } from "./views/closure.ts";
@@ -15,7 +14,6 @@ import { fleet_run_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
 import { provision_view } from "./views/provision.ts";
-import { store_view, stores_view } from "./views/store.ts";
 import type { View } from "./views/shared.ts";
 import "./halon-tokens.css";
 import "./halon.css";
@@ -31,8 +29,12 @@ let first_view = true;
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 
+// Old addresses whose pages now live under another sidebar section, which they light up.
+const parent_sections: Record<string, string> = { fleet: "deployments", store: "hosts", boot: "hosts" };
+
 function view_for(parts: string[]): View {
   const [section, id, page] = parts;
+  if (section === "hosts" && id && (page === "store" || page === "boot")) return host_view(id, page);
   if (section === "hosts" && id) return host_view(id);
   if (section === "hosts") return hosts_view();
   if (section === "flakes" && id) return flake_view(id);
@@ -47,10 +49,8 @@ function view_for(parts: string[]): View {
   if (section === "builds") return builds_view();
   if (section === "cache" && id) return cache_view(id);
   if (section === "cache") return caches_view();
-  if (section === "store" && id) return store_view(id);
-  if (section === "store") return stores_view();
-  if (section === "boot" && id) return boot_view(id);
-  if (section === "boot") return boots_view();
+  if ((section === "store" || section === "boot") && id) return host_view(id, section);
+  if (section === "store" || section === "boot") return hosts_view();
   if (section === "provision") return provision_view();
   return overview_view();
 }
@@ -61,8 +61,7 @@ function show(): void {
   current = view_for(route.parts);
   main.replaceChildren(current.root);
   document.title = `${current.title} · X-Nix`;
-  // Fleet runs live on the Deployments page, so their pages light it up.
-  const section = route.parts[0] === "fleet" ? "deployments" : route.parts[0] ?? "";
+  const section = parent_sections[route.parts[0] ?? ""] ?? route.parts[0] ?? "";
   for (const item of sidebar.querySelectorAll<HTMLAnchorElement>("a[data-section]")) {
     const active = item.dataset.section === section;
     item.classList.toggle("active", active);
