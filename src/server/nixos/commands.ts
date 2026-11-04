@@ -82,9 +82,11 @@ export function metadata_operation(settings: FlakeSettings): Operation {
   return { kind: "programs", steps: [{ argv: [...nix(settings), "flake", "metadata", "--json", "--no-write-lock-file", ...refresh, settings.url] }] };
 }
 
+// Updates every input of the lock, refetching each branch it follows rather than trusting nix's cached lookup of it,
+// which may be up to an hour old.
 export function update_operation(settings: FlakeSettings): Operation {
   if (!pushes_to_github(settings)) {
-    return { kind: "programs", steps: [{ argv: [...sudo(settings), ...nix(settings), "flake", "update", "--flake", settings.url] }] };
+    return { kind: "programs", steps: [{ argv: [...sudo(settings), ...nix(settings), "flake", "update", "--refresh", "--flake", settings.url] }] };
   }
   const repository = github_repository(settings.url)!;
   const [name, email = ""] = settings.commit_author.split("<", 2);

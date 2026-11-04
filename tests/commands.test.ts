@@ -245,7 +245,7 @@ describe("the update", () => {
   const github = { url: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" };
 
   it("updates a local flake in place", () => {
-    expect(update_operation(flake())).toEqual({ kind: "programs", steps: [{ argv: ["sudo", "-n", ...nix, "flake", "update", "--flake", "/etc/nixos"] }] });
+    expect(update_operation(flake())).toEqual({ kind: "programs", steps: [{ argv: ["sudo", "-n", ...nix, "flake", "update", "--refresh", "--flake", "/etc/nixos"] }] });
   });
 
   it("updates a github: flake unprivileged, pushing over SSH with pinned host keys", async () => {

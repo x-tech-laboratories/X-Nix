@@ -129,7 +129,7 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
     const branch = operation.branch === null ? [] : ["--branch", operation.branch];
     const cloned = await git(["clone", "--quiet", "--depth", "1", ...branch, operation.ssh_url, repository]);
     if (cloned.exit_code !== 0) return cloned.exit_code;
-    const updated = await context.program(context, [...operation.nix, "flake", "update", "--flake", repository], { echo: true, stdout: "both", stderr: "both" });
+    const updated = await context.program(context, [...operation.nix, "flake", "update", "--refresh", "--flake", repository], { echo: true, stdout: "both", stderr: "both" });
     if (updated.exit_code !== 0) return 1;
     const unchanged = await context.program(context, ["git", "-C", repository, "diff", "--quiet", "--", "flake.lock"]);
     if (unchanged.exit_code === 0) {

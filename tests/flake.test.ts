@@ -81,7 +81,7 @@ describe("the update", () => {
 
     const outcome = await flake.update();
     expect(outcome.ok).toBe(true);
-    expect(shown_command(flake.running_job()?.command ?? "")).toContain("sudo -n nix --extra-experimental-features 'nix-command flakes' flake update --flake /etc/nixos");
+    expect(shown_command(flake.running_job()?.command ?? "")).toContain("sudo -n nix --extra-experimental-features 'nix-command flakes' flake update --refresh --flake /etc/nixos");
     agent.end(agent.last_run("flake update")!, "• Updated input 'nixpkgs'\n", 0);
     await flake.cycle();
 
