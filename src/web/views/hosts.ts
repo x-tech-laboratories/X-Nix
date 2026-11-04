@@ -171,7 +171,7 @@ function hosts_table(rows: Row[], selected: Set<string>, changed: () => void): H
       changed();
     },
   });
-  const none = h("span", { class: "muted" }, "—");
+  const none = () => h("span", { class: "muted" }, "—");
   return data_table<Row>([
     { label: "Pick", cell: pick },
     { label: "Host", cell: ({ host }) => h("span", {}, h("a", { href: link(["hosts", host.name]) }, host.display_name), host.own ? h("span", { class: "muted small" }, " this server") : null) },
@@ -179,7 +179,7 @@ function hosts_table(rows: Row[], selected: Set<string>, changed: () => void): H
     { label: "Tags", cell: ({ deployment }) => (deployment === null ? "" : tag_chips(deployment.tags)) },
     { label: "NixOS", cell: ({ deployment }) => deployment?.reading?.version ?? "—" },
     { label: "Updated", cell: ({ deployment }) => (deployment?.reading?.switched_epoch ? h("span", { title: stamp(deployment.reading.switched_epoch) }, age(deployment.reading.switched_epoch)) : "—") },
-    { label: "Pin", cell: ({ deployment }) => (deployment === null ? none : deployment.pin === null ? h("span", { class: "muted" }, "head") : h("code", {}, short_revision(deployment.pin))) },
+    { label: "Pin", cell: ({ deployment }) => (deployment === null ? none() : deployment.pin === null ? h("span", { class: "muted" }, "head") : h("code", {}, short_revision(deployment.pin))) },
     { label: "Store used", cell: ({ host }) => store_used(host) },
     { label: "Waiting on", cell: ({ deployment }) => (deployment === null ? h("span", { class: "muted" }, "Not deployed") : waiting_on(deployment)) },
     { label: "Running", cell: ({ host, deployment }) => {

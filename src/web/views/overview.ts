@@ -81,7 +81,8 @@ function reasons({ host, deployment }: Row): [text: string, tone: "warn" | "bad"
     if (tone === "warn" || tone === "bad") found.push([drift, tone]);
     if (deployment.reading?.reboot_required === true) found.push(["Reboot needed", "warn"]);
   }
-  const store = host.gc === null ? "none" : last_collection_tone(host);
+  // A host whose agent is offline has never had a collection read, which says nothing about its store.
+  const store = host.gc === null || agent_offline(host) ? "none" : last_collection_tone(host);
   if (store === "warn" || store === "bad") found.push(["Garbage collection", store]);
   return found;
 }

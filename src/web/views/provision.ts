@@ -96,7 +96,7 @@ function install_fields(provisioning: Provisioning, health: Health, agents: Agen
   address.addEventListener("input", sync);
   confirm.addEventListener("input", sync);
 
-  const form = h("form", { onsubmit: async (event: Event) => {
+  const form = h("form", { class: "stack tight", onsubmit: async (event: Event) => {
     event.preventDefault();
     submit.disabled = true;
     try {
@@ -188,7 +188,7 @@ function media_fields(deployments: Deployment[], done: () => Promise<unknown>): 
   if (deployments.length > 0) deployment.value = deployments[0].id;
   sync();
 
-  return h("form", { onsubmit: async (event: Event) => {
+  return h("form", { class: "stack tight", onsubmit: async (event: Event) => {
     event.preventDefault();
     submit.disabled = true;
     try {
