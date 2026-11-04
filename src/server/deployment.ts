@@ -97,6 +97,8 @@ export interface SwitchWait {
   target: string | null;
   // When the step began, so a wait for the cache gives up in time.
   since_epoch: number;
+  // How much of the step's job output the switch's job already shows; absent for none.
+  copied?: number;
 }
 
 export interface Message {
@@ -773,6 +775,7 @@ export class Deployment {
     }
     const build = this.store.job(waiting.step_job_id);
     if (build === null) return this.end_wait(job, "The build is gone from the history");
+    this.copy_step_output(job, waiting, build);
     const where = this.host_name(build.agent);
     if (build.state === "running") return this.store.set_progress(job.id, `Building on ${where}${build.progress ? `: ${build.progress}` : ""}`);
     if (build.state === "failed") return this.end_wait(job, `The build on ${where} failed: ${build.error}`);
@@ -823,6 +826,7 @@ export class Deployment {
     }
     const build = this.store.job(waiting.step_job_id);
     if (build === null) return this.end_wait(job, `The build of ${what} is gone from the history`);
+    this.copy_step_output(job, waiting, build);
     if (build.state === "running") return this.store.set_progress(job.id, `Building ${what}${build.progress ? `: ${build.progress}` : ""}`);
     if (build.state === "failed") return this.end_wait(job, `The build of ${what} failed: ${build.error}`);
     // nixos-rebuild substitutes what the cache built, or builds whatever it still lacks.
@@ -881,6 +885,17 @@ export class Deployment {
     this.store.append_output(job.id, `${reason}\n`);
     this.store.finish_job(job.id, "failed", null, reason, this.now());
     this.store.add_event(this.id, this.now(), "error", `${capitalise(job_noun(job.kind))} failed: ${reason}`);
+  }
+
+  // Shows in the switch's job what its step's job printed since the last poll, ending its last line once the step is done.
+  private copy_step_output(job: Job, waiting: SwitchWait, step: Job & { output: string }): void {
+    const copied = waiting.copied ?? 0;
+    // A running step's last line may not have ended yet, so only whole lines are shown until it is done.
+    const until = step.state === "running" ? step.output.lastIndexOf("\n") + 1 : step.output.length;
+    if (until <= copied) return;
+    const text = step.output.slice(copied, until);
+    this.store.append_output(job.id, text.endsWith("\n") ? text : `${text}\n`);
+    this.save_wait({ ...waiting, copied: until });
   }
 
   private save_wait(waiting: SwitchWait | null): void {
@@ -991,6 +1006,8 @@ export class Deployment {
     }
     // The job's progress names what is building rather than the last line printed.
     if (this.translation(job) !== null) this.store.set_progress(job.id, summarise(this.live_progress(job.id)));
+    // A switch waiting on this job shows its output as it comes.
+    if (waiting?.step_job_id === job.id) this.copy_step_output(this.store.job(waiting.job_id)!, waiting, this.store.job(job.id)!);
     if (followed.outcome === "running") return this.tend_switch(job);
     this.tended_switches.delete(job.id);
     this.http_checks_started.delete(job.id);
@@ -1015,7 +1032,7 @@ export class Deployment {
     if (job.kind === "build" && finished.state === "succeeded" && job.agent === this.settings.host) await this.compute_diff(false, "schedule");
     // A switch waiting on this build moves on as soon as it ends.
     const switching = waiting?.step === "build" && waiting.step_job_id === job.id ? this.store.job(waiting.job_id) : null;
-    if (switching != null) await this.advance_wait(switching, waiting!);
+    if (switching != null) await this.advance_wait(switching, this.evaluation().switch_wait!);
   }
 
   // Reads a finished switch's marker lines, giving its job the reason it was refused or rolled back; null when plain.

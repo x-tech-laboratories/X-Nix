@@ -584,6 +584,26 @@ describe("switch from cache", () => {
     expect(store.job(late.job_id!)!.error).toContain("was built but never reached the cache");
   });
 
+  it("shows the output of the build it waits on as the build prints it", async () => {
+    const harness = make_deployment(from_cache);
+    await collect(harness);
+    harness.agent.answers.push(['"kind":"cache_holds"', result(1)]);
+    const outcome = await harness.deployment.act("switch");
+    const build = harness.agent.last_run('"kind":"build"')!;
+
+    harness.agent.write(build, "building hello\nhalf");
+    await harness.deployment.cycle();
+    const running = harness.store.job(outcome.job_id!)!.output;
+    expect(running).toMatch(/first, job #\d+\nbuilding hello\n$/);
+
+    harness.agent.end(build, " done\nerror: build failed", 1);
+    await harness.deployment.cycle();
+    await harness.deployment.cycle();
+    const output = harness.store.job(outcome.job_id!)!.output;
+    expect(output.match(/building hello/g)).toHaveLength(1);
+    expect(output).toContain("building hello\nhalf done\nerror: build failed\nThe build on host failed");
+  });
+
   it("fails the switch without starting it when the build it ran fails", async () => {
     const harness = make_deployment(from_cache);
     await collect(harness);
@@ -701,8 +721,11 @@ describe("switch from cache", () => {
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
     expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
 
+    harness.agent.write(build, "building host\n");
+    await harness.cache.cycle();
     await harness.deployment.cycle();
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+    expect(harness.store.job(job.id)!.output).toMatch(/job #\d+\nbuilding host\n$/);
 
     harness.agent.answers.splice(0);
     harness.agent.end(build, "", 0);

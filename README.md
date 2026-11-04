@@ -85,7 +85,7 @@ Build or Build all (or anything else that pushes, such as `attic watch-store`), 
 `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
 
 A switch, boot, test or dry activation, started by hand, by a fleet run or by the drift, first runs what it depends on.
-Its job shows each step, and fails without touching the host when one fails:
+Its job shows each step, with the output of the build it waits on as it prints, and fails without touching the host when one fails:
 
 - With `switch_from_cache` and no successful evaluation, it evaluates the flake first, unless the deployment's `cache`
   evaluates for it, whose build then names the system.
