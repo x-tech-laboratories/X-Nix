@@ -17,8 +17,8 @@ export async function system_tab(deployment: Deployment, refresh: () => Promise<
   return [
     tiles(deployment),
     section("Findings", messages_list(deployment.reading?.messages ?? [])),
-    changes_section(deployment, refresh),
     section("Details", details(deployment)),
+    changes_section(deployment, refresh),
     section("Pin", pin_form(deployment, refresh)),
     section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
     section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
@@ -27,7 +27,7 @@ export async function system_tab(deployment: Deployment, refresh: () => Promise<
 
 // The generations, read from the host on demand rather than on every refresh of the page.
 export function generations_section(deployment: Deployment, refresh: () => Promise<unknown>): HTMLElement {
-  const generations = h("div");
+  const generations = h("div", { class: "stack" });
   const read = (quiet: boolean) => load(generations, async () => {
     const answer = await api<{ generations: Generation[] }>(`/api/deployments/${encodeURIComponent(deployment.id)}/generations`);
     return generations_table(deployment, answer.generations, async () => {

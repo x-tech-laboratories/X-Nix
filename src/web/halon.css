@@ -318,7 +318,12 @@ body.logged-out main { margin-left: var(--space-2); }
 
 /* ── Panels, tabs and headers ─────────────────────────────────────────────── */
 
+/* A panel and a stack space their children with their gap, so no block inside needs a margin of its own. */
 .panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-content: start;
   min-width: 0;
   padding: 14px var(--space-6);
   border: var(--border-width) solid var(--border-default);
@@ -326,10 +331,11 @@ body.logged-out main { margin-left: var(--space-2); }
   background-color: var(--surface-default);
   box-shadow: var(--shadow-card);
 }
-.panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-5); flex-wrap: wrap; min-height: var(--control-height); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap; min-height: var(--control-height); }
 .panel-tools { display: flex; gap: var(--space-4); align-items: center; flex-wrap: wrap; }
 .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
-.stack { display: grid; gap: var(--space-6); align-content: start; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); align-content: start; }
+.stack.tight { gap: var(--space-5); }
 
 .page-head { display: grid; gap: var(--space-4); }
 .page-title { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; }
@@ -369,7 +375,7 @@ body.logged-out main { margin-left: var(--space-2); }
 .tab:hover { background-color: var(--surface-navigation-hover); color: var(--text-heading); }
 .tab.active { background-color: var(--surface-default); color: var(--text-heading); box-shadow: inset 0 -2px 0 var(--accent), var(--shadow-tab); font-weight: 500; }
 
-.toolbar { display: flex; gap: var(--space-5); align-items: end; flex-wrap: wrap; margin-bottom: var(--space-5); }
+.toolbar { display: flex; gap: var(--space-5); align-items: end; flex-wrap: wrap; }
 .stepper { display: flex; gap: var(--space-4); align-items: center; }
 
 /* Status regions are tinted, and the text in them stays ordinary body text (§6.7). */
@@ -424,8 +430,8 @@ body.logged-out main { margin-left: var(--space-2); }
 .badge.tone-warn { background-color: var(--fill-warning); color: var(--text-on-light); }
 .badge.tone-none { background-color: var(--surface-secondary); color: var(--text-secondary); }
 .products { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
-.chips { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
-.chips.inline-chips { margin-top: 0; gap: var(--space-2); }
+.chips { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.chips.inline-chips { gap: var(--space-2); }
 /* A chip that picks what it names, such as a tag on the Hosts page. */
 button.chip { height: auto; border: var(--border-width) solid transparent; cursor: pointer; }
 button.chip:hover { border-color: var(--border-default); color: var(--text-heading); }
@@ -517,14 +523,14 @@ a.tile:hover { border-top-color: var(--border-hover); border-right-color: var(--
 .paths { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-1); }
 .path { overflow-wrap: anywhere; }
 
-.change-summary { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-5); }
+.change-summary { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 .tree { display: grid; gap: var(--space-1); font-size: var(--text-control); }
 .tree-folder > summary { cursor: pointer; padding: var(--space-1) 0; }
 .tree-children { display: grid; gap: var(--space-1); margin-left: var(--space-2); padding-left: var(--space-6); border-left: var(--border-width) solid var(--border-default); }
 .tree-file { display: flex; gap: var(--space-4); align-items: baseline; padding: var(--space-1) 0 var(--space-1) var(--space-6); flex-wrap: wrap; }
 .tree-name { font-family: var(--font-family-monospace); font-size: var(--text-caption); overflow-wrap: anywhere; }
 .closure-sizes { margin-left: var(--space-4); font-variant-numeric: tabular-nums; }
-.activities { list-style: none; padding: 0; margin: var(--space-5) 0 0; display: grid; gap: var(--space-2); font-size: var(--text-control); }
+.activities { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); font-size: var(--text-control); }
 .activities li { display: flex; gap: var(--space-4); align-items: baseline; flex-wrap: wrap; }
 
 /* ── Config forms ─────────────────────────────────────────────────────────── */

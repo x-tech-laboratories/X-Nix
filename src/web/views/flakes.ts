@@ -11,7 +11,7 @@ const status_tones: Record<Status, string> = { online: "good", info: "good", una
 // ── List ─────────────────────────────────────────────────────────────────────
 
 export function flakes_view(): View {
-  const list = h("div");
+  const list = h("div", { class: "stack" });
   const refresh = (quiet: boolean) => load(list, async () => {
     const flakes = await api<Flake[]>("/api/flakes");
     if (flakes.length === 0) return empty("No flakes yet.", "Name each flake and how it is updated under flakes in the config file, then name its id in each deployment's flake.");
@@ -75,9 +75,9 @@ export function flake_view(id: string): View {
     return [
       tiles(flake),
       section("Findings", messages_list(flake.reading?.messages ?? [])),
-      section("Locked inputs", (flake.reading?.inputs.length ?? 0) === 0 ? empty("Not read yet.") : inputs_table(flake)),
-      section("Used by", used_by(flake)),
       section("Details", details(flake)),
+      section("Used by", used_by(flake)),
+      section("Locked inputs", (flake.reading?.inputs.length ?? 0) === 0 ? empty("Not read yet.") : inputs_table(flake)),
       section("Jobs", jobs.length === 0 ? empty("No updates yet.") : jobs_table(jobs, false)),
       section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
     ];

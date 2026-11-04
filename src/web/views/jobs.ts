@@ -19,7 +19,7 @@ export function jobs_tabs(active: "jobs" | "builds"): HTMLElement {
 
 export function jobs_view(): View {
   const show_evaluations = current_route().query.get("evaluations") === "1";
-  const list = h("div");
+  const list = h("div", { class: "stack" });
   const refresh = (quiet: boolean) => load(list, async () => {
     const jobs = await api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`);
     return jobs.length === 0 ? empty("No jobs yet.", "Updates, builds, switches, reboots, collections, cache builds and pushes show here with their output.") : jobs_table(jobs, true);
@@ -92,7 +92,7 @@ function progress_view(progress: BuildProgress, running: boolean): HTMLElement {
   const downloading = activities.filter((activity) => activity.type !== build_activity_type);
   const of = (expected: number | null) => (expected === null ? "" : ` of ${expected}`);
   const built = Math.max(0, progress.builds_done - progress.builds_failed);
-  return h("div", {},
+  return h("div", { class: "stack tight" },
     h("div", { class: "tiles" },
       tile("Built", `${built}${of(progress.builds_expected)}`),
       tile("Building", String(building.length)),

@@ -50,8 +50,8 @@ export async function host_rows(): Promise<Row[]> {
 export function hosts_view(): View {
   const selected = new Set<string>();
   let rows: Row[] = [];
-  const table = h("div");
-  const runs = h("div");
+  const table = h("div", { class: "stack" });
+  const runs = h("div", { class: "stack" });
   const tags = h("div", { class: "chips" });
   const count = h("span", { class: "muted" });
   const search = h("input", { type: "search", class: "filter", placeholder: "web-* @canary", "aria-label": "Search" });
@@ -127,6 +127,7 @@ export function hosts_view(): View {
       stages.value = fleet.stages.join("\n");
       parallel.placeholder = String(fleet.parallel);
     }
+    tags.hidden = fleet.tags.length === 0;
     tags.replaceChildren(...fleet.tags.map((tag) => h("button", { type: "button", class: "chip", onclick: () => {
       search.value = `@${tag}`;
       void find();
@@ -141,7 +142,7 @@ export function hosts_view(): View {
     root: h("div", { class: "page" },
       h("h1", {}, "Hosts"),
       h("p", { class: "muted" }, "Each machine X-Nix reaches, and the NixOS system it runs against what its flake evaluates to. Search by a name glob or @tag, or tick hosts, to run one action across them."),
-      h("div", {},
+      h("div", { class: "stack tight" },
         h("form", { class: "toolbar", onsubmit: (event: Event) => {
           event.preventDefault();
           void find();

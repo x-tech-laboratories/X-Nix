@@ -11,7 +11,7 @@ const status_tones: Record<Status, string> = { online: "good", info: "good", una
 // ── List ─────────────────────────────────────────────────────────────────────
 
 export function caches_view(): View {
-  const list = h("div");
+  const list = h("div", { class: "stack" });
   const refresh = (quiet: boolean) => load(list, async () => {
     const caches = await api<Cache[]>("/api/caches");
     if (caches.length === 0) return empty("No caches yet.", "Name each building host, its flake, its targets and its Attic cache under caches in the config file.");
@@ -76,6 +76,7 @@ export function cache_view(id: string): View {
     return [
       tiles(cache),
       section("Findings", messages_list(cache.reading?.messages ?? [])),
+      section("Details", details(cache)),
       cache.server && section(h("span", {}, "Cache server ", status_badge(cache.server.status)), server_details(cache)),
       section("Tracked targets", rows.length === 0 ? empty("Not checked yet.") : targets_table(cache, rows)),
       cache.reading?.build_all && build_all_section(cache.reading.build_all),
@@ -83,7 +84,6 @@ export function cache_view(id: string): View {
         { label: "Target", cell: (item) => item.name },
         { label: "Store path", cell: (item) => h("code", {}, item.store_path) },
       ], missing, "Paths not in the cache")),
-      section("Details", details(cache)),
       section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false), h("a", { href: link(["builds"], { owner: cache.id }) }, "Build history")),
       section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
     ];

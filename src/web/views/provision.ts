@@ -17,11 +17,11 @@ const format_labels: Record<MediaFormat, string> = { iso: "Installer ISO", netbo
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export function provision_view(): View {
-  const install_form = h("div");
-  const media_form = h("div");
-  const installs = h("div");
-  const keys = h("div");
-  const media = h("div");
+  const install_form = h("div", { class: "stack" });
+  const media_form = h("div", { class: "stack" });
+  const installs = h("div", { class: "stack" });
+  const keys = h("div", { class: "stack" });
+  const media = h("div", { class: "stack" });
 
   const fetch_provisioning = () => api<Provisioning>("/api/provisioning");
   const refresh = (quiet: boolean): Promise<unknown> => Promise.all([

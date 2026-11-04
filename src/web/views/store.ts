@@ -16,8 +16,8 @@ export async function store_tab(host: Host): Promise<Child> {
   return [
     tiles(host),
     section("Findings", messages_list(store?.messages ?? [])),
-    section("Profiles", store === null || store.profiles.length === 0 ? empty("No profiles read yet.") : profiles_table(store.profiles)),
     section("Details", details(host)),
+    section("Profiles", store === null || store.profiles.length === 0 ? empty("No profiles read yet.") : profiles_table(store.profiles)),
     section("Collections", jobs.length === 0 ? empty("No collections run from here yet.") : jobs_table(jobs, false)),
   ];
 }

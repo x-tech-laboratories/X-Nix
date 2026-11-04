@@ -15,7 +15,7 @@ export function builds_view(): View {
   const owner = query.get("owner") ?? "";
   const target = query.get("target") ?? "";
   const filters = h("div", { class: "toolbar" });
-  const list = h("div");
+  const list = h("div", { class: "stack" });
 
   const refresh = (quiet: boolean) => load(list, async () => {
     const search = new URLSearchParams({ limit: "200" });

@@ -11,7 +11,7 @@ import { last_collection_tone } from "./store.ts";
 
 export function overview_view(): View {
   const summary = h("div", { class: "stack" });
-  const jobs = h("div");
+  const jobs = h("div", { class: "stack" });
   const server = h("p", { class: "muted" });
 
   const refresh = (quiet: boolean) => Promise.all([

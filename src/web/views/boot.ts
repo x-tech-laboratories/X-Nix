@@ -20,9 +20,9 @@ export async function boot_tab(host: Host, refresh: () => Promise<unknown>): Pro
       tile("Default", title_of(boot, boot.default)),
       tile("Next boot", next_boot_text(boot), boot.next ? "tile-info" : null),
     ),
+    section("Details", facts([["Booted system", host.system?.booted ? h("code", {}, host.system.booted) : "—"]], "rows")),
     section("Boot entries", boot.entries.length === 0 ? empty("No entries read.", "Reading them may need sudo for bootctl.") : entries_table(host, boot, refresh)),
     section("Changes", jobs.length === 0 ? empty("No next boot set from here yet.") : jobs_table(jobs, false)),
-    section("Details", facts([["Booted system", host.system?.booted ? h("code", {}, host.system.booted) : "—"]], "rows")),
   ];
 }
 
