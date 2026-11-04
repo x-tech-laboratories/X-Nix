@@ -426,6 +426,9 @@ body.logged-out main { margin-left: var(--space-2); }
 .products { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
 .chips { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
 .chips.inline-chips { margin-top: 0; gap: var(--space-2); }
+/* A chip that picks what it names, such as a tag on the Hosts page. */
+button.chip { height: auto; border: var(--border-width) solid transparent; cursor: pointer; }
+button.chip:hover { border-color: var(--border-default); color: var(--text-heading); }
 .stage-list { min-width: 260px; min-height: calc(3 * var(--control-height)); }
 .verdicts { display: flex; gap: var(--space-5); flex-wrap: wrap; font-size: var(--text-caption); margin-top: var(--space-4); align-items: center; }
 

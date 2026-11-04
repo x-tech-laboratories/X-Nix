@@ -29,11 +29,16 @@ export function drift_state(deployment: Deployment): [text: string, tone: "good"
   return up_to_date ? ["In sync", "good"] : ["Drifting", "warn"];
 }
 
+// The page a deployment is shown on: the System tab of its host's page.
+export function deployment_link(deployment: Deployment): string {
+  return deployment.host_name === null ? link(["deployments", deployment.id]) : link(["hosts", deployment.host_name]);
+}
+
 export function deployment_card(deployment: Deployment): HTMLElement {
   const [drift, tone] = drift_state(deployment);
   const reading = deployment.reading;
   const job = deployment.running_job;
-  return h("a", { class: `card tone-edge-${tone}`, href: link(["deployments", deployment.id]) },
+  return h("a", { class: `card tone-edge-${tone}`, href: deployment_link(deployment) },
     h("div", { class: "card-head" }, h("strong", {}, deployment.name), status_badge(reading?.status ?? null)),
     h("div", { class: "muted card-host" }, deployment.host ?? "this server"),
     h("dl", {},
@@ -76,7 +81,7 @@ export function fleet_status_table(deployments: Deployment[], selection: { selec
   });
   return data_table<Deployment>([
     ...(selection === null ? [] : [{ label: "Pick", cell: pick }]),
-    { label: "Deployment", cell: (deployment) => h("a", { href: link(["deployments", deployment.id]) }, deployment.name) },
+    { label: "Deployment", cell: (deployment) => h("a", { href: deployment_link(deployment) }, deployment.name) },
     { label: "Tags", cell: (deployment) => tag_chips(deployment.tags) },
     { label: "NixOS", cell: (deployment) => deployment.reading?.version ?? "—" },
     { label: "Updated", cell: (deployment) => (deployment.reading?.switched_epoch ? h("span", { title: stamp(deployment.reading.switched_epoch) }, age(deployment.reading.switched_epoch)) : "—") },
@@ -177,7 +182,7 @@ export function host_action_button(host: Host, action: Host["actions"][number], 
     await done();
   };
   return h("button", {
-    class: action.id === "reboot" ? "danger" : "accent solid",
+    class: action.id === "reboot" ? "danger" : null,
     disabled: action.refusal !== null,
     title: action.refusal,
     onclick: () => (action.confirm === null ? void run() : confirm_dialog(`${action.label} ${host.display_name}`, action.confirm, action.label, run)),

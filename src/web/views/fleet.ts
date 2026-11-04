@@ -1,4 +1,4 @@
-// The fleet runs: the table of them on the Deployments page, and one fleet run followed host by host.
+// The fleet runs: the table of them on the Hosts page, and one fleet run followed host by host.
 
 import { api, type FleetActionId, type FleetOutcome, type FleetRun } from "../api.ts";
 import { age, h, stamp } from "../dom.ts";
@@ -70,7 +70,7 @@ export function fleet_run_view(id: number): View {
   return {
     title: `Fleet run ${id}`,
     root: h("div", { class: "page" },
-      crumbs([["Deployments", link(["deployments"])], [`Run ${id}`, null]]),
+      crumbs([["Hosts", link(["hosts"])], [`Run ${id}`, null]]),
       h("header", { class: "page-head" }, h("h1", {}, `Fleet run ${id}`), buttons),
       body,
     ),

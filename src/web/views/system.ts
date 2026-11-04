@@ -1,195 +1,42 @@
-// The Deployments pages: every deployment in a table to run actions across, and one deployment with its drift, actions, pin, jobs and events.
+// The System tab of a host's page: the deployment it runs, with its drift, findings, pin, jobs, events and generations.
 
-import {
-  api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Generation, type Job,
-} from "../api.ts";
-import { age, h, stamp } from "../dom.ts";
+import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type Job } from "../api.ts";
+import { age, h, stamp, type Child } from "../dom.ts";
 import { link } from "../router.ts";
-import { confirm_dialog, crumbs, data_table, empty, facts, load, section, status_badge, toast } from "../ui.ts";
-import {
-  action_button, diff_view, drift_state, events_list, flake_link, fleet_status_table, jobs_table, messages_list, refresh_interval_in_milliseconds,
-  short_revision, tag_chips, tile,
-  type View,
-} from "./shared.ts";
-import { action_labels, runs_table } from "./fleet.ts";
+import { confirm_dialog, data_table, empty, facts, load, section, toast } from "../ui.ts";
+import { diff_view, drift_state, events_list, flake_link, jobs_table, messages_list, short_revision, tag_chips, tile } from "./shared.ts";
 
-// ── List ─────────────────────────────────────────────────────────────────────
+// ── Tab ──────────────────────────────────────────────────────────────────────
 
-// Every deployment in a table, picked by checkbox, glob or @tag to run one action across them, at once or stage by
-// stage, with the fleet runs below.
-export function deployments_view(): View {
-  const selected = new Set<string>();
-  let deployments: Deployment[] = [];
-  const table = h("div");
-  const runs = h("div");
-  const tags = h("div", { class: "chips" });
-  const count = h("span", { class: "muted" });
-  const selector = h("input", { type: "text", class: "filter", placeholder: "web-* @canary", "aria-label": "Selector" });
-  const staged = h("input", { type: "checkbox" });
-  const stages = h("textarea", { class: "stage-list", placeholder: "One stage per line, such as @canary", "aria-label": "Stages" });
-  const parallel = h("input", { type: "number", min: 1, step: 1, "aria-label": "At once" });
-  const buttons = h("div", { class: "head-actions" });
-  const run_section = section("Run on the picked", h("div", { class: "stack" },
-    h("div", { class: "toolbar" },
-      h("label", { class: "check" }, staged, "Staged rollout"),
-      h("label", { class: "field" }, h("span", { class: "field-label" }, "Stages"), stages),
-      h("label", { class: "field" }, h("span", { class: "field-label" }, "At once"), parallel)),
-    buttons));
-  run_section.hidden = true;
-
-  const draw_table = () => {
-    table.replaceChildren(deployments.length === 0
-      ? empty("No deployments yet.", "Name each NixOS host and its flake under deployments in the config file.")
-      : fleet_status_table(deployments, { selected, changed: show_count }));
-    show_count();
-  };
-  // The run controls show only while something is picked.
-  const show_count = () => {
-    count.textContent = `${selected.size} of ${deployments.length} picked`;
-    run_section.hidden = selected.size === 0;
-  };
-  const pick = (ids: string[]) => {
-    selected.clear();
-    for (const id of ids) selected.add(id);
-    draw_table();
-  };
-
-  const select = async () => {
-    try {
-      pick(await api<string[]>(`/api/fleet/select?selector=${encodeURIComponent(selector.value)}`));
-    } catch (error) {
-      toast((error as Error).message, "bad");
-    }
-  };
-
-  const run = async (action: FleetActionId) => {
-    try {
-      const outcome = await api<FleetOutcome>("/api/fleet/runs", "POST", {
-        action, ids: [...selected], staged: staged.checked,
-        stages: staged.checked ? stages.value.split("\n").map((line) => line.trim()).filter(Boolean) : undefined,
-        parallel: parallel.value === "" ? undefined : Number(parallel.value),
-      });
-      toast(outcome.message, "good", outcome.run === null ? null : { href: link(["fleet", String(outcome.run.id)]), text: "Follow it" });
-    } catch (error) {
-      toast((error as Error).message, "bad");
-    }
-    await refresh(true);
-  };
-
-  buttons.append(...(Object.keys(action_labels) as FleetActionId[]).map((action) => h("button", {
-    class: action === "reboot" ? "danger" : action === "switch" ? "accent solid" : null,
-    onclick: () => {
-      if (action === "build") return void run(action);
-      const names = deployments.filter((deployment) => selected.has(deployment.id)).map((deployment) => deployment.name).join(", ");
-      const how = staged.checked ? "stage by stage, stopping at the first failure" : "up to the parallel limit at once";
-      confirm_dialog(`${action_labels[action]} ${selected.size} deployments`, `${action_labels[action]} ${names}, ${how}?`, action_labels[action], () => run(action));
-    },
-  }, action_labels[action])));
-
-  let first = true;
-  const refresh = (quiet: boolean) => load(runs, async () => {
-    const [list, fleet] = await Promise.all([api<Deployment[]>("/api/deployments"), api<Fleet>("/api/fleet")]);
-    deployments = list;
-    draw_table();
-    if (first) {
-      first = false;
-      stages.value = fleet.stages.join("\n");
-      parallel.placeholder = String(fleet.parallel);
-    }
-    tags.replaceChildren(...fleet.tags.map((tag) => h("button", { class: "link", onclick: () => {
-      selector.value = `@${tag}`;
-      void select();
-    } }, `@${tag}`)));
-    return fleet.runs.length === 0 ? empty("No fleet runs yet.") : runs_table(fleet.runs);
-  }, { quiet });
-  void refresh(false);
-  const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
-
-  return {
-    title: "Deployments",
-    root: h("div", { class: "page" },
-      h("h1", {}, "Deployments"),
-      h("p", { class: "muted" }, "Each NixOS host against what its flake evaluates to. Pick some by checkbox, by a name glob or by @tag to run one action across them."),
-      h("div", {},
-        h("form", { class: "toolbar", onsubmit: (event: Event) => {
-          event.preventDefault();
-          void select();
-        } },
-          h("label", { class: "field" }, h("span", { class: "field-label" }, "Selector"), selector),
-          h("button", { type: "submit" }, "Pick"),
-          h("button", { type: "button", onclick: () => pick(deployments.map((deployment) => deployment.id)) }, "All"),
-          h("button", { type: "button", onclick: () => pick([]) }, "None"),
-          count),
-        tags,
-        table),
-      run_section,
-      section("Fleet runs", runs),
-    ),
-    dispose: () => clearInterval(timer),
-  };
+export async function system_tab(deployment: Deployment, refresh: () => Promise<unknown>): Promise<Child> {
+  const id = encodeURIComponent(deployment.id);
+  const [jobs, events] = await Promise.all([
+    api<Job[]>(`/api/jobs?deployment=${id}&limit=10`),
+    api<EventRow[]>(`/api/deployments/${id}/events`),
+  ]);
+  return [
+    tiles(deployment),
+    section("Findings", messages_list(deployment.reading?.messages ?? [])),
+    changes_section(deployment, refresh),
+    section("Details", details(deployment)),
+    section("Pin", pin_form(deployment, refresh)),
+    section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
+    section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
+  ];
 }
 
-// ── One deployment ───────────────────────────────────────────────────────────
-
-export function deployment_view(id: string): View {
-  const body = h("div", { class: "stack" });
-  const heading = h("h1", {}, id);
-  const badge = h("span");
-  const buttons = h("div", { class: "head-actions" });
-
-  const refresh = (quiet: boolean): Promise<boolean> => load(body, async () => {
-    const [deployment, jobs, events] = await Promise.all([
-      api<Deployment>(`/api/deployments/${encodeURIComponent(id)}`),
-      api<Job[]>(`/api/jobs?deployment=${encodeURIComponent(id)}&limit=10`),
-      api<EventRow[]>(`/api/deployments/${encodeURIComponent(id)}/events`),
-    ]);
-    heading.textContent = deployment.name;
-    badge.replaceChildren(status_badge(deployment.reading?.status ?? null));
-    buttons.replaceChildren(
-      h("button", { onclick: () => void run_refresh() }, "Check now"),
-      ...deployment.actions.map((action) => action_button(deployment, action, () => refresh(true))),
-    );
-    return [
-      tiles(deployment),
-      section("Findings", messages_list(deployment.reading?.messages ?? [])),
-      changes_section(deployment, () => refresh(true)),
-      section("Details", details(deployment)),
-      section("Pin", pin_form(deployment, () => refresh(true))),
-      section("Jobs", jobs.length === 0 ? empty("No jobs yet.") : jobs_table(jobs, false)),
-      section("Events", events.length === 0 ? empty("No events yet.") : events_list(events)),
-    ];
-  }, { quiet });
-
-  const run_refresh = async () => {
-    toast("Reading the host and evaluating the flake…");
-    await api(`/api/deployments/${encodeURIComponent(id)}/refresh`, "POST").catch((error) => toast(String(error.message), "bad"));
-    await refresh(true);
-  };
-
-  // Generations are read from the host on demand rather than every refresh.
+// The generations, read from the host on demand rather than on every refresh of the page.
+export function generations_section(deployment: Deployment, refresh: () => Promise<unknown>): HTMLElement {
   const generations = h("div");
-  const load_generations = (quiet: boolean) => load(generations, async () => {
-    const answer = await api<{ generations: Generation[] }>(`/api/deployments/${encodeURIComponent(id)}/generations`);
-    return generations_table(id, answer.generations, async () => {
-      await refresh(true);
-      await load_generations(true);
+  const read = (quiet: boolean) => load(generations, async () => {
+    const answer = await api<{ generations: Generation[] }>(`/api/deployments/${encodeURIComponent(deployment.id)}/generations`);
+    return generations_table(deployment, answer.generations, async () => {
+      await refresh();
+      await read(true);
     });
   }, { quiet });
-
-  void refresh(false);
-  void load_generations(false);
-  const timer = setInterval(() => void refresh(true), refresh_interval_in_milliseconds);
-
-  return {
-    title: id,
-    root: h("div", { class: "page" },
-      crumbs([["Deployments", link(["deployments"])], [id, null]]),
-      h("header", { class: "page-head" }, h("div", { class: "card-head" }, heading, badge), buttons),
-      body,
-      section("Generations", generations, h("button", { onclick: () => void load_generations(false) }, "Read again")),
-    ),
-    dispose: () => clearInterval(timer),
-  };
+  void read(false);
+  return section("Generations", generations, h("button", { onclick: () => void read(false) }, "Read again"));
 }
 
 // ── Parts ────────────────────────────────────────────────────────────────────
@@ -242,7 +89,7 @@ function details(deployment: Deployment): HTMLElement {
   const when = (epoch: number | null | undefined) => (epoch ? h("span", { title: stamp(epoch) }, age(epoch)) : "—");
   const code = (text: string | null | undefined) => (text ? h("code", {}, text) : "—");
   const rows: [string, ReturnType<typeof when> | string, string?][] = [
-    ["Host", deployment.host_name === null ? deployment.host ?? "this server" : h("a", { href: link(["hosts", deployment.host_name]) }, deployment.host ?? `${deployment.host_name} (this server)`)],
+    ["Deployment", deployment.name === deployment.id ? deployment.id : h("span", {}, deployment.name, " ", h("code", { class: "muted small" }, deployment.id))],
     ["Flake", flake_link(deployment.flake_id, deployment.flake)],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
     ["Tags", deployment.tags.length === 0 ? "—" : tag_chips(deployment.tags)],
@@ -266,7 +113,7 @@ function details(deployment: Deployment): HTMLElement {
   if (deployment.cache_id !== null) rows.push(["Built by", h("a", { href: link(["cache", deployment.cache_id]) }, `the ${deployment.cache_id} cache`)]);
   if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
   rows.push(["Switch safety", safety_text(deployment)]);
-  if (reading?.current) rows.push(["Closure browser", h("a", { href: link(["deployments", deployment.id, "closure"]) }, "Browse the running closure")]);
+  if (reading?.current) rows.push(["Closure browser", h("a", { href: closure_link(deployment) }, "Browse the running closure")]);
   if (evaluation.eval_error) rows.push(["Evaluation error", h("pre", { class: "output" }, evaluation.eval_error)]);
   if (evaluation.metadata_error) rows.push(["Metadata error", h("pre", { class: "output" }, evaluation.metadata_error)]);
   return facts(rows, "rows");
@@ -308,9 +155,14 @@ function changes_section(deployment: Deployment, done: () => Promise<unknown>): 
     h("button", { onclick: () => void compare() }, fresh ? "Compare again" : "Compare now"));
 }
 
+// A link to the closure browser of the deployment's host.
+function closure_link(deployment: Deployment, values: Record<string, number> = {}): string {
+  return link(deployment.host_name === null ? ["deployments", deployment.id, "closure"] : ["hosts", deployment.host_name, "closure"], values);
+}
+
 // ── Generations ──────────────────────────────────────────────────────────────
 
-function generations_table(id: string, generations: Generation[], done: () => Promise<unknown>): HTMLElement {
+function generations_table(deployment: Deployment, generations: Generation[], done: () => Promise<unknown>): HTMLElement {
   if (generations.length === 0) return empty("No generations read.");
   const roll_back = (generation: Generation) => confirm_dialog(
     `Roll back to generation ${generation.generation}`,
@@ -318,7 +170,7 @@ function generations_table(id: string, generations: Generation[], done: () => Pr
     "Roll back",
     async () => {
       try {
-        const outcome = await api<ActionOutcome>(`/api/deployments/${encodeURIComponent(id)}/rollback`, "POST", { generation: generation.generation });
+        const outcome = await api<ActionOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/rollback`, "POST", { generation: generation.generation });
         toast(outcome.message, "good", outcome.job_id === null ? null : { href: link(["jobs", String(outcome.job_id)]), text: "Follow it" });
       } catch (error) {
         toast((error as Error).message, "bad");
@@ -335,7 +187,7 @@ function generations_table(id: string, generations: Generation[], done: () => Pr
       generation.booted && h("span", { class: "badge tone-info" }, "booted"),
       generation.profile && h("span", { class: "badge tone-none" }, "default")) },
     { label: "Actions", class: "actions-cell", cell: (generation) => h("span", { class: "row-actions" },
-      h("a", { class: "button", href: link(["deployments", id, "closure"], { generation: generation.generation }) }, "Closure"),
+      h("a", { class: "button", href: closure_link(deployment, { generation: generation.generation }) }, "Closure"),
       generation.current && generation.profile ? null : h("button", { class: "danger", onclick: () => roll_back(generation) }, "Roll back")) },
   ], generations, "Generations");
 }

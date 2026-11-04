@@ -7,9 +7,8 @@ import { apply, next_theme, theme_choice, type Theme } from "./theme.ts";
 import { builds_view } from "./views/builds.ts";
 import { cache_view, caches_view } from "./views/cache.ts";
 import { closure_view } from "./views/closure.ts";
-import { deployment_view, deployments_view } from "./views/deployments.ts";
 import { flake_view, flakes_view } from "./views/flakes.ts";
-import { host_view, hosts_view } from "./views/hosts.ts";
+import { deployment_redirect, host_tabs, host_view, hosts_view, type HostTab } from "./views/hosts.ts";
 import { fleet_run_view } from "./views/fleet.ts";
 import { job_view, jobs_view } from "./views/jobs.ts";
 import { overview_view } from "./views/overview.ts";
@@ -30,20 +29,19 @@ let first_view = true;
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 // Old addresses whose pages now live under another sidebar section, which they light up.
-const parent_sections: Record<string, string> = { fleet: "deployments", store: "hosts", boot: "hosts" };
+const parent_sections: Record<string, string> = { deployments: "hosts", fleet: "hosts", store: "hosts", boot: "hosts" };
 
 function view_for(parts: string[]): View {
   const [section, id, page] = parts;
-  if (section === "hosts" && id && (page === "store" || page === "boot")) return host_view(id, page);
-  if (section === "hosts" && id) return host_view(id);
+  if (section === "hosts" && id && page === "closure") return closure_view(id);
+  if (section === "hosts" && id) return host_view(id, host_tabs.includes(page as HostTab) ? page as HostTab : null);
   if (section === "hosts") return hosts_view();
   if (section === "flakes" && id) return flake_view(id);
   if (section === "flakes") return flakes_view();
-  if (section === "deployments" && id && page === "closure") return closure_view(id);
-  if (section === "deployments" && id) return deployment_view(id);
-  if (section === "deployments") return deployments_view();
+  if (section === "deployments" && id) return deployment_redirect(id, page);
+  if (section === "deployments") return hosts_view();
   if (section === "fleet" && id && /^\d+$/.test(id)) return fleet_run_view(Number(id));
-  if (section === "fleet") return deployments_view();
+  if (section === "fleet") return hosts_view();
   if (section === "jobs" && id && /^\d+$/.test(id)) return job_view(Number(id));
   if (section === "jobs") return jobs_view();
   if (section === "builds") return builds_view();

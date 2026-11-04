@@ -1,7 +1,7 @@
 // The closure browser: a system closure's dependency tree with each path's own size and closure size, and its largest
 // paths, to find what makes a closure large.
 
-import { api, type ClosurePath, type ClosureTree } from "../api.ts";
+import { api, type ClosurePath, type ClosureTree, type Host } from "../api.ts";
 import { bytes, h } from "../dom.ts";
 import { current_route, link } from "../router.ts";
 import { crumbs, data_table, load, section } from "../ui.ts";
@@ -12,7 +12,8 @@ const largest_count = 25;
 
 // ── View ─────────────────────────────────────────────────────────────────────
 
-export function closure_view(id: string): View {
+// The closure browser of the deployment a host runs.
+export function closure_view(host_name: string): View {
   const query = current_route().query;
   const generation = query.get("generation");
   const which = query.get("which") === "target" ? "target" : "current";
@@ -21,7 +22,10 @@ export function closure_view(id: string): View {
 
   void load(body, async () => {
     const search = generation !== null ? `generation=${encodeURIComponent(generation)}` : `which=${which}`;
-    const { tree } = await api<{ tree: ClosureTree }>(`/api/deployments/${encodeURIComponent(id)}/closure?${search}`);
+    const host = await api<Host>(`/api/hosts/${encodeURIComponent(host_name)}`);
+    const deployment = host.deployments[0];
+    if (deployment === undefined) throw new Error(`Nothing is deployed to ${host_name}`);
+    const { tree } = await api<{ tree: ClosureTree }>(`/api/deployments/${encodeURIComponent(deployment.id)}/closure?${search}`);
     const root = tree.paths[0];
     const largest = [...tree.paths].sort((first, second) => second.nar_size - first.nar_size).slice(0, largest_count);
     return [
@@ -42,12 +46,12 @@ export function closure_view(id: string): View {
   });
 
   const choice = (label: string, values: Record<string, string | null>, active: boolean) =>
-    h("a", { class: active ? "tab active" : "tab", href: link(["deployments", id, "closure"], values), "aria-current": active ? "page" : null }, label);
+    h("a", { class: active ? "tab active" : "tab", href: link(["hosts", host_name, "closure"], values), "aria-current": active ? "page" : null }, label);
 
   return {
-    title: `${title} · ${id}`,
+    title: `${title} · ${host_name}`,
     root: h("div", { class: "page" },
-      crumbs([["Deployments", link(["deployments"])], [id, link(["deployments", id])], ["Closure", null]]),
+      crumbs([["Hosts", link(["hosts"])], [host_name, link(["hosts", host_name])], ["Closure", null]]),
       h("h1", {}, title),
       h("nav", { class: "tabs", "aria-label": "Closure" },
         choice("Running", { which: null }, generation === null && which === "current"),

@@ -69,7 +69,7 @@ restart, which also logs everyone out.
 ## Deployments
 
 The config file lists `deployments`, each a NixOS host and the flake that describes it; see
-`config.example.json`. Every `interval` X-Nix reads the host's running system, and every
+`config.example.json`. A host runs one deployment, which its page shows on its System tab. Every `interval` X-Nix reads the host's running system, and every
 `eval_interval` it evaluates `<flake>#nixosConfigurations.<configuration>.config.system.build.toplevel`
 and compares the two store paths. Build, switch, garbage collection and evaluation run as long runs
 that survive a restart of X-Nix; each lands in the job history with its output.
@@ -153,7 +153,7 @@ page shows the pin and sets another, follows the branch head again, or goes back
 
 ### Switches
 
-The deployment page offers nixos-rebuild's `switch`, `boot`, `test` and `dry-activate`. Before a
+The System tab offers nixos-rebuild's `switch`, `boot`, `test` and `dry-activate`. Before a
 switch, boot or test, the page compares the running system with the flake's closure on the host
 with `nix store diff-closures` and `nix path-info -S`, and shows the packages added, removed and
 changed and the closure's size before and after; when no package changed but the store paths
@@ -196,7 +196,8 @@ deployment names needs no entry of its own, and the server's own host is the one
 `X_NIX_SERVER_NAME`. A host holds what is true of the machine whatever runs on it: its agent's key,
 how it is woken and kept awake, its Nix store and its boot entries. Every `interval` its agent
 reads the store and the boot entries, and the host's page shows them on its Store and Boot tabs,
-with Collect Garbage, Reboot and Set next boot. A deployment's Reboot reboots its host.
+with Collect Garbage, Reboot and Set next boot, and its agent and wake-on-LAN on its Machine tab. A
+deployment's Reboot reboots its host.
 
 | Setting        | Default               | Meaning                                                           |
 | -------------- | --------------------- | ----------------------------------------------------------------- |
@@ -245,8 +246,8 @@ unprivileged.
 
 ## Fleet
 
-The Deployments page runs Build, Switch or Reboot across many deployments at once. Pick them by
-checkbox, or with a selector of space-separated terms, each a glob on the id or name (`web-*`) or a
+The Hosts page runs Build, Switch or Reboot across many deployments at once. Pick them by
+checkbox, or search with space-separated terms, each a glob on the id or name (`web-*`) or a
 tag (`@canary`); any term matching picks the deployment. No more than `parallel` run at once. Each
 host's part is an ordinary job whose trigger names the fleet run, and the run itself is kept in the
 database and advanced every few seconds, so it carries on after a restart of X-Nix.
