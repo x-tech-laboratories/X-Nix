@@ -314,13 +314,14 @@ describe("actions", () => {
     expect(harness.store.jobs()[0].command).toContain("cache_build");
   });
 
-  it("refuse an untracked target, a second job, and a push with nothing to push", async () => {
+  it("refuse an untracked target and a second job, and build a target before pushing it", async () => {
     const harness = await checked();
     expect((await harness.cache.act("build", "Gamma")).message).toContain("not a tracked target");
     expect((await harness.cache.act("push", "Alpha")).message).toContain("No push_command");
 
     const unbuilt = await checked({ push_command: "attic push fleet" }, false);
-    expect((await unbuilt.cache.act("push", "Alpha")).message).toContain("not built");
+    expect((await unbuilt.cache.act("push", "Alpha")).message).toBe("Build of Alpha started; Alpha is not built here from the latest flake, so it is built first and then pushed");
+    expect(unbuilt.cache.running_job()?.kind).toBe("build-target");
 
     await harness.cache.act("build", "Alpha");
     expect((await harness.cache.act("build", "Beta")).message).toContain("already running");

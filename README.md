@@ -82,14 +82,23 @@ other, as Attic leaves out what an upstream cache such as cache.nixos.org alread
 with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
 activating on the switch agent's own host, so it takes no `target_host`. The closure is built and pushed by a cache's
 Build or Build all (or anything else that pushes, such as `attic watch-store`), and signed by a key the host trusts;
-`build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. A switch, boot or test started by hand or by a
-fleet run that finds the cache without the system has the cache tracking the host's configuration at that
-`cache_url` build and push it first: its job shows the build, waits for the cache's running check if there is one,
-and starts the switch once the cache holds the system, or fails without touching the host when the build fails or
-brings a different system. An automatic switch does the same, once per target closure, so drift seen before the
-nightly build switches as soon as the cache has built it. With no such cache a manual switch starts at once, as before,
-and an automatic one waits until the cache holds the new system and the host can fetch every path of its closure,
-checking again every cycle.
+`build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
+
+A switch, boot, test or dry activation, started by hand, by a fleet run or by the drift, first runs what it depends on.
+Its job shows each step, and fails without touching the host when one fails:
+
+- With `switch_from_cache` and no successful evaluation, it evaluates the flake first, unless the deployment's `cache`
+  evaluates for it, whose build then names the system.
+- With `switch_from_cache` and the cache without the system, the cache tracking the host's configuration at that
+  `cache_url` builds and pushes it, after the cache's running check if there is one. With no such cache it builds on the
+  build agents; when they are another host, it waits up to 15 minutes for the system to reach the cache, as
+  `attic watch-store` pushes it. A build that brings a newer system than the evaluation switches to that one.
+- A plain switch whose `cache` lacks the system has that cache build and push it first. Without `cache`, one whose
+  build agent is another host builds there first when there is a `cache_url` the host can substitute from. Otherwise
+  `nixos-rebuild` builds the system itself, on the host or its `build_host`.
+
+An automatic switch runs these steps once per target closure, so drift seen before the nightly build switches as soon
+as the system is built.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
@@ -297,7 +306,8 @@ cache they are pushed to. Every `interval` the host runs one check: it evaluates
 target from the flake, sees whether that store path is built, and asks the cache which of the
 closure's own paths it lacks, leaving out paths an upstream cache signed. The check runs as a long
 run, and the previous reading stands until it ends. Each target can be built or pushed by hand;
-the job checks that target again once it ends. Cache ids share one space with deployment ids.
+the job checks that target again once it ends. Pushing a target not built from the latest flake
+builds it instead, and the build pushes it. Cache ids share one space with deployment ids.
 
 Build all builds every target in one job, the way nix-fast-build does: `nix-eval-jobs` evaluates
 all of them in one parallel pass, each target's build starts as soon as its own evaluation ends, and

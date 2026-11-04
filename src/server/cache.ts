@@ -4,7 +4,7 @@
 // server; later cycles poll it every `job_poll`, and the finished run's whole output becomes the new reading. While it
 // runs the previous reading stands. A target whose evaluation fails is failed; one not yet built, or not fully pushed,
 // is `pending_status`. Each target can also be built or pushed by hand, one job at a time, and the job's own check of
-// that target updates its row once it ends. Build all builds every target in one job, keeping how each one's build ended,
+// that target updates its row once it ends; a push of a target not built here builds it, and the build pushes it. Build all builds every target in one job, keeping how each one's build ended,
 // and with `build_at` runs daily in place of that cycle's check.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -133,8 +133,7 @@ export class Cache {
     if (action === "push") {
       if (this.settings.push_command === null) return "No push_command is set, so X-Nix cannot push";
       const row = this.reading()?.rows.find((candidate) => candidate.name === name);
-      if (row?.built !== true) return `${name} is not built from the latest flake, so there is nothing to push`;
-      if (!row.local) return `${name} is kept only in the cache, so there is nothing here to push; build it again`;
+      if (row?.built === true && !row.local) return `${name} is kept only in the cache, so there is nothing here to push; build it again`;
     }
     if (this.running_job() !== null) return "A job is already running for this cache";
     return null;
@@ -313,16 +312,20 @@ export class Cache {
       const refusal = this.action_refusal(action, name);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       const row = this.reading()?.rows.find((candidate) => candidate.name === name);
-      const operation = action === "build" ? build_operation(this.settings, name) : push_operation(this.settings, name, row!.target!);
-      const what = `${action_words[action]} of ${name}`;
+      // A target not built here from the latest flake has nothing here to push, so it is built, and the build pushes it.
+      const pushable = row?.built === true && row.target !== null;
+      const runs: CacheActionId = action === "push" && !pushable ? "build" : action;
+      const operation = runs === "build" ? build_operation(this.settings, name) : push_operation(this.settings, name, row!.target!);
+      const what = `${action_words[runs]} of ${name}`;
       // A push runs where the target was built, which may not be the host the cache would pick now.
-      const launched = await this.launch(action_kinds[action], operation, trigger, action === "push" ? row!.host : undefined);
+      const launched = await this.launch(action_kinds[runs], operation, trigger, runs === "push" ? row!.host : undefined);
       if (launched.job_id === null) {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${what.toLowerCase()}: ${launched.error}`);
         return { ok: false, message: `Could not start the ${what.toLowerCase()}: ${launched.error}`, job_id: null };
       }
-      this.store.add_event(this.id, this.now(), "info", `${what} started`);
-      return { ok: true, message: `${what} started`, job_id: launched.job_id };
+      const first = runs === action ? "" : `; ${name} is not built here from the latest flake, so it is built first and then pushed`;
+      this.store.add_event(this.id, this.now(), "info", `${what} started${first}`);
+      return { ok: true, message: `${what} started${first}`, job_id: launched.job_id };
     });
   }
 
