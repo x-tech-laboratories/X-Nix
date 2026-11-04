@@ -224,7 +224,7 @@ export class Cache {
         const tail = finished.output.trim().slice(-200);
         return this.save_unavailable(`Could not check the tracked targets: ${tail || finished.error || "no output"}`);
       }
-      const rows = targets(this.settings).map(([name]) => target_row(this.settings, name, report.targets.get(name)));
+      const rows = targets(this.settings).map(([name]) => target_row(this.settings, name, report.targets.get(name), job.agent));
       const metadata = report.metadata === null ? null : parse_metadata(report.metadata);
       const extra: Message[] = finished.error === null ? [] : [{ level: "warning", text: `The check ended badly: ${finished.error}` }];
       const flake = metadata === null ? this.reading()?.flake ?? null : {
@@ -248,7 +248,7 @@ export class Cache {
     else this.store.add_event(this.id, this.now(), "error", `${what} failed: ${finished.error}`);
     const previous = this.reading();
     if (name === undefined || previous === null) return;
-    const rows = previous.rows.map((row) => (report.targets.has(row.name) ? target_row(this.settings, row.name, report.targets.get(row.name)) : row));
+    const rows = previous.rows.map((row) => (report.targets.has(row.name) ? target_row(this.settings, row.name, report.targets.get(row.name), job.agent) : row));
     this.save_rows(rows, previous.revision, []);
   }
 
@@ -264,7 +264,7 @@ export class Cache {
     else this.store.add_event(this.id, this.now(), "error", `Build all failed: ${built}; ${job.error}`);
     const previous = this.reading();
     const rows = targets(this.settings).map(([name]) => report.targets.has(name)
-      ? target_row(this.settings, name, report.targets.get(name))
+      ? target_row(this.settings, name, report.targets.get(name), job.agent)
       : previous?.rows.find((row) => row.name === name) ?? target_row(this.settings, name, undefined));
     this.save_rows(rows, previous?.revision ?? null, [], { job_id: job.id, finished_epoch: this.now(), results });
     const attempted = results.filter((result) => result.result !== "not_reported").map((result) => ({
@@ -315,7 +315,8 @@ export class Cache {
       const row = this.reading()?.rows.find((candidate) => candidate.name === name);
       const operation = action === "build" ? build_operation(this.settings, name) : push_operation(this.settings, name, row!.target!);
       const what = `${action_words[action]} of ${name}`;
-      const launched = await this.launch(action_kinds[action], operation, trigger);
+      // A push runs where the target was built, which may not be the host the cache would pick now.
+      const launched = await this.launch(action_kinds[action], operation, trigger, action === "push" ? row!.host : undefined);
       if (launched.job_id === null) {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${what.toLowerCase()}: ${launched.error}`);
         return { ok: false, message: `Could not start the ${what.toLowerCase()}: ${launched.error}`, job_id: null };
@@ -340,11 +341,13 @@ export class Cache {
     });
   }
 
-  private async launch(kind: JobKind, operation: Operation, trigger = kind === "check" ? "schedule" : "manual"): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
+  private async launch(
+    kind: JobKind, operation: Operation, trigger = kind === "check" ? "schedule" : "manual", chosen?: string | null,
+  ): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     // A sleeping host is woken for a build or push, but not for the periodic check.
     const wake = kind !== "check";
-    const host = this.host(wake);
+    const host = chosen !== undefined ? chosen : this.host(wake);
     let waking: Promise<void> | null;
     try {
       ({ waking } = await start_run(this.agents, host, run_id, operation, null, wake));

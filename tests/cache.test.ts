@@ -333,6 +333,16 @@ describe("actions", () => {
     expect(harness.cache.running_job()?.command).toContain(alpha);
   });
 
+  it("push from the host that read the row, even once a more preferred host is up", async () => {
+    const harness = await checked({ push_command: "attic push fleet", host: ["odin", "host"] });
+    expect(rows(harness).Alpha.host).toBe("host");
+    harness.agents.add("odin", new FakeAgent());
+
+    await harness.cache.act("push", "Alpha");
+
+    expect(harness.cache.running_job()?.agent).toBe("host");
+  });
+
   it("update only their own row once they finish", async () => {
     const harness = await checked({ push_command: "attic push fleet" });
     await harness.cache.act("push", "Alpha");

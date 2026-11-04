@@ -61,6 +61,8 @@ export interface TargetRow {
   summary: string;
   // Why the target's evaluation failed, or null when it evaluated or was not checked.
   eval_error: string | null;
+  // The host whose store the row was read from, the server's own when null; absent from older readings.
+  host?: string | null;
 }
 
 // ── Targets ──────────────────────────────────────────────────────────────────
@@ -157,10 +159,10 @@ export function parse_report(output: string): Report {
 }
 
 // One target's row, with its status and a one-line summary.
-export function target_row(settings: CacheSettings, name: string, facts: TargetFacts | undefined): TargetRow {
+export function target_row(settings: CacheSettings, name: string, facts: TargetFacts | undefined, host?: string | null): TargetRow {
   const row: TargetRow = {
     name, target: null, built: null, local: true, own: null, missing_count: 0, missing: [], pushed_ok: false, pushed: "—",
-    status: "unavailable", summary: "Not checked", eval_error: null,
+    status: "unavailable", summary: "Not checked", eval_error: null, host,
   };
   if (facts === undefined) return row;
   if (facts.error !== undefined) return { ...row, status: "failed", summary: `Evaluation failed: ${facts.error.trim()}`, eval_error: facts.error.trim() };
