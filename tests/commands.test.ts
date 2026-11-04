@@ -308,7 +308,7 @@ describe("a flake in the config", () => {
   it("is named by id from deployments and caches, which take its reference", () => {
     const config = parse_config({
       flakes: [{ id: "fleet", url: "github:owner/config" }],
-      deployments: [{ id: "odin", flake: "fleet", pin: "v1" }, { id: "own", flake: "github:owner/own" }],
+      deployments: [{ id: "odin", host: "odin", flake: "fleet", pin: "v1" }, { id: "own", flake: "github:owner/own" }],
       caches: [{ id: "cache", flake: "fleet", configurations: ["odin"], cache_url: "https://attic.example/fleet" }],
     });
 
@@ -338,6 +338,11 @@ describe("a host in the config", () => {
 
     expect(config.deployments.map(({ require_sudo, inhibit_sleep }) => [require_sudo, inhibit_sleep])).toEqual([[false, true], [true, false]]);
     expect(config.hosts.map((host) => host.id)).toEqual(["thor", "heimdall"]);
+  });
+
+  it("runs one deployment, counting a deployment that names no host as the server's own", () => {
+    expect(() => parse_config({ deployments: [{ id: "odin", host: "thor" }, { id: "loki", host: "thor" }] })).toThrow(/both run on host 'thor'/);
+    expect(() => parse_config({ deployments: [{ id: "odin", host: "heimdall" }, { id: "own" }] }, "heimdall")).toThrow(/both run on host 'heimdall'/);
   });
 });
 

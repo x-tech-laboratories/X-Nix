@@ -287,6 +287,14 @@ export function parse_config(raw: unknown, own_host = hostname()): Config {
     if (seen.has(id)) throw new ConfigError(`Two flakes, deployments or caches are named '${id}'`);
     seen.add(id);
   }
+  // A host runs one system, so two deployments switching it would undo each other.
+  const deployed = new Map<string, string>();
+  for (const { id, host } of parsed) {
+    const host_id = host ?? own_host;
+    const other = deployed.get(host_id);
+    if (other !== undefined) throw new ConfigError(`Deployments '${other}' and '${id}' both run on host '${host_id}'; a host runs one deployment`);
+    deployed.set(host_id, id);
+  }
   const every_host = [...hosts.values()];
   return {
     hosts: every_host, flakes, deployments: parsed, caches: parsed_caches, provisioning: provisioning_settings(values.provisioning),
