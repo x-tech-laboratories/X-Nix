@@ -1,14 +1,14 @@
 // The Flakes pages: every flake as a card, and one flake with its locked inputs, its Update and what names it.
 
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, stamp } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type ActionOutcome, type EventRow, type Flake, type Job, type LockedInput, type Status } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { duration, error_toast, EventsList, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
 
@@ -19,9 +19,9 @@ const status_tones: Record<Status, string> = { online: "good", info: "good", una
 export function FlakesView() {
   const flakes = use_resource(() => api<Flake[]>("/api/flakes"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
-    <div class="page">
+    <div className="page">
       <h1>Flakes</h1>
-      <p class="muted">Each flake's locked inputs and how old they are, and the update that moves them on for every deployment naming it.</p>
+      <p className="muted">Each flake's locked inputs and how old they are, and the update that moves them on for every deployment naming it.</p>
       <Stack>
         <Loaded resource={flakes}>
           {(found) => (found.length === 0
@@ -98,17 +98,17 @@ export function FlakeView({ id }: { id: string }) {
   };
 
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Flakes", link(["flakes"])], [id, null]]} />
-      <header class="page-head">
-        <div class="card-head">
+      <header className="page-head">
+        <div className="card-head">
           <h1>{flake?.name ?? id}</h1>
           {flake && <span><StatusBadge status={flake.reading?.status ?? null} /></span>}
         </div>
-        <div class="head-actions">
+        <div className="head-actions">
           {flake && <>
             <button disabled={flake.running_job !== null} title={flake.running_job ? "An update is running" : undefined} onClick={() => void run_refresh()}>Read now</button>
-            <button class="accent solid" disabled={flake.update_refusal !== null} title={flake.update_refusal ?? undefined} onClick={() => ask_update(flake)}>Update</button>
+            <button className="accent solid" disabled={flake.update_refusal !== null} title={flake.update_refusal ?? undefined} onClick={() => ask_update(flake)}>Update</button>
           </>}
         </div>
       </header>
@@ -164,10 +164,10 @@ function InputsTable({ flake }: { flake: Flake }) {
   return (
     <DataTable<LockedInput> caption="Locked inputs" rows={flake.reading!.inputs} row_key={(input) => input.name} columns={[
       { label: "Input", cell: (input) => <strong>{input.name}</strong> },
-      { label: "Source", cell: (input) => (input.follows !== null ? <span class="muted">follows {input.follows}</span> : input.source ? <code>{input.source}</code> : "—") },
+      { label: "Source", cell: (input) => (input.follows !== null ? <span className="muted">follows {input.follows}</span> : input.source ? <code>{input.source}</code> : "—") },
       { label: "Revision", cell: (input) => (input.revision ? <code>{short_revision(input.revision)}</code> : "—") },
       { label: "Last changed", cell: (input) => (input.last_modified_epoch === null ? "—" : (
-        <span class={is_stale(flake, input.last_modified_epoch) ? "tone-warn" : undefined} title={stamp(input.last_modified_epoch)}>{age(input.last_modified_epoch)}</span>
+        <span className={is_stale(flake, input.last_modified_epoch) ? "tone-warn" : undefined} title={stamp(input.last_modified_epoch)}>{age(input.last_modified_epoch)}</span>
       )) },
     ]} />
   );
@@ -207,6 +207,6 @@ function Details({ flake }: { flake: Flake }) {
   if (flake.pushes_to !== null) rows.push(["Commit author", flake.commit_author], ["Commit message", <code>{flake.commit_message}</code>]);
   if (flake.max_input_age !== null) rows.push(["Input age limit", duration(flake.max_input_age)]);
   if (flake.last_update !== null) rows.push(["Last update changed", flake.last_update.summary]);
-  if (reading?.metadata_error) rows.push(["Read error", <pre class="output">{reading.metadata_error}</pre>]);
+  if (reading?.metadata_error) rows.push(["Read error", <pre className="output">{reading.metadata_error}</pre>]);
   return <Facts rows={rows} layout="rows" />;
 }

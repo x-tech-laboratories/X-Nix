@@ -1,18 +1,17 @@
 // What several views show the same way: drift, waiting badges, actions with their confirmations, package diffs and jobs.
 
-import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Empty } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, bytes, stamp } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useState, type ReactNode } from "react";
 import {
   api, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type Host, type Job, type Message, type PackageChange,
 } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge, LevelBadge } from "../ui.tsx";
 
 // How often an open page fetches again, so a running job's progress shows.
@@ -45,7 +44,7 @@ export function drift_state(deployment: Deployment): [text: string, tone: "good"
 export function WaitingOn({ deployment }: { deployment: Deployment }) {
   const reading = deployment.reading;
   if (reading === null) return <Badge>Not read yet</Badge>;
-  const badges: ComponentChildren[] = [];
+  const badges: ReactNode[] = [];
   if (reading.status === "unavailable" && reading.current === null) badges.push(<Badge key="unreachable" tone="warn">Unreachable</Badge>);
   if (deployment.evaluation.eval_error !== null) badges.push(<Badge key="failed" tone="bad">Evaluation failed</Badge>);
   if (reading.up_to_date === false) badges.push(<Badge key="rebuild" tone="warn" title="The flake evaluates to another closure; a switch brings the host there">Rebuild</Badge>);
@@ -65,23 +64,23 @@ export function TagChips({ tags }: { tags: string[] }) {
 // A flake reference, linked to the declared flake's page when it names one.
 export function FlakeLink({ flake_id, reference }: { flake_id: string | null; reference: string }) {
   if (flake_id === null) return <code>{reference}</code>;
-  return <span><a href={link(["flakes", flake_id])}>{flake_id}</a> <code class="muted small">{reference}</code></span>;
+  return <span><a href={link(["flakes", flake_id])}>{flake_id}</a> <code className="muted small">{reference}</code></span>;
 }
 
 // What the last cycle found, each with its level.
 export function MessagesList({ messages }: { messages: Message[] }) {
   if (messages.length === 0) return <Empty title="Not read yet." />;
-  return <ul class="events">{messages.map((message, index) => <li key={index}><LevelBadge level={message.level} /> <span class="event-message">{message.text}</span></li>)}</ul>;
+  return <ul className="events">{messages.map((message, index) => <li key={index}><LevelBadge level={message.level} /> <span className="event-message">{message.text}</span></li>)}</ul>;
 }
 
 export function EventsList({ events }: { events: EventRow[] }) {
   return (
-    <ul class="events">
+    <ul className="events">
       {events.map((event, index) => (
         <li key={index}>
-          <span class="event-time muted small" title={stamp(event.epoch)}>{age(event.epoch)}</span>{" "}
+          <span className="event-time muted small" title={stamp(event.epoch)}>{age(event.epoch)}</span>{" "}
           <LevelBadge level={event.level} />{" "}
-          <span class="event-message">{event.message}</span>
+          <span className="event-message">{event.message}</span>
         </li>
       ))}
     </ul>
@@ -110,14 +109,14 @@ export function ActionButton({ deployment, action, done }: { deployment: Deploym
   // A switch's confirmation first compares the running closure with the flake's, so the dialog shows the diff.
   const confirm_with_diff = async (confirm: string) => {
     set_comparing(true);
-    let body: ComponentChildren;
+    let body: ReactNode;
     try {
       const outcome = await api<DiffOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/diff`, "POST", {});
       body = outcome.diff === null || !outcome.diff.built
-        ? <p class="muted">{outcome.message ?? "Nothing to compare."}</p>
+        ? <p className="muted">{outcome.message ?? "Nothing to compare."}</p>
         : <DiffView diff={outcome.diff} />;
     } catch (error) {
-      body = <p class="tone-bad">Could not compare the closures: {(error as Error).message}</p>;
+      body = <p className="tone-bad">Could not compare the closures: {(error as Error).message}</p>;
     } finally {
       set_comparing(false);
     }
@@ -126,7 +125,7 @@ export function ActionButton({ deployment, action, done }: { deployment: Deploym
 
   return (
     <button
-      class={action.id === "reboot" ? "danger" : action.id === "switch" ? "accent solid" : undefined}
+      className={action.id === "reboot" ? "danger" : action.id === "switch" ? "accent solid" : undefined}
       disabled={action.refusal !== null || comparing}
       title={action.refusal ?? undefined}
       onClick={() => {
@@ -153,7 +152,7 @@ export function HostActionButton({ host, action, done }: { host: Host; action: H
   };
   return (
     <button
-      class={action.id === "reboot" ? "danger" : undefined}
+      className={action.id === "reboot" ? "danger" : undefined}
       disabled={action.refusal !== null}
       title={action.refusal ?? undefined}
       onClick={() => (action.confirm === null ? void run() : confirm_dialog({ title: `${action.label} ${host.display_name}`, message: action.confirm, confirm_label: action.label, danger: true, run }))}
@@ -188,26 +187,26 @@ export function DiffView({ diff }: { diff: ClosureDiff }) {
   const after = diff.closure_after_bytes;
   const size = before !== null && after !== null ? `Closure ${bytes(before)} → ${bytes(after)} (${size_change(after - before) || "no change"})` : null;
   return (
-    <div class="stack diff">
-      <div class="change-summary">
+    <div className="stack diff">
+      <div className="change-summary">
         <Badge tone="info">{diff.changed.length} changed</Badge>
         <Badge tone="good">{diff.added.length} added</Badge>
         <Badge tone="bad">{diff.removed.length} removed</Badge>
         {diff.resized.length > 0 && <Badge>{diff.resized.length} resized</Badge>}
-        {size && <span class="muted small">{size}</span>}
+        {size && <span className="muted small">{size}</span>}
       </div>
       {rows.length > 0
         ? <DataTable<ChangeRow> caption="Package changes" rows={rows} columns={[
           { label: "Package", cell: ([, , change]) => <code>{change.name}</code> },
-          { label: "Change", cell: ([kind, tone]) => <span class={`tone-${tone}`}>{kind}</span> },
+          { label: "Change", cell: ([kind, tone]) => <span className={`tone-${tone}`}>{kind}</span> },
           { label: "Versions", cell: ([, , change]) => `${versions(change.from)} → ${versions(change.to)}` },
           { label: "Size", class: "number", cell: ([, , change]) => size_change(change.size_delta_bytes) },
         ]} />
-        : <p class="muted">No package changed version.</p>}
-      {diff.derivation_diff && <details class="command"><summary>Derivation differences (nix-diff)</summary><pre class="output">{diff.derivation_diff}</pre></details>}
-      {diff.note && <p class="muted small">{diff.note}</p>}
-      {diff.error && <p class="tone-bad">{diff.error}</p>}
-      <p class="muted small">
+        : <p className="muted">No package changed version.</p>}
+      {diff.derivation_diff && <details className="command"><summary>Derivation differences (nix-diff)</summary><pre className="output">{diff.derivation_diff}</pre></details>}
+      {diff.note && <p className="muted small">{diff.note}</p>}
+      {diff.error && <p className="tone-bad">{diff.error}</p>}
+      <p className="muted small">
         Compared <Age epoch={diff.checked_epoch} />
         {diff.job_id !== null && <> in <a href={link(["jobs", String(diff.job_id)])}>diff #{diff.job_id}</a></>}
       </p>
@@ -255,7 +254,7 @@ export function JobsTable({ jobs, show_deployment }: { jobs: Job[]; show_deploym
       { label: "State", cell: (job) => <JobBadge state={job.state} /> },
       { label: "Started", cell: (job) => <Age epoch={job.started_epoch} /> },
       { label: "By", cell: (job) => job.trigger },
-      { label: "Last line", cell: (job) => <span class="muted small">{job.error ?? job.progress ?? ""}</span> },
+      { label: "Last line", cell: (job) => <span className="muted small">{job.error ?? job.progress ?? ""}</span> },
     ]} />
   );
 }

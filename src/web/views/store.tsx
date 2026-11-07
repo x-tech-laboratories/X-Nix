@@ -1,11 +1,11 @@
 // The Store tab of a host's page: its Nix store, its profiles' generations, and the collections that keep it in check.
 
-import { Facts, Section, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
+import { Facts, Section, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { api, type Host, type Job, type Profile } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { until } from "../ui.tsx";
 import { JobsTable, MessagesList } from "./shared.tsx";
 
@@ -78,7 +78,7 @@ function Details({ host }: { host: Host }) {
     ["Oldest generation", <Age epoch={store?.oldest_generation_epoch} />],
     ["Last read", <Age epoch={store?.checked_epoch} />],
   ];
-  if (last?.error) rows.push(["Collection error", <pre class="output">{last.error}</pre>]);
+  if (last?.error) rows.push(["Collection error", <pre className="output">{last.error}</pre>]);
   return <Facts rows={rows} layout="rows" />;
 }
 

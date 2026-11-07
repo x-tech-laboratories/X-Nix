@@ -1,12 +1,12 @@
 // The closure browser: a system closure's dependency tree with each path's own size and closure size, and its largest
 // paths, to find what makes a closure large.
 
-import { Crumbs, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
+import { Crumbs, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import { api, type ClosurePath, type ClosureTree, type Host } from "../api.ts";
 
 // How many paths the largest-paths table lists.
@@ -40,7 +40,7 @@ export function ClosureView({ host_name, generation, which }: { host_name: strin
   if (generation !== null) choices.push({ id: "generation", label: `Generation ${generation}`, href: link(["hosts", host_name, "closure"], { generation }) });
 
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [host_name, link(["hosts", host_name])], ["Closure", null]]} />
       <h1>{closure_title(generation, which)}</h1>
       <Tabs label="Closure" active={active} items={choices} />
@@ -60,9 +60,9 @@ function ClosureBody({ tree }: { tree: ClosureTree }) {
       <Tile label="Closure size" value={bytes(root.closure_size)} />
       <Tile label="Own size" value={bytes(root.nar_size)} />
     </Tiles>
-    <p class="muted small path">{tree.root}</p>
-    <Section title="Dependency tree" tools={<span class="muted small">Each path's own size, then its closure size; children from the largest closure down.</span>}>
-      <div class="tree"><TreeNode tree={tree} index={0} opened /></div>
+    <p className="muted small path">{tree.root}</p>
+    <Section title="Dependency tree" tools={<span className="muted small">Each path's own size, then its closure size; children from the largest closure down.</span>}>
+      <div className="tree"><TreeNode tree={tree} index={0} opened /></div>
     </Section>
     <Section title={`Largest ${largest.length} paths by own size`}>
       <DataTable<ClosurePath> caption="Largest paths" rows={largest} row_key={(path) => path.path} columns={[
@@ -82,17 +82,17 @@ function TreeNode({ tree, index, opened = false }: { tree: ClosureTree; index: n
   const [drawn, set_drawn] = useState(opened);
   const path = tree.paths[index];
   const label = <>
-    <span class="tree-name" title={path.path}>{path_name(path.path)}</span>
-    <span class="muted small closure-sizes">{`${bytes(path.nar_size)} · ${bytes(path.closure_size)}`}</span>
+    <span className="tree-name" title={path.path}>{path_name(path.path)}</span>
+    <span className="muted small closure-sizes">{`${bytes(path.nar_size)} · ${bytes(path.closure_size)}`}</span>
   </>;
-  if (path.references.length === 0) return <div class="tree-file">{label}</div>;
+  if (path.references.length === 0) return <div className="tree-file">{label}</div>;
   const ordered = drawn ? [...path.references].sort((first, second) => tree.paths[second].closure_size - tree.paths[first].closure_size) : [];
   return (
-    <details class="tree-folder" open={opened} onToggle={(event) => {
+    <details className="tree-folder" open={opened} onToggle={(event) => {
       if (event.currentTarget.open) set_drawn(true);
     }}>
-      <summary>{label}<span class="muted small"> {path.references.length} references</span></summary>
-      <div class="tree-children">{ordered.map((child) => <TreeNode key={child} tree={tree} index={child} />)}</div>
+      <summary>{label}<span className="muted small"> {path.references.length} references</span></summary>
+      <div className="tree-children">{ordered.map((child) => <TreeNode key={child} tree={tree} index={child} />)}</div>
     </details>
   );
 }

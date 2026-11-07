@@ -1,16 +1,16 @@
 // The Cache pages: every Attic cache as a card, and one cache with each target's build and push state and its buttons.
 
-import { Badge } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { Fragment } from "preact";
+import { Fragment } from "react";
 import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { duration, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
 
@@ -21,9 +21,9 @@ const status_tones: Record<Status, string> = { online: "good", info: "good", una
 export function CachesView() {
   const caches = use_resource(() => api<Cache[]>("/api/caches"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
-    <div class="page">
+    <div className="page">
       <h1>Cache</h1>
-      <p class="muted">Whether each closure is built from the flake's latest revision and pushed to its Attic cache.</p>
+      <p className="muted">Whether each closure is built from the flake's latest revision and pushed to its Attic cache.</p>
       <Stack>
         <Loaded resource={caches}>
           {(found) => (found.length === 0
@@ -45,7 +45,7 @@ function CacheCard({ cache }: { cache: Cache }) {
         <dt>Built</dt><dd>{count(cache, (row) => row.built === true)}</dd>
         <dt>Pushed</dt><dd>{count(cache, (row) => row.pushed_ok)}</dd>
         <dt>Checked</dt><dd>{reading ? age(reading.checked_epoch) : "—"}</dd>
-        {cache.server && <><dt>Server</dt><dd class={`tone-${status_tones[cache.server.status]}`}>{server_word(cache)}</dd></>}
+        {cache.server && <><dt>Server</dt><dd className={`tone-${status_tones[cache.server.status]}`}>{server_word(cache)}</dd></>}
         {job && <><dt>Running</dt><dd>{`${job.kind}${job.progress ? `: ${job.progress}` : ""}`}</dd></>}
       </dl>
     </Card>
@@ -107,24 +107,24 @@ export function CacheView({ id }: { id: string }) {
 
   const targets_table = (shown: Cache, rows: TargetRow[]) => (
     <DataTable<TargetRow> caption="Tracked targets" rows={rows} row_key={(row) => row.name} columns={[
-      { label: "Target", cell: (row) => <strong class={`tone-${status_tones[row.status]}`}>{row.name}</strong> },
+      { label: "Target", cell: (row) => <strong className={`tone-${status_tones[row.status]}`}>{row.name}</strong> },
       { label: "Built", cell: (row) => (row.built === null ? "—" : row.built ? "Yes" : "No") },
       { label: "Pushed", cell: (row) => row.pushed },
       { label: "State", cell: (row) => row.summary },
-      { label: "Store path", cell: (row) => (row.target ? <code class="small">{row.target}</code> : "—") },
+      { label: "Store path", cell: (row) => (row.target ? <code className="small">{row.target}</code> : "—") },
       { label: "Actions", cell: (row) => {
         const refusals = shown.targets.find((target) => target.name === row.name)?.refusals;
         if (refusals === undefined) return null;
         return (
-          <div class="row-actions">
-            <button class="small" disabled={refusals.build !== null} title={refusals.build ?? undefined} onClick={() => confirm_dialog({
+          <div className="row-actions">
+            <button className="small" disabled={refusals.build !== null} title={refusals.build ?? undefined} onClick={() => confirm_dialog({
               title: `Build ${row.name}`,
               message: `Build ${row.name} from the latest flake now?${pushed_note(shown)}`,
               confirm_label: "Build",
               danger: true,
               run: () => run_action(row.name, "build"),
             })}>Build</button>
-            {shown.can_push && <button class="small" disabled={refusals.push !== null} title={refusals.push ?? undefined} onClick={() => void run_action(row.name, "push")}>Push</button>}
+            {shown.can_push && <button className="small" disabled={refusals.push !== null} title={refusals.push ?? undefined} onClick={() => void run_action(row.name, "push")}>Push</button>}
           </div>
         );
       } },
@@ -132,17 +132,17 @@ export function CacheView({ id }: { id: string }) {
   );
 
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Cache", link(["cache"])], [id, null]]} />
-      <header class="page-head">
-        <div class="card-head">
+      <header className="page-head">
+        <div className="card-head">
           <h1>{cache?.name ?? id}</h1>
           {cache && <span><StatusBadge status={cache.reading?.status ?? null} /></span>}
         </div>
-        <div class="head-actions">
+        <div className="head-actions">
           {cache && <>
             <button disabled={cache.running_job !== null} title={cache.running_job ? "A job is running" : undefined} onClick={() => void run_refresh()}>Check now</button>
-            <button class="accent solid" disabled={cache.build_all_refusal !== null} title={cache.build_all_refusal ?? undefined} onClick={() => confirm_dialog({
+            <button className="accent solid" disabled={cache.build_all_refusal !== null} title={cache.build_all_refusal ?? undefined} onClick={() => confirm_dialog({
               title: `Build all of ${cache.name}`,
               message: `Evaluate every target in one pass and build each as soon as it is evaluated?${pushed_note(cache)}`,
               confirm_label: "Build all",
@@ -232,7 +232,7 @@ function ServerDetails({ cache }: { cache: Cache }) {
     <Facts rows={rows} layout="rows" />
     {server.metrics.length > 0 && (
       <DataTable<Sample> caption="Cache server metrics" rows={server.metrics} columns={[
-        { label: "Metric", cell: (sample) => <code class="small">{sample.name}</code> },
+        { label: "Metric", cell: (sample) => <code className="small">{sample.name}</code> },
         { label: "Value", cell: (sample) => (/_bytes(\{|$)/.test(sample.name) ? bytes(sample.value) : sample.value.toLocaleString()) },
       ]} />
     )}
@@ -252,7 +252,7 @@ function Details({ cache }: { cache: Cache }) {
   ];
   for (const target of cache.targets) {
     const where = target.build_link === null ? "not rooted" : `rooted at ${target.build_link}${target.kept_only_in_cache ? ", dropped once pushed" : ""}`;
-    rows.push([target.name, <span><code>{target.installable}</code><span class="muted small"> {where}</span></span>]);
+    rows.push([target.name, <span><code>{target.installable}</code><span className="muted small"> {where}</span></span>]);
   }
   return <Facts rows={rows} layout="rows" />;
 }
@@ -266,7 +266,7 @@ type BuildAllResult = BuildAllOutcome["results"][number];
 // How the last Build all ended for each target.
 function BuildAllSection({ outcome }: { outcome: BuildAllOutcome }) {
   return (
-    <Section title={<span>Last build all <a class="small" href={link(["jobs", String(outcome.job_id)])}>job #{outcome.job_id}</a></span>}>
+    <Section title={<span>Last build all <a className="small" href={link(["jobs", String(outcome.job_id)])}>job #{outcome.job_id}</a></span>}>
       <DataTable<BuildAllResult> caption="Last build all" rows={outcome.results} row_key={(result) => result.name} columns={[
         { label: "Target", cell: (result) => <strong>{result.name}</strong> },
         { label: "Result", cell: (result) => {

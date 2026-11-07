@@ -1,16 +1,16 @@
 // The System tab of a host's page: the deployment it runs, with its drift, findings, pin, jobs, events and generations.
 
-import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useState } from "react";
 import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type Job } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { DiffView, drift_state, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
@@ -99,15 +99,15 @@ function PinForm({ deployment, done }: { deployment: Deployment; done: () => voi
           ? `Following the branch head of ${deployment.flake} (${where}).`
           : <span>Evaluating, building and switching <code>{deployment.pin}</code>{` of ${deployment.flake} (${where}).`}</span>}
       </p>
-      <form class="toolbar" onSubmit={(event) => {
+      <form className="toolbar" onSubmit={(event) => {
         event.preventDefault();
         void send({ pin: typed.trim() === "" ? null : typed.trim() });
       }}>
-        <label class="field">
-          <span class="field-label">Commit or tag</span>
-          <input type="text" class="filter" placeholder="commit hash or tag" aria-label="Pin" value={typed} onInput={(event) => set_typed(event.currentTarget.value)} />
+        <label className="field">
+          <span className="field-label">Commit or tag</span>
+          <input type="text" className="filter" placeholder="commit hash or tag" aria-label="Pin" value={typed} onChange={(event) => set_typed(event.currentTarget.value)} />
         </label>
-        <button type="submit" class="accent solid">Pin</button>
+        <button type="submit" className="accent solid">Pin</button>
         <button type="button" disabled={deployment.pin === null} onClick={() => void send({ pin: null })}>Follow the branch head</button>
         {deployment.pin_overridden && (
           <button type="button" onClick={() => void send({ reset: true })}>
@@ -124,7 +124,7 @@ function Details({ deployment }: { deployment: Deployment }) {
   const evaluation = deployment.evaluation;
   const code = (text: string | null | undefined) => (text ? <code>{text}</code> : "—");
   const rows: Fact[] = [
-    ["Deployment", deployment.name === deployment.id ? deployment.id : <span>{deployment.name} <code class="muted small">{deployment.id}</code></span>],
+    ["Deployment", deployment.name === deployment.id ? deployment.id : <span>{deployment.name} <code className="muted small">{deployment.id}</code></span>],
     ["Flake", <FlakeLink flake_id={deployment.flake_id} reference={deployment.flake} />],
     ["Configuration", deployment.configuration ?? reading?.hostname ?? "the host's own name"],
     ["Tags", deployment.tags.length === 0 ? "—" : <TagChips tags={deployment.tags} />],
@@ -157,8 +157,8 @@ function Details({ deployment }: { deployment: Deployment }) {
   if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
   rows.push(["Switch safety", safety_text(deployment)]);
   if (reading?.current) rows.push(["Closure browser", <a href={closure_link(deployment)}>Browse the running closure</a>]);
-  if (evaluation.eval_error) rows.push(["Evaluation error", <pre class="output">{evaluation.eval_error}</pre>]);
-  if (evaluation.metadata_error) rows.push(["Metadata error", <pre class="output">{evaluation.metadata_error}</pre>]);
+  if (evaluation.eval_error) rows.push(["Evaluation error", <pre className="output">{evaluation.eval_error}</pre>]);
+  if (evaluation.metadata_error) rows.push(["Metadata error", <pre className="output">{evaluation.metadata_error}</pre>]);
   return <Facts rows={rows} layout="rows" />;
 }
 
@@ -237,9 +237,9 @@ function GenerationsTable({ deployment, generations, done }: { deployment: Deplo
         </Chips>
       ) },
       { label: "Actions", class: "actions-cell", cell: (generation) => (
-        <span class="row-actions">
-          <a class="button" href={closure_link(deployment, { generation: generation.generation })}>Closure</a>
-          {!(generation.current && generation.profile) && <button class="danger" onClick={() => roll_back(generation)}>Roll back</button>}
+        <span className="row-actions">
+          <a className="button" href={closure_link(deployment, { generation: generation.generation })}>Closure</a>
+          {!(generation.current && generation.profile) && <button className="danger" onClick={() => roll_back(generation)}>Roll back</button>}
         </span>
       ) },
     ]} />

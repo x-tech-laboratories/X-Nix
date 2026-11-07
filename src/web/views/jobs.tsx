@@ -1,13 +1,13 @@
 // The Jobs pages: every update, build, switch, reboot, collection, cache build and push, and one job with its whole output.
 // The Builds tab beside the list is builds.tsx.
 
-import { Badge } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { Crumbs, Facts, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
+import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Crumbs, Facts, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useState } from "react";
 import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge } from "../ui.tsx";
 import { job_owner_link, JobsTable, refresh_interval_in_milliseconds } from "./shared.tsx";
 
@@ -21,10 +21,10 @@ export function JobsTabs({ active }: { active: "jobs" | "builds" }) {
 export function JobsView({ show_evaluations }: { show_evaluations: boolean }) {
   const jobs = use_resource(() => api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`), [show_evaluations], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
-    <div class="page">
+    <div className="page">
       <h1>Jobs</h1>
       <JobsTabs active="jobs" />
-      <p class="muted">
+      <p className="muted">
         Every update, build, switch, reboot, collection, cache build and push, install and media build, newest first.{" "}
         <a href={link(["jobs"], { evaluations: show_evaluations ? null : "1" })}>{show_evaluations ? "Hide evaluations and checks" : "Show evaluations and checks"}</a>
       </p>
@@ -53,7 +53,7 @@ export function JobView({ id }: { id: number }) {
   }, [state]);
 
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Jobs", link(["jobs"])], [`Job ${id}`, null]]} />
       <h1>Job {id}</h1>
       <Stack>
@@ -70,11 +70,11 @@ export function JobView({ id }: { id: number }) {
                 ["Started by", found.trigger],
                 ["Runs on", found.agent ?? "this server"],
               ]} />
-              {found.error && <p class="tone-bad">{found.error}</p>}
+              {found.error && <p className="tone-bad">{found.error}</p>}
               {found.live && <Section title="Progress"><ProgressView progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} /></Section>}
-              <Section title={operation === null ? "Command" : "Operation"}><pre class="output">{operation ?? found.command}</pre></Section>
+              <Section title={operation === null ? "Command" : "Operation"}><pre className="output">{operation ?? found.command}</pre></Section>
               <Section title="Output">
-                {found.output ? <pre class="output run-output">{found.output}</pre> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
+                {found.output ? <pre className="output run-output">{found.output}</pre> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
               </Section>
             </>;
           }}
@@ -106,9 +106,9 @@ function ProgressView({ progress, running }: { progress: BuildProgress; running:
         <Tile label="Downloading" value={String(downloading.length)} />
       </Tiles>
       {running && activities.length > 0 && (
-        <ul class="activities">
+        <ul className="activities">
           {building.map((activity, index) => (
-            <li key={`build-${index}`}><Badge tone="info">building</Badge><code>{activity.name}</code>{activity.phase && <span class="muted small">{activity.phase}</span>}</li>
+            <li key={`build-${index}`}><Badge tone="info">building</Badge><code>{activity.name}</code>{activity.phase && <span className="muted small">{activity.phase}</span>}</li>
           ))}
           {downloading.map((activity, index) => <li key={`download-${index}`}><Badge>downloading</Badge><code>{activity.name}</code></li>)}
         </ul>

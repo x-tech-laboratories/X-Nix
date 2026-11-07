@@ -1,11 +1,11 @@
-import preact from "@preact/preset-vite";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 const server_port = Number(process.env.PORT ?? 7720);
 
 export default defineConfig({
   root: "src/web",
-  plugins: [preact()],
+  plugins: [react()],
   build: {
     outDir: "../../dist",
     emptyOutDir: true,

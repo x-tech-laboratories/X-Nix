@@ -1,15 +1,15 @@
 // The Builds tab of the Jobs page: every finished build of a deployment or cache target with its result, duration, store path, log and
 // products, filtered by deployment or cache and target.
 
-import { Badge } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
+import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useRef } from "preact/hooks";
+import { useRef } from "react";
 import { api, type BuildRecord, type BuildsAnswer } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobsTabs } from "./jobs.tsx";
 import { duration, refresh_interval_in_milliseconds } from "./shared.tsx";
 
@@ -27,10 +27,10 @@ export function BuildsView({ owner, target }: { owner: string; target: string })
   if (first.current === null && answer.data !== null) first.current = answer.data;
 
   return (
-    <div class="page">
+    <div className="page">
       <h1>Jobs</h1>
       <JobsTabs active="builds" />
-      <p class="muted">Every finished build, newest first, with its log and what it made. Products that are files inside their build's store path can be downloaded.</p>
+      <p className="muted">Every finished build, newest first, with its log and what it made. Products that are files inside their build's store path can be downloaded.</p>
       <Section title="History">
         <Toolbar>{first.current && <FilterFields answer={first.current} owner={owner} target={target} />}</Toolbar>
         <Stack>
@@ -57,12 +57,12 @@ function FilterFields({ answer, owner, target }: { answer: BuildsAnswer; owner: 
     ...choices.map((choice) => <option key={choice} value={choice}>{choice}</option>),
   ];
   return <>
-    <label class="field">
-      <span class="field-label">For</span>
+    <label className="field">
+      <span className="field-label">For</span>
       <select value={owner} onChange={(event) => choose({ owner: event.currentTarget.value, target: null })}>{options(owners, "Every deployment and cache")}</select>
     </label>
-    <label class="field">
-      <span class="field-label">Target</span>
+    <label className="field">
+      <span className="field-label">Target</span>
       <select value={target} onChange={(event) => choose({ target: event.currentTarget.value })}>{options(targets, "Every target")}</select>
     </label>
   </>;
@@ -85,14 +85,14 @@ function BuildsTable({ builds }: { builds: BuildRecord[] }) {
 // The store path, then each product, with a download link for those that are files inside it.
 function Products({ build }: { build: BuildRecord }) {
   return (
-    <ul class="products">
-      <li>{build.store_path ? <code class="small">{build.store_path}</code> : <span class="muted">No store path</span>}</li>
+    <ul className="products">
+      <li>{build.store_path ? <code className="small">{build.store_path}</code> : <span className="muted">No store path</span>}</li>
       {build.products.map((product, index) => (
         <li key={index}>
           <Badge>{product.type} {product.subtype}</Badge>{" "}
           {product.size_bytes === null
-            ? <code class="small" title="Not a file inside the build's store path, so it cannot be downloaded">{product.path}</code>
-            : <><a href={`/api/builds/${build.id}/products/${index}`} download={product.name}>{product.name}</a><span class="muted small"> {bytes(product.size_bytes)}</span></>}
+            ? <code className="small" title="Not a file inside the build's store path, so it cannot be downloaded">{product.path}</code>
+            : <><a href={`/api/builds/${build.id}/products/${index}`} download={product.name}>{product.name}</a><span className="muted small"> {bytes(product.size_bytes)}</span></>}
         </li>
       ))}
     </ul>

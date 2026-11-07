@@ -1,10 +1,10 @@
 // The Boot tab of a host's page: its boot entries, the entry it boots next, and Boot next and Reboot into.
 
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Facts, Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Facts, Section, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { api, type ActionOutcome, type Boot, type BootEntry, type Host, type Job } from "../api.ts";
 import { error_toast, JobsTable } from "./shared.tsx";
 
@@ -52,13 +52,13 @@ function EntriesTable({ host, boot, refresh }: { host: Host; boot: Boot; refresh
 
   return (
     <DataTable<BootEntry> caption="Boot entries" rows={boot.entries} row_key={(entry) => entry.id} columns={[
-      { label: "Entry", cell: (entry) => <span>{entry.title}{entry.title !== entry.id && <span class="muted small"> {entry.id}</span>}</span> },
+      { label: "Entry", cell: (entry) => <span>{entry.title}{entry.title !== entry.id && <span className="muted small"> {entry.id}</span>}</span> },
       { label: "Default", cell: (entry) => (entry.default ? "Yes" : "") },
       { label: "Next", cell: (entry) => (entry.next ? "Once" : "") },
       { label: "Actions", cell: (entry) => (
-        <div class="row-actions">
+        <div className="row-actions">
           <button disabled={refusal !== null || entry.next} title={refusal ?? undefined} onClick={() => void set_next(entry, false)}>Boot next</button>
-          <button class="danger" disabled={refusal !== null} title={refusal ?? undefined} onClick={() => confirm_dialog({
+          <button className="danger" disabled={refusal !== null} title={refusal ?? undefined} onClick={() => confirm_dialog({
             title: `Reboot ${host.display_name} into ${entry.title}`,
             message: `Reboot ${host.display_name} into ${entry.title} once? Everything running on it stops until it is back up, and the boot after returns to ${title_of(boot, boot.default)}.`,
             confirm_label: "Reboot",

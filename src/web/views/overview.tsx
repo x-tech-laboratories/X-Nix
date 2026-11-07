@@ -1,13 +1,13 @@
 // The Overview: the fleet in counts, the hosts that need attention and why, and the jobs running now. Each host's own
 // state is on the Hosts page, which every row here links to.
 
-import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { Section, Stack, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
+import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Section, Stack, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type Health, type Job, type Status } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { host_rows, row_status, type Row } from "./hosts.tsx";
 import { drift_state, JobsTable, refresh_interval_in_milliseconds } from "./shared.tsx";
@@ -22,9 +22,9 @@ export function OverviewView() {
   const health = use_resource(() => api<Health>("/api/health"), []);
 
   return (
-    <div class="page">
+    <div className="page">
       <h1>Overview</h1>
-      <p class="muted">
+      <p className="muted">
         {health.data && <>X-Nix {health.data.version} on {health.data.server_name}, started <Age epoch={health.data.started_epoch} />.</>}
       </p>
       <Stack>

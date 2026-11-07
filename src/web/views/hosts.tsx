@@ -1,19 +1,19 @@
 // The Hosts pages: every machine X-Nix reaches in one table to run actions across, and one host with the System it
 // runs, its Store, its Boot entries and the Machine itself as tabs under one header.
 
-import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/preact/badges";
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/preact/dialog";
-import { Crumbs, Facts, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { Crumbs, Facts, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { current_route, link } from "@x-tech-laboratories/x-libs/web/router";
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import {
   api, type ActionOutcome, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Job, type ProvisionedAgent, type Provisioning,
   type Status,
 } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { BootTab, load_boot } from "./boot.tsx";
 import { action_labels, RunsTable } from "./fleet.tsx";
@@ -102,22 +102,22 @@ export function HostsView() {
   };
 
   return (
-    <div class="page">
+    <div className="page">
       <h1>Hosts</h1>
-      <p class="muted">Each machine X-Nix reaches, and the NixOS system it runs against what its flake evaluates to. Search by a name glob or @tag, or tick hosts, to run one action across them.</p>
+      <p className="muted">Each machine X-Nix reaches, and the NixOS system it runs against what its flake evaluates to. Search by a name glob or @tag, or tick hosts, to run one action across them.</p>
       <Stack tight>
-        <form class="toolbar" onSubmit={(event) => {
+        <form className="toolbar" onSubmit={(event) => {
           event.preventDefault();
           void find(search);
         }}>
-          <label class="field">
-            <span class="field-label">Search</span>
-            <input type="search" class="filter" placeholder="web-* @canary" aria-label="Search" value={search} onInput={(event) => set_search(event.currentTarget.value)} />
+          <label className="field">
+            <span className="field-label">Search</span>
+            <input type="search" className="filter" placeholder="web-* @canary" aria-label="Search" value={search} onChange={(event) => set_search(event.currentTarget.value)} />
           </label>
           <button type="submit">Pick</button>
           <button type="button" onClick={() => pick(deployments.map((deployment) => deployment.id))}>All</button>
           <button type="button" onClick={() => pick([])}>None</button>
-          <span class="muted">{loaded.data && `${selected.size} of ${deployments.length} picked`}</span>
+          <span className="muted">{loaded.data && `${selected.size} of ${deployments.length} picked`}</span>
         </form>
         {fleet && fleet.tags.length > 0 && (
           <Chips>
@@ -138,19 +138,19 @@ export function HostsView() {
         <Section title="Run on the picked">
           <Stack>
             <Toolbar>
-              <label class="check"><input type="checkbox" checked={staged} onChange={(event) => set_staged(event.currentTarget.checked)} />Staged rollout</label>
-              <label class="field">
-                <span class="field-label">Stages</span>
-                <textarea class="stage-list" placeholder="One stage per line, such as @canary" aria-label="Stages" value={stages_text} onInput={(event) => set_stages(event.currentTarget.value)} />
+              <label className="check"><input type="checkbox" checked={staged} onChange={(event) => set_staged(event.currentTarget.checked)} />Staged rollout</label>
+              <label className="field">
+                <span className="field-label">Stages</span>
+                <textarea className="stage-list" placeholder="One stage per line, such as @canary" aria-label="Stages" value={stages_text} onChange={(event) => set_stages(event.currentTarget.value)} />
               </label>
-              <label class="field">
-                <span class="field-label">At once</span>
-                <input type="number" min={1} step={1} aria-label="At once" placeholder={fleet ? String(fleet.parallel) : undefined} value={parallel} onInput={(event) => set_parallel(event.currentTarget.value)} />
+              <label className="field">
+                <span className="field-label">At once</span>
+                <input type="number" min={1} step={1} aria-label="At once" placeholder={fleet ? String(fleet.parallel) : undefined} value={parallel} onChange={(event) => set_parallel(event.currentTarget.value)} />
               </label>
             </Toolbar>
-            <div class="head-actions">
+            <div className="head-actions">
               {(Object.keys(action_labels) as FleetActionId[]).map((action) => (
-                <button key={action} class={action === "reboot" ? "danger" : action === "switch" ? "accent solid" : undefined} onClick={() => ask(action)}>{action_labels[action]}</button>
+                <button key={action} className={action === "reboot" ? "danger" : action === "switch" ? "accent solid" : undefined} onClick={() => ask(action)}>{action_labels[action]}</button>
               ))}
             </div>
           </Stack>
@@ -175,20 +175,20 @@ function HostsTable({ rows, selected, on_change }: { rows: Row[]; selected: Set<
     else changed.delete(id);
     on_change(changed);
   };
-  const none = <span class="muted">—</span>;
+  const none = <span className="muted">—</span>;
   return (
     <DataTable<Row> caption="Hosts" rows={rows} row_key={({ host }) => host.name} columns={[
       { label: "Pick", cell: ({ host, deployment }) => deployment && (
         <input type="checkbox" checked={selected.has(deployment.id)} aria-label={`Select ${host.display_name}`} onChange={(event) => toggle(deployment.id, event.currentTarget.checked)} />
       ) },
-      { label: "Host", cell: ({ host }) => <span><a href={link(["hosts", host.name])}>{host.display_name}</a>{host.own && <span class="muted small"> this server</span>}</span> },
+      { label: "Host", cell: ({ host }) => <span><a href={link(["hosts", host.name])}>{host.display_name}</a>{host.own && <span className="muted small"> this server</span>}</span> },
       { label: "Status", cell: (row) => <StatusBadge status={row_status(row)} /> },
       { label: "Tags", cell: ({ deployment }) => (deployment === null ? "" : <TagChips tags={deployment.tags} />) },
       { label: "NixOS", cell: ({ deployment }) => deployment?.reading?.version ?? "—" },
       { label: "Updated", cell: ({ deployment }) => (deployment?.reading?.switched_epoch ? <Age epoch={deployment.reading.switched_epoch} /> : "—") },
-      { label: "Pin", cell: ({ deployment }) => (deployment === null ? none : deployment.pin === null ? <span class="muted">head</span> : <code>{short_revision(deployment.pin)}</code>) },
+      { label: "Pin", cell: ({ deployment }) => (deployment === null ? none : deployment.pin === null ? <span className="muted">head</span> : <code>{short_revision(deployment.pin)}</code>) },
       { label: "Store used", cell: ({ host }) => <StoreUsed host={host} /> },
-      { label: "Waiting on", cell: ({ deployment }) => (deployment === null ? <span class="muted">Not deployed</span> : <WaitingOn deployment={deployment} />) },
+      { label: "Waiting on", cell: ({ deployment }) => (deployment === null ? <span className="muted">Not deployed</span> : <WaitingOn deployment={deployment} />) },
       { label: "Running", cell: ({ host, deployment }) => {
         const job = deployment?.running_job ?? host.running_job;
         return job === null ? "" : <a href={link(["jobs", String(job.id)])}>{job.kind}</a>;
@@ -201,7 +201,7 @@ function StoreUsed({ host }: { host: Host }) {
   const used = host.reading?.store?.used_percent ?? null;
   if (used === null) return <>—</>;
   const tone = host.gc === null ? "none" : last_collection_tone(host);
-  return <span class={tone === "none" ? undefined : `tone-${tone}`}>{used.toFixed(1)}%</span>;
+  return <span className={tone === "none" ? undefined : `tone-${tone}`}>{used.toFixed(1)}%</span>;
 }
 
 // ── One host ─────────────────────────────────────────────────────────────────
@@ -254,14 +254,14 @@ export function HostView({ name, asked }: { name: string; asked: HostTab | null 
   };
 
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [name, null]]} />
-      <header class="page-head">
-        <div class="card-head">
+      <header className="page-head">
+        <div className="card-head">
           <h1>{shown?.host.display_name ?? name}</h1>
           {shown && <span><StatusBadge status={row_status({ host: shown.host, deployment })} /></span>}
         </div>
-        <div class="head-actions">
+        <div className="head-actions">
           {shown && <>
             <button onClick={() => void run_refresh()}>Check now</button>
             {/* A deployment's Reboot reboots its host, so only the host's shows. */}
@@ -272,7 +272,7 @@ export function HostView({ name, asked }: { name: string; asked: HostTab | null 
       </header>
       {shown
         ? <Tabs label="Host" active={shown.tab} items={host_tabs.filter((choice) => shown.has[choice] || choice === shown.tab).map((choice) => ({ id: choice, label: tab_labels[choice], href: link(["hosts", name, choice]) }))} />
-        : <nav class="tabs" aria-label="Host" />}
+        : <nav className="tabs" aria-label="Host" />}
       <Stack>
         <Loaded resource={page}>
           {({ host, contents }) => {
@@ -299,7 +299,7 @@ export function DeploymentRedirect({ id, page }: { id: string; page: string | un
     location.replace(link(["hosts", deployment.host_name, page === "closure" ? "closure" : "system"], query));
     return true;
   }, [id, page]);
-  return <div class="page"><Loaded resource={moved}>{() => null}</Loaded></div>;
+  return <div className="page"><Loaded resource={moved}>{() => null}</Loaded></div>;
 }
 
 // ── Machine ──────────────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export function DeploymentRedirect({ id, page }: { id: string; page: string | un
 function MachineTab({ host, data, refresh }: { host: Host; data: MachineData; refresh: () => void }) {
   const made = data.provisioning.provisioned_agents.find((agent) => agent.host === host.name) ?? null;
   return <>
-    <Section title="Details" tools={made && <button class="danger" onClick={() => forget_key(made, refresh)}>Forget the key</button>}>
+    <Section title="Details" tools={made && <button className="danger" onClick={() => forget_key(made, refresh)}>Forget the key</button>}>
       <Details host={host} made={made} />
     </Section>
     <Section title="Events">{data.events.length === 0 ? <Empty title="No events yet." /> : <EventsList events={data.events} />}</Section>
@@ -336,7 +336,7 @@ function KeyText({ host, made }: { host: Host; made: ProvisionedAgent | null }) 
     <span>
       {made.overridden ? "declared in the config, used instead of the one made by " : "made by "}
       <a href={link(["jobs", String(made.job_id)])}>install #{made.job_id}</a>{" "}
-      <Age epoch={made.added_epoch} />, <code class="small" title={made.public_line}>{made.fingerprint}</code>
+      <Age epoch={made.added_epoch} />, <code className="small" title={made.public_line}>{made.fingerprint}</code>
     </span>
   );
 }

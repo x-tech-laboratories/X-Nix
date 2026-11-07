@@ -3,11 +3,11 @@
 import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
-import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/preact/shell";
+import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
 import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
-import { Fragment, render, type ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { api, LoginNeeded } from "./api.ts";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
@@ -37,7 +37,7 @@ const parent_sections: Record<string, string> = { builds: "jobs", deployments: "
 
 interface Page {
   title: string;
-  view: ComponentChildren;
+  view: ReactNode;
 }
 
 function host_page(name: string, asked: HostTab | null): Page {
@@ -84,7 +84,7 @@ function Login({ on_login }: { on_login: (user_name: string) => void }) {
     name.current?.focus();
   }, []);
 
-  const submit = async (event: SubmitEvent) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     set_busy(true);
     set_message("");
@@ -100,18 +100,18 @@ function Login({ on_login }: { on_login: (user_name: string) => void }) {
   };
 
   return (
-    <form class="login" onSubmit={(event) => void submit(event)}>
-      <div class="login-brand"><img src="/icon.svg" alt="" width={96} height={96} /><h1>X-Nix</h1></div>
-      <label class="field">
-        <span class="field-label">User name</span>
-        <input ref={name} type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck={false} required aria-label="User name" />
+    <form className="login" onSubmit={(event) => void submit(event)}>
+      <div className="login-brand"><img src="/icon.svg" alt="" width={96} height={96} /><h1>X-Nix</h1></div>
+      <label className="field">
+        <span className="field-label">User name</span>
+        <input ref={name} type="text" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} required aria-label="User name" />
       </label>
-      <label class="field">
-        <span class="field-label">Password</span>
-        <input ref={password} type="password" name="password" autocomplete="current-password" required aria-label="Password" />
+      <label className="field">
+        <span className="field-label">Password</span>
+        <input ref={password} type="password" name="password" autoComplete="current-password" required aria-label="Password" />
       </label>
-      <button type="submit" class="accent solid" disabled={busy}>Log in</button>
-      <p class="tone-bad" role="alert">{message}</p>
+      <button type="submit" className="accent solid" disabled={busy}>Log in</button>
+      <p className="tone-bad" role="alert">{message}</p>
     </form>
   );
 }
@@ -172,4 +172,4 @@ function App() {
   );
 }
 
-render(<App />, document.getElementById("app")!);
+createRoot(document.getElementById("app")!).render(<App />);

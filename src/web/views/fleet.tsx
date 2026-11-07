@@ -1,12 +1,12 @@
 // The fleet runs: the table of them on the Hosts page, and one fleet run followed host by host.
 
-import { Crumbs, Facts, Section, Stack } from "@x-tech-laboratories/x-libs/web/preact/layout";
-import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/preact/states";
-import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/preact/table";
-import { toast } from "@x-tech-laboratories/x-libs/web/preact/toasts";
+import { Crumbs, Facts, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type FleetActionId, type FleetOutcome, type FleetRun } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/preact/time";
+import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { FleetHostBadge, FleetRunBadge } from "../ui.tsx";
 import { error_toast, refresh_interval_in_milliseconds } from "./shared.tsx";
 
@@ -50,12 +50,12 @@ export function FleetRunView({ id }: { id: number }) {
 
   const shown = run.data;
   return (
-    <div class="page">
+    <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [`Run ${id}`, null]]} />
-      <header class="page-head">
+      <header className="page-head">
         <h1>Fleet run {id}</h1>
-        <div class="head-actions">
-          {shown && shown.state === "running" && !shown.stop_requested && <button class="danger" onClick={() => void stop()}>Stop</button>}
+        <div className="head-actions">
+          {shown && shown.state === "running" && !shown.stop_requested && <button className="danger" onClick={() => void stop()}>Stop</button>}
         </div>
       </header>
       <Stack>
@@ -84,7 +84,7 @@ function HostsTable({ run }: { run: FleetRun }) {
     ...(run.staged ? [{ label: "Stage", cell: (host: FleetHost) => `${host.stage + 1}: ${run.stages[host.stage] ?? ""}` }] : []),
     { label: "State", cell: (host) => <FleetHostBadge state={host.state} /> },
     { label: "Job", cell: (host) => (host.job_id === null ? "" : <a href={link(["jobs", String(host.job_id)])}>#{host.job_id}</a>) },
-    { label: "Last word", cell: (host) => <span class="muted small">{host.message ?? ""}</span> },
+    { label: "Last word", cell: (host) => <span className="muted small">{host.message ?? ""}</span> },
   ];
   return <DataTable<FleetHost> caption="Hosts" rows={run.hosts} row_key={(host) => host.deployment_id} columns={columns} />;
 }

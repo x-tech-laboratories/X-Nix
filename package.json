@@ -24,13 +24,16 @@
     "@fastify/static": "^10.1.7",
     "@fastify/websocket": "^11.3.5",
     "@x-tech-laboratories/halon": "^0.1.1",
-    "@x-tech-laboratories/x-libs": "^0.4.0",
+    "@x-tech-laboratories/x-libs": "^0.5.0",
     "fastify": "^5.12.7",
-    "preact": "^10.29.8"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.10.6",
     "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
     "oxlint": "^1.89.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",

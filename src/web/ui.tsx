@@ -1,6 +1,6 @@
 // The badges every view shares, and X-Nix's own way of saying until.
 
-import { Badge, type Tone } from "@x-tech-laboratories/x-libs/web/preact/badges";
+import { Badge, type Tone } from "@x-tech-laboratories/x-libs/web/react/badges";
 import type { EventLevel, FleetHostState, FleetRunState, JobState, Status } from "./api.ts";
 
 // ── Badges ───────────────────────────────────────────────────────────────────

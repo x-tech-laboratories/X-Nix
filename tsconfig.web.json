@@ -7,7 +7,6 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "preact",
     "skipLibCheck": true,
     "strict": true,
 
