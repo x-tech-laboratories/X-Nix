@@ -12,6 +12,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import { generate_agent_key, key_fingerprint } from "@x-tech-laboratories/x-libs/agent/keys";
+
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import type { Operation } from "../shared/operations.ts";
 import type { ProvisioningSettings } from "./config.ts";
@@ -22,7 +24,6 @@ import {
 } from "./nixos/provision.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, ProvisionedAgent, Store } from "./store.ts";
-import { generate_agent_key, key_fingerprint } from "../shared/agent_keys.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 

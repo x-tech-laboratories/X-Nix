@@ -34,7 +34,7 @@ function fake_build(): string {
 
 // An agent that performs every operation on this machine.
 const local_agent: Agent = {
-  run: (operation, timeout_in_seconds) => run_operation(operation, { timeout_in_seconds }),
+  run: (operation, options) => run_operation(operation, options),
   start: async () => { throw new Error("not used"); },
   poll: async () => { throw new Error("not used"); },
   forget: async () => {},

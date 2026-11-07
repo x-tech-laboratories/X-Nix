@@ -10,10 +10,11 @@
 
 import { randomBytes } from "node:crypto";
 
+import { format_age, format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { level_of_status, worse, type FlakeSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
-import { format_age, format_duration } from "./durations.ts";
 import { can_update, metadata_operation, update_operation } from "./nixos/commands.ts";
 import { parse_metadata, short_revision, type LockedInput } from "./nixos/flake.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
@@ -141,7 +142,7 @@ export class Flake {
   // Reads the metadata and lock, keeping the last good values when the read fails, and answers whether the flake changed
   // since the last good read.
   private async read(): Promise<boolean> {
-    const result = await this.agents.get(this.settings.host).run(metadata_operation(this.settings), this.settings.timeout);
+    const result = await this.agents.get(this.settings.host).run(metadata_operation(this.settings), { timeout_in_seconds: this.settings.timeout });
     const metadata = result.exit_code === 0 ? parse_metadata(result.stdout) : null;
     const previous = this.reading();
     const timed_out = result.exit_code === -1 && result.stderr.startsWith("Timed out") ? `Timed out after ${format_duration(this.settings.timeout)}` : null;

@@ -5,9 +5,10 @@
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 
-import { AgentKeyError, parse_public_key } from "../shared/agent_keys.ts";
+import { AgentKeyError, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
+import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import type { WakeSettings } from "./agents/wake.ts";
-import { parse_duration } from "./durations.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────

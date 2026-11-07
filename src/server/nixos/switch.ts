@@ -16,8 +16,9 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import type { DeploymentSettings } from "../config.ts";
-import { format_duration } from "../durations.ts";
 import { read_facts, type Generation } from "../../shared/facts.ts";
 import {
   innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,

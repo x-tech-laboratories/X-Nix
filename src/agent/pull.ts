@@ -10,10 +10,11 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
+import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import type { PullReport, RunResult } from "../shared/agent_protocol.ts";
-import { parse_duration } from "../shared/durations.ts";
 import type { Operation } from "../shared/operations.ts";
-import type { LongRuns } from "./long_runs.ts";
 import { run_operation } from "./run.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -151,7 +152,7 @@ export function pull_switch_operation(settings: PullSettings, remote: PullRemote
 
 export class Puller {
   private readonly settings: PullSettings;
-  private readonly runs: LongRuns;
+  private readonly runs: LongRuns<Operation>;
   private readonly file: string;
   private readonly options: PullerOptions;
   private readonly run: (operation: Operation, timeout_in_seconds: number) => Promise<RunResult>;
@@ -161,7 +162,7 @@ export class Puller {
   private timer: NodeJS.Timeout | undefined;
   private ticking = false;
 
-  constructor(settings: PullSettings, runs: LongRuns, state_directory: string, options: PullerOptions) {
+  constructor(settings: PullSettings, runs: LongRuns<Operation>, state_directory: string, options: PullerOptions) {
     this.settings = settings;
     this.runs = runs;
     this.file = join(state_directory, "pull.json");

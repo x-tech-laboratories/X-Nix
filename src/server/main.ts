@@ -4,15 +4,17 @@ import { rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 
+import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
+
+import { operation_runner } from "../agent/tasks.ts";
 import { AgentPool } from "./agents/agent.ts";
+import { create_hub } from "./agents/hub.ts";
 import { Cache } from "./cache.ts";
-import { AgentHub } from "./agents/hub.ts";
-import { LocalAgent } from "./agents/local.ts";
 import { build_app } from "./app.ts";
 import { load_accounts } from "./auth.ts";
 import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
-import { parse_duration } from "./durations.ts";
 import { Flake } from "./flake.ts";
 import { Host } from "./host.ts";
 import { Fleet } from "./fleet.ts";
@@ -42,10 +44,18 @@ const store = new Store(join(state_directory, "x-nix.sqlite"));
 // No feature keeps option lists under the state folder, so any left there go.
 await rm(join(state_directory, "options"), { recursive: true, force: true });
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
-const agents = new AgentPool(server_name, new LocalAgent(join(state_directory, "agent")));
+const local_agent = new LocalAgent(join(state_directory, "agent"), { runner: operation_runner });
+const agents = new AgentPool(server_name, local_agent);
 agents.set_wake(config.wake_on_lan, config.keep_awake);
 // Every other host's agent dials in, and joins the pool once it proves its declared key.
-const hub = new AgentHub(agents);
+const hub = create_hub(agents, local_agent, {
+  // Switches an agent ran on its own while the server was away join its deployments' job history once it reconnects.
+  on_pulls: (host, pulls) => {
+    const kept = record_pulls(store, poller.deployments.values(), host, pulls, Math.floor(Date.now() / 1000));
+    for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
+    return kept;
+  },
+});
 // Hosts X-Nix installed are accepted with the keys it made for them, unless the config declares the host's key itself.
 const accept_agent_keys = (provisioned: Map<string, string>) => hub.set_agent_keys(new Map([...provisioned, ...config.agents]));
 const provisioner = new Provisioner(config.provisioning, {
@@ -73,12 +83,6 @@ const webhook = webhook_secret_file ? new Webhook({
   secret: load_webhook_secret(webhook_secret_file), debounce_in_seconds: webhook_debounce, deployments: poller.deployments, store,
   evaluate: (deployment) => void poller.refresh(deployment), flakes: poller.flakes, read: (flake) => void poller.refresh(flake),
 }) : undefined;
-// Switches an agent ran on its own while the server was away join its deployments' job history once it reconnects.
-hub.on_pulls = (host, pulls) => {
-  const kept = record_pulls(store, poller.deployments.values(), host, pulls, Math.floor(Date.now() / 1000));
-  for (const deployment of poller.deployments.values()) if (deployment.settings.host === host) poller.soon(deployment);
-  return kept;
-};
 const app = await build_app({ serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook });
 
 app.addHook("onClose", async () => {

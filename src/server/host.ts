@@ -142,8 +142,8 @@ export class Host {
     const agent = this.agents.get(this.name);
     const gc = this.settings.gc;
     const [gc_probe, boot_probe] = await Promise.all([
-      gc === null ? null : agent.run(store_probe_operation(gc), probe_timeout_in_seconds),
-      this.settings.boot ? agent.run(boot_probe_operation(this.settings.require_sudo), probe_timeout_in_seconds) : null,
+      gc === null ? null : agent.run(store_probe_operation(gc), { timeout_in_seconds: probe_timeout_in_seconds }),
+      this.settings.boot ? agent.run(boot_probe_operation(this.settings.require_sudo), { timeout_in_seconds: probe_timeout_in_seconds }) : null,
     ]);
     const store = gc_probe === null ? null : this.read_store(gc_probe);
     // A boot read that reached nothing keeps the entries last seen.
@@ -241,7 +241,7 @@ export class Host {
 
   // Runs an operation on the woken host and keeps it in the history as a finished job.
   private async run_at_once(kind: "reboot" | "next-boot", operation: Operation, trigger: string, done: string, failed: string): Promise<HostActionOutcome> {
-    const result = await (await this.agents.awake(this.name)).run(operation, command_timeout_in_seconds);
+    const result = await (await this.agents.awake(this.name)).run(operation, { timeout_in_seconds: command_timeout_in_seconds });
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.name, run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
     const ok = result.exit_code === 0;

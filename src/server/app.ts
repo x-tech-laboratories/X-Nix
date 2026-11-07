@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fastify_static from "@fastify/static";
 
+import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+
 import type { AgentPool } from "./agents/agent.ts";
-import type { AgentHub } from "./agents/hub.ts";
-import { register_agent_route } from "./agents/route.ts";
+import { agent_statuses, type Hub } from "./agents/hub.ts";
 import { register_auth, type Accounts } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
@@ -40,7 +41,7 @@ export interface app_options {
   store: Store;
   poller: Poller;
   // The other hosts' agents; none dial in without it.
-  hub?: AgentHub;
+  hub?: Hub;
   // Installs new hosts and builds install media; the Provision page's routes are missing without it.
   provisioner?: Provisioner;
   // The agents build products are downloaded through; none can be without it.
@@ -333,11 +334,11 @@ const host_confirmations: Record<HostActionId, (name: string) => string> = {
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
 };
 
-function host_view(host: Host, poller: Poller, hub: AgentHub | undefined, own_host: string): HostView {
+function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: string): HostView {
   const settings = host.settings;
   const deployments = [...poller.deployments.values()].filter((deployment) => deployment.host === host);
   const reading = deployments.map((deployment) => deployment.reading()).find((candidate) => candidate !== null) ?? null;
-  const connection = hub?.statuses().find((entry) => entry.host === host.name)?.status ?? null;
+  const connection = hub === undefined ? null : (agent_statuses(hub).find((entry) => entry.host === host.name)?.status ?? null);
   const gc = settings.gc;
   return {
     name: host.name,
@@ -399,7 +400,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
-  register_auth(app, options.accounts);
+  await register_auth(app, options.accounts);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
 
@@ -412,7 +413,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.get("/api/health", async (): Promise<HealthAnswer> => ({ name: "X-Nix", version, server_name, started_epoch }));
 
   // Each host with a declared agent key, and whether its agent is connected.
-  app.get("/api/agents", async () => options.hub?.statuses() ?? []);
+  app.get("/api/agents", async () => (options.hub === undefined ? [] : agent_statuses(options.hub)));
 
   // ── Hosts ────────────────────────────────────────────────────────────────
 

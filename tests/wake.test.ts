@@ -66,7 +66,7 @@ describe("waking a host through the pool", () => {
     const agent = await pool.awake("thor");
 
     expect(sent).toEqual([thor]);
-    expect((await agent.run(plain, 5)).stdout).toBe("thor");
+    expect((await agent.run(plain, { timeout_in_seconds: 5 })).stdout).toBe("thor");
   });
 
   it("sends nothing to a host already connected, one it cannot wake, or the server's own", async () => {
@@ -80,7 +80,7 @@ describe("waking a host through the pool", () => {
     const missing = await pool.awake("odin");
 
     expect(sent).toBe(0);
-    expect((await missing.run(plain, 5)).stderr).toMatch(/No agent named 'odin'/);
+    expect((await missing.run(plain, { timeout_in_seconds: 5 })).stderr).toMatch(/No agent named 'odin'/);
   });
 
   it("says so when the agent does not dial in in time, or the packet cannot be sent", async () => {
@@ -92,7 +92,7 @@ describe("waking a host through the pool", () => {
     failing.set_wake(new Map([["thor", thor]]));
 
     await expect((await quiet.awake("thor")).start("run", plain)).rejects.toMatchObject({ unreachable: true, message: expect.stringMatching(/did not connect within 1 second/) });
-    expect((await (await failing.awake("thor")).run(plain, 5)).stderr).toBe("Could not wake thor: no route");
+    expect((await (await failing.awake("thor")).run(plain, { timeout_in_seconds: 5 })).stderr).toBe("Could not wake thor: no route");
   });
 });
 
@@ -113,7 +113,7 @@ describe("waking through another host's agent", () => {
 
     expect(sent).toEqual([{ kind: "wake", mac: "aa:bb:cc:dd:ee:ff", broadcast: "192.168.0.255", port: 9 }]);
     expect(wake_operation(thor)).toEqual({ kind: "wake", mac: thor.mac, broadcast: thor.broadcast, port: thor.port });
-    expect((await (await failing.awake("thor")).run(plain, 5)).stderr).toMatch(/^Could not wake thor: heimdall could not send the packet/);
+    expect((await (await failing.awake("thor")).run(plain, { timeout_in_seconds: 5 })).stderr).toMatch(/^Could not wake thor: heimdall could not send the packet/);
   });
 });
 

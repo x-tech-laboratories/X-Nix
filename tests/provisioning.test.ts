@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { generate_agent_key, parse_private_key, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
+
 import { run_operation } from "../src/agent/run.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { build_app, type ProvisioningView } from "../src/server/app.ts";
@@ -18,7 +20,6 @@ import {
 import { Poller } from "../src/server/poller.ts";
 import { Provisioner } from "../src/server/provisioning.ts";
 import { Store } from "../src/server/store.ts";
-import { generate_agent_key, parse_private_key, parse_public_key } from "../src/shared/agent_keys.ts";
 import type { InstallOperation } from "../src/shared/operations.ts";
 import { clock, FakeAgent } from "./fake_agent.ts";
 

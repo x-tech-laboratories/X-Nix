@@ -26,13 +26,14 @@
 
 import { randomBytes } from "node:crypto";
 
+import { format_age, format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { built_store_path, record_builds } from "./builds.ts";
 import type { Cache } from "./cache.ts";
 import type { Host } from "./host.ts";
 import { parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
-import { format_age, format_duration } from "./durations.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import { closure_operation, diff_operation, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
 import {
@@ -352,7 +353,7 @@ export class Deployment {
     else if (from_cache !== null) evaluating = Promise.resolve(this.fold_cache_check(from_cache.cache, from_cache.name));
     // An evaluation on another host needs the target's attribute name, which the first probe supplies.
     else if (this.due_for_evaluation() && !(this.settings.eval_agent !== null && this.attribute() === null)) evaluating = this.launch_evaluation();
-    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_operation(), probe_timeout_in_seconds), evaluating]);
+    const [probe, folded] = await Promise.all([this.agents.get(this.settings.host).run(probe_operation(), { timeout_in_seconds: probe_timeout_in_seconds }), evaluating]);
     const evaluation = folded ?? this.evaluation();
 
     const fields = parse_probe(probe.stdout);
@@ -596,7 +597,7 @@ export class Deployment {
   }
 
   private async cache_holds(target: string, host: string | null = this.agent_for("switch")): Promise<boolean> {
-    const result = await this.agents.get(host).run(cache_holds_operation(this.settings, target), cache_check_timeout_in_seconds);
+    const result = await this.agents.get(host).run(cache_holds_operation(this.settings, target), { timeout_in_seconds: cache_check_timeout_in_seconds });
     return result.exit_code === 0;
   }
 
@@ -1077,13 +1078,13 @@ export class Deployment {
         return;
       }
       const reason = `HTTP health check failed: ${failure}`;
-      const signalled = await agent.run(rollback_signal_operation(token, reason), signal_timeout_in_seconds);
+      const signalled = await agent.run(rollback_signal_operation(token, reason), { timeout_in_seconds: signal_timeout_in_seconds });
       if (signalled.exit_code !== 0) return;
       this.tended_switches.add(job.id);
       this.store.append_output(job.id, `${reason}; told the watchdog to roll back\n`);
       return;
     }
-    const confirmed = await agent.run(confirm_operation(token), signal_timeout_in_seconds);
+    const confirmed = await agent.run(confirm_operation(token), { timeout_in_seconds: signal_timeout_in_seconds });
     // A host X-Nix cannot reach now is tried again on the next poll, until the watchdog gives up on it.
     if (confirmed.exit_code !== 0) return;
     this.tended_switches.add(job.id);
@@ -1118,7 +1119,7 @@ export class Deployment {
     const last = evaluation.last_diff;
     if (!force && last !== null && last.from === from && last.to === to && last.built && last.error === null) return { diff: last, message: null };
     const operation = diff_operation(this.settings, from, to);
-    const result = await this.agents.get(this.settings.host).run(operation, diff_timeout_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(operation, { timeout_in_seconds: diff_timeout_in_seconds });
     if (result.exit_code === -1) return { diff: null, message: `Could not compare the closures: ${clip(result.stderr || result.stdout, 200)}` };
     const job_id = this.store.create_job({ deployment_id: this.id, kind: "diff", command: JSON.stringify(operation), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
@@ -1135,7 +1136,7 @@ export class Deployment {
 
   // Reads every generation of the host's system profile.
   async generations(): Promise<{ generations: Generation[]; error: string | null }> {
-    const result = await this.agents.get(this.settings.host).run(generations_operation(), probe_timeout_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(generations_operation(), { timeout_in_seconds: probe_timeout_in_seconds });
     const generations = parse_generations(result.stdout);
     if (generations.length === 0) return { generations, error: `Could not read the system profile's generations: ${clip(result.stderr || result.stdout, 200) || "none found"}` };
     return { generations, error: null };
@@ -1176,7 +1177,7 @@ export class Deployment {
       if (path === null) return { tree: null, error: selector.which === "target" ? "The flake has not been evaluated yet" : "The running system has not been read yet" };
     }
     if (!is_store_path(path)) return { tree: null, error: `${path} is not a store path` };
-    const result = await this.agents.get(this.settings.host).run(closure_operation(this.settings, path), closure_timeout_in_seconds);
+    const result = await this.agents.get(this.settings.host).run(closure_operation(this.settings, path), { timeout_in_seconds: closure_timeout_in_seconds });
     if (result.exit_code !== 0) {
       const missing = selector.which === "target" ? "; the flake's closure may not be built on the host yet" : "";
       return { tree: null, error: `Could not read the closure of ${path}: ${clip(result.stderr || result.stdout, 300)}${missing}` };

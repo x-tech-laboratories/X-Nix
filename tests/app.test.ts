@@ -136,13 +136,16 @@ describe("logging in", () => {
     expect((await server.inject({ method: "GET", url: "/api/health" })).statusCode).toBe(200);
   });
 
-  it("refuses a wrong password, then every try after five", async () => {
+  it("refuses a wrong password, and every try from an address after five in five minutes, right or wrong", async () => {
+    // Logging in to start the app is the first of the five.
     const { server } = await start_app();
     const attempt = (guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password: guess } });
 
-    for (let count = 0; count < 5; count++) expect((await attempt("wrong")).statusCode).toBe(401);
+    for (let count = 0; count < 4; count++) expect((await attempt("wrong")).statusCode).toBe(401);
+    const refused = await attempt(password);
 
-    expect((await attempt(password)).statusCode).toBe(429);
+    expect(refused.statusCode).toBe(429);
+    expect(refused.json()).toMatchObject({ error: "Too many tries; wait a few minutes." });
   });
 
   it("logs each user in with their own password and tells the page who they are", async () => {

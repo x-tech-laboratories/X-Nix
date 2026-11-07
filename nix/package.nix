@@ -23,7 +23,7 @@ buildNpmPackage {
   };
 
   nodejs = nodejs_24;
-  npmDepsHash = "sha256-EXzgiW/b+2bZZwYEcZEtu5g4LCPHBKhozLKU5KDnnBo=";
+  npmDepsHash = import ./npm-deps-hash.nix;
 
   nativeBuildInputs = [ makeWrapper ];
 

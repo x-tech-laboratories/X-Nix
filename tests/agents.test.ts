@@ -6,14 +6,17 @@ import { join } from "node:path";
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { key_fingerprint, parse_private_key, parse_public_key, sign_challenge, verify_challenge } from "@x-tech-laboratories/x-libs/agent/keys";
+import { encode_message } from "@x-tech-laboratories/x-libs/agent/protocol";
+import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
+import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+
 import { start_agent, type RunningAgent } from "../src/agent/agent.ts";
+import { operation_runner } from "../src/agent/tasks.ts";
 import { AgentPool, type Agent } from "../src/server/agents/agent.ts";
-import { AgentHub, close_codes } from "../src/server/agents/hub.ts";
-import { LocalAgent } from "../src/server/agents/local.ts";
-import { register_agent_route } from "../src/server/agents/route.ts";
+import { agent_statuses, close_codes, create_hub, type Hub } from "../src/server/agents/hub.ts";
 import { ConfigError, parse_config } from "../src/server/config.ts";
-import { key_fingerprint, parse_private_key, parse_public_key, sign_challenge, verify_challenge } from "../src/shared/agent_keys.ts";
-import { encode_message, key_host_header, protocol_version } from "../src/shared/agent_protocol.ts";
+import { key_host_header, x_nix_app } from "../src/shared/agent_protocol.ts";
 import type { Operation } from "../src/shared/operations.ts";
 
 const agent_main = join(import.meta.dirname, "../src/agent/main.ts");
@@ -36,12 +39,12 @@ describe("agent keys", () => {
 
   it("read a key ssh-keygen made and sign a challenge its public line verifies, for that host and nonce only", () => {
     const { private_file, public_line } = make_key(folder, "odin");
-    const signature = sign_challenge(parse_private_key(readFileSync(private_file, "utf8")), "odin", "nonce-1");
+    const signature = sign_challenge(parse_private_key(readFileSync(private_file, "utf8")), "x-nix", "odin", "nonce-1");
     const public_key = parse_public_key(public_line);
-    expect(verify_challenge(public_key, "odin", "nonce-1", signature)).toBe(true);
-    expect(verify_challenge(public_key, "odin", "nonce-2", signature)).toBe(false);
-    expect(verify_challenge(public_key, "thor", "nonce-1", signature)).toBe(false);
-    expect(verify_challenge(parse_public_key(make_key(folder, "other").public_line), "odin", "nonce-1", signature)).toBe(false);
+    expect(verify_challenge(public_key, "x-nix", "odin", "nonce-1", signature)).toBe(true);
+    expect(verify_challenge(public_key, "x-nix", "odin", "nonce-2", signature)).toBe(false);
+    expect(verify_challenge(public_key, "x-nix", "thor", "nonce-1", signature)).toBe(false);
+    expect(verify_challenge(parse_public_key(make_key(folder, "other").public_line), "x-nix", "odin", "nonce-1", signature)).toBe(false);
   });
 
   it("give the fingerprint ssh-keygen prints", () => {
@@ -67,7 +70,7 @@ describe("agent keys", () => {
 
 describe("agent hub", () => {
   let app: FastifyInstance;
-  let hub: AgentHub;
+  let hub: Hub;
   let pool: AgentPool;
   let url: string;
   let folder: string;
@@ -95,8 +98,9 @@ describe("agent hub", () => {
     key = make_key(folder, "odin");
     agent = null;
     processes = [];
-    pool = new AgentPool("heimdall", new LocalAgent(join(folder, "local")));
-    hub = new AgentHub(pool);
+    const local = new LocalAgent(join(folder, "local"), { runner: operation_runner });
+    pool = new AgentPool("heimdall", local);
+    hub = create_hub(pool, local);
     hub.set_agent_keys(new Map([["odin", key.public_line]]));
     app = fastify();
     await register_agent_route(app, hub);
@@ -112,12 +116,12 @@ describe("agent hub", () => {
   });
 
   it("joins a connected agent to the pool, which runs commands and long runs through it", async () => {
-    expect((await pool.get("odin").run(shell("echo hi"), 5)).exit_code).toBe(-1);
+    expect((await pool.get("odin").run(shell("echo hi"), { timeout_in_seconds: 5 })).exit_code).toBe(-1);
     start_test_agent();
     await connected();
 
     const remote: Agent = pool.get("odin");
-    expect((await remote.run({ kind: "programs", steps: [{ argv: ["echo", "signed in"] }] }, 5)).stdout).toBe("signed in");
+    expect((await remote.run({ kind: "programs", steps: [{ argv: ["echo", "signed in"] }] }, { timeout_in_seconds: 5 })).stdout).toBe("signed in");
     await remote.start("odin-test-1", shell("echo started; exit 3"));
     let poll = await remote.poll("odin-test-1", 0);
     while (poll.alive) {
@@ -125,7 +129,7 @@ describe("agent hub", () => {
       poll = await remote.poll("odin-test-1", 0);
     }
     expect([poll.exit_code, poll.new_output]).toEqual([3, "$ /bin/sh -c 'echo started; exit 3'\nstarted\n"]);
-    expect(hub.statuses()).toEqual([{ host: "odin", status: expect.objectContaining({ host: "odin", agent_version: "test" }) }]);
+    expect(agent_statuses(hub)).toEqual([{ host: "odin", status: expect.objectContaining({ host: "odin", agent_version: "test" }) }]);
   });
 
   it("answers a poll of an unknown run as the agent's failure, not the host being out of reach", async () => {
@@ -177,7 +181,7 @@ describe("agent hub", () => {
       const challenge = JSON.parse(String((await new Promise<MessageEvent>((resolve) => socket.addEventListener("message", resolve, { once: true }))).data));
       expect(challenge).toMatchObject({ type: "challenge", nonce: expect.any(String) });
       const ended = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
-      socket.send(encode_message({ type: "hello", protocol: protocol_version, host: "odin", agent_version: "test", runs: [], ...hello }));
+      socket.send(encode_message({ type: "hello", protocol: x_nix_app.protocol_version, host: "odin", agent_version: "test", runs: [], ...hello }, x_nix_app));
       expect((await ended).code).toBe(code);
     }
     expect(hub.is_connected("odin")).toBe(false);

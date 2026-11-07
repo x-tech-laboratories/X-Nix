@@ -57,7 +57,7 @@ export async function start_run(
 ): Promise<{ waking: Promise<void> | null }> {
   const running = agents.keeps_awake(host) ? kept_awake_job(operation) : operation;
   if (wake && agents.can_wake(host)) return { waking: agents.start_when_awake(host, run_id, running, stdin) };
-  await agents.get(host).start(run_id, running, stdin);
+  await agents.get(host).start(run_id, running, { stdin });
   return { waking: null };
 }
 

@@ -8,9 +8,9 @@ import { openSync, readFileSync, renameSync, writeFileSync, writeSync } from "no
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 
-import { plan_file, type RunPlan } from "./long_runs.ts";
 import { perform } from "./operations/index.ts";
 import { spawn_program, type Context } from "./programs.ts";
+import { plan_file, type RunPlan } from "./tasks.ts";
 
 // ── Run ──────────────────────────────────────────────────────────────────────
 

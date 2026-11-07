@@ -8,9 +8,10 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { format_age, format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import { level_of_status, worse, type GcSettings, type Status } from "../config.ts";
 import type { Message } from "../deployment.ts";
-import { format_age, format_duration } from "../durations.ts";
 import { read_facts, type GcFields, type Profile } from "../../shared/facts.ts";
 import { show_argv, type Argv, type Operation } from "../../shared/operations.ts";
 

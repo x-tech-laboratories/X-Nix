@@ -1,79 +1,31 @@
-// The agent's connection to the server, copied from X-Backups' agent: dials out over a WebSocket naming its host, signs
-// the server's challenge with the host's key, hands the connection to a session, and dials again with a growing,
-// jittered wait whenever it drops. With pull settings, it also deploys from Git on its own while the server is away.
+// The X-Nix agent: X-Libs' agent, which dials out over a WebSocket naming its host, signs the server's challenge with
+// the host's key and dials again whenever it drops, performing each operation through the runner. With pull settings,
+// it also deploys from Git on its own while the server is away, and reports those switches once the server is back.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import type { KeyObject } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { start_agent as start_x_libs_agent, type AgentConfig as XLibsAgentConfig } from "@x-tech-laboratories/x-libs/agent/client";
+import type { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
+import type { AgentSession } from "@x-tech-laboratories/x-libs/agent/session";
 
-import { AgentKeyError, parse_private_key } from "../shared/agent_keys.ts";
-import { key_host_header } from "../shared/agent_protocol.ts";
-import { LongRuns, type LongRunOptions } from "./long_runs.ts";
+import { x_nix_app } from "../shared/agent_protocol.ts";
+import type { Operation } from "../shared/operations.ts";
 import { Puller, type PullSettings } from "./pull.ts";
-import { AgentSession } from "./session.ts";
+import { operation_runner } from "./tasks.ts";
+
+export { AgentConfigError, check_url } from "@x-tech-laboratories/x-libs/agent/client";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
-export interface AgentConfig {
-  url: string;
+export interface AgentConfig extends Omit<XLibsAgentConfig<Operation>, "app" | "runner" | "token_file" | "key_file" | "on_hello" | "on_message"> {
   // The host's OpenSSH ed25519 private key.
   key_file: string;
-  state_directory: string;
-  // The host it logs in as, which must be its name in the server's config.
-  host: string;
-  agent_version: string;
-  heartbeat_in_milliseconds?: number;
-  // The first wait before dialling again, doubled each failure up to the longest.
-  backoff_initial_in_milliseconds?: number;
-  backoff_longest_in_milliseconds?: number;
-  long_runs?: LongRunOptions;
-  log?: (line: string) => void;
   // Deploys from Git on its own once the server has been unreachable a while; off when absent.
   pull?: PullSettings;
 }
 
-export class AgentConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AgentConfigError";
-  }
-}
-
-const local_names = new Set(["localhost", "[::1]", "::1"]);
-
-// ── Checks ───────────────────────────────────────────────────────────────────
-
-// The server's URL, which must be wss:// so what the commands print travels encrypted, unless it is this machine.
-export function check_url(text: string): URL {
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    throw new AgentConfigError(`'${text}' is not a URL.`);
-  }
-  if (url.protocol === "wss:") return url;
-  if (url.protocol !== "ws:") throw new AgentConfigError(`The server URL must start with wss://, not ${url.protocol}//.`);
-  const local = local_names.has(url.hostname) || /^127\.\d+\.\d+\.\d+$/.test(url.hostname);
-  if (!local) throw new AgentConfigError(`ws:// is unencrypted, so it is only allowed to this machine; use wss://${url.host}${url.pathname}.`);
-  return url;
-}
-
-// The key in the file, or an AgentConfigError naming the file for one that is not a usable key.
-export function read_key_file(file: string): KeyObject {
-  const text = readFileSync(file, "utf8");
-  try {
-    return parse_private_key(text);
-  } catch (error) {
-    if (error instanceof AgentKeyError) throw new AgentConfigError(`The key file ${file} ${error.message}`);
-    throw error;
-  }
-}
-
-// ── Agent ────────────────────────────────────────────────────────────────────
-
 export interface RunningAgent {
-  readonly runs: LongRuns;
+  readonly runs: LongRuns<Operation>;
   // Pull mode, when its settings were given.
   readonly puller: Puller | null;
   // Whether a session is open now.
@@ -82,89 +34,46 @@ export interface RunningAgent {
   stop(): Promise<void>;
 }
 
-export function start_agent(config: AgentConfig): RunningAgent {
-  const url = check_url(config.url);
-  // A key that is there but unusable stops the agent at once; one not there yet, as before secrets are in place, is retried.
-  try {
-    read_key_file(config.key_file);
-  } catch (error) {
-    if (error instanceof AgentConfigError) throw error;
-  }
-  const runs = new LongRuns(config.state_directory, config.long_runs);
-  const log = config.log ?? ((line: string) => console.log(line));
-  const heartbeat = config.heartbeat_in_milliseconds ?? 15_000;
-  const initial = config.backoff_initial_in_milliseconds ?? 1000;
-  const longest = config.backoff_longest_in_milliseconds ?? 60_000;
+// ── Agent ────────────────────────────────────────────────────────────────────
 
-  let socket: WebSocket | null = null;
-  let session: AgentSession | null = null;
-  let failures = 0;
-  let stopping = false;
-  let retry_timer: NodeJS.Timeout | undefined;
-  let closed_resolve: (() => void) | null = null;
-  const puller = config.pull === undefined ? null : new Puller(config.pull, runs, config.state_directory, {
-    connected: () => session !== null,
-    report: () => void session?.report_pulls(),
+export function start_agent(config: AgentConfig): RunningAgent {
+  const { pull, ...rest } = config;
+  const log = config.log ?? ((line: string) => console.log(line));
+  let puller: Puller | null = null;
+
+  // Sends the server every switch pull mode ran that it has not yet received.
+  const report_pulls = async (session: AgentSession<Operation> | null) => {
+    if (session === null || puller === null) return;
+    const pulls = await puller.pending();
+    if (pulls.length > 0) session.send({ type: "pulls", pulls });
+  };
+
+  const agent = start_x_libs_agent({
+    ...rest,
+    app: x_nix_app,
+    runner: operation_runner,
+    log,
+    on_hello: (session) => void report_pulls(session),
+    on_message: (message) => {
+      if (message.type !== "pulls_received" || !Array.isArray(message.run_ids)) return;
+      puller?.acknowledge(message.run_ids.filter((run_id): run_id is string => typeof run_id === "string"));
+    },
+  });
+
+  puller = pull === undefined ? null : new Puller(pull, agent.runs, config.state_directory, {
+    connected: agent.connected,
+    report: () => void report_pulls(agent.session()),
     log,
   });
   puller?.start();
 
-  const dial_later = () => {
-    if (stopping) return;
-    // Half the wait is fixed and half random, so hosts that lost the server together do not all return at once.
-    const wait = Math.min(longest, initial * 2 ** failures);
-    failures++;
-    retry_timer = setTimeout(dial, wait / 2 + Math.random() * (wait / 2));
-  };
-
-  const dial = () => {
-    if (stopping) return;
-    let key: KeyObject;
-    try {
-      // Read again on each dial, so a replaced key file is picked up.
-      key = read_key_file(config.key_file);
-    } catch (error) {
-      log(`Could not read the key file: ${(error as Error).message}`);
-      dial_later();
-      return;
-    }
-    const current = new WebSocket(url, { headers: { [key_host_header]: config.host } } as unknown as string[]);
-    socket = current;
-    current.addEventListener("open", () => {
-      failures = 0;
-      log(`Connected to ${url.origin}`);
-      session = new AgentSession(current, runs, {
-        host: config.host, agent_version: config.agent_version, heartbeat_in_milliseconds: heartbeat, key, pulls: puller ?? undefined,
-      });
-    });
-    current.addEventListener("message", (event) => {
-      if (typeof event.data === "string") session?.receive(event.data);
-    });
-    current.addEventListener("error", () => {});
-    current.addEventListener("close", (event) => {
-      if (session !== null) log(`Disconnected from ${url.origin} (${event.code}${event.reason ? `: ${event.reason}` : ""})`);
-      session?.close();
-      session = null;
-      socket = null;
-      if (closed_resolve !== null) closed_resolve();
-      else dial_later();
-    });
-  };
-
-  dial();
-
   return {
-    runs,
+    runs: agent.runs,
     puller,
-    connected: () => session !== null,
+    connected: agent.connected,
     stop: () => {
-      stopping = true;
       puller?.stop();
-      clearTimeout(retry_timer);
-      if (socket === null) return Promise.resolve();
-      const closing = new Promise<void>((resolve) => (closed_resolve = resolve));
-      socket.close(1000, "The agent is stopping.");
-      return closing;
+      return agent.stop();
     },
   };
 }

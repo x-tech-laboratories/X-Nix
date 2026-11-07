@@ -11,6 +11,8 @@
 
 import { randomBytes } from "node:crypto";
 
+import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { record_builds } from "./builds.ts";
 import { probe_cache_server, type CacheServerReading, type Fetcher } from "./cache_server.ts";
@@ -25,7 +27,6 @@ import { parse_metadata } from "./nixos/flake.ts";
 import { latest_slot } from "./deployment.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, JobWithOutput, Store } from "./store.ts";
-import { format_duration } from "./durations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 

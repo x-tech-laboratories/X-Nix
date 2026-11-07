@@ -2,37 +2,21 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+import { AgentError, type Agent as XLibsAgent } from "@x-tech-laboratories/x-libs/server/agents/agent";
+
 import type { LongRun, LongRunPoll, RunResult } from "../../shared/agent_protocol.ts";
 import type { Operation } from "../../shared/operations.ts";
-import { format_duration } from "../durations.ts";
 import { send_magic_packet, wake_operation, type SendWake, type WakeSettings } from "./wake.ts";
 
+export { AgentError } from "@x-tech-laboratories/x-libs/server/agents/agent";
 export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared/agent_protocol.ts";
 
 // ── Agent ────────────────────────────────────────────────────────────────────
 
-export class AgentError extends Error {
-  // Whether the host never answered, so trying again later may work, rather than answering that it failed.
-  readonly unreachable: boolean;
-
-  constructor(message: string, unreachable = false) {
-    super(message);
-    this.name = "AgentError";
-    this.unreachable = unreachable;
-  }
-}
-
-export interface Agent {
-  // Performs an operation to its end; it never rejects, answering a failure to reach the host with exit code -1.
-  run(operation: Operation, timeout_in_seconds: number): Promise<RunResult>;
-  // Starts a long run, which outlives the connection, the agent and the server; its stdin is piped in and never written
-  // down by the agent. Rejects with an AgentError.
-  start(run_id: string, operation: Operation, stdin?: string | null): Promise<LongRun>;
-  // What a long run has written past an offset in bytes, and whether it has ended; rejects with an AgentError.
-  poll(run_id: string, offset: number): Promise<LongRunPoll>;
-  // Removes an ended long run's output from the host.
-  forget(run_id: string): Promise<void>;
-}
+// The part of an X-Libs agent X-Nix uses: run performs an operation to its end and never rejects, start begins a long
+// run that outlives the agent, poll reads its output past an offset, and forget removes an ended one.
+export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "forget">;
 
 const wake_command_timeout_in_seconds = 30;
 
@@ -131,7 +115,7 @@ export class AgentPool {
 
   // Sends the packet from another host's agent on the sleeping host's network.
   private async send_through(via: string, settings: WakeSettings): Promise<void> {
-    const result = await this.get(via).run(wake_operation(settings), wake_command_timeout_in_seconds);
+    const result = await this.get(via).run(wake_operation(settings), { timeout_in_seconds: wake_command_timeout_in_seconds });
     if (result.exit_code !== 0) throw new Error(`${via} could not send the packet: ${(result.stderr || result.stdout).trim().slice(0, 200)}`);
   }
 
@@ -159,7 +143,7 @@ export class AgentPool {
   start_when_awake(host: string | null, run_id: string, operation: Operation, stdin: string | null = null): Promise<void> {
     this.starting.add(run_id);
     return this.awake(host)
-      .then(async (agent) => void (await agent.start(run_id, operation, stdin)))
+      .then(async (agent) => void (await agent.start(run_id, operation, { stdin })))
       .finally(() => this.starting.delete(run_id));
   }
 

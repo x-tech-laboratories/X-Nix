@@ -63,7 +63,7 @@ export async function record_builds(store: Store, agents: AgentPool, job: Job, b
   for (const entry of built) {
     let products: BuildProduct[] = [];
     if (entry.succeeded && entry.store_path !== null && is_store_path(entry.store_path)) {
-      const result = await agent.run(products_operation(entry.store_path), products_timeout_in_seconds);
+      const result = await agent.run(products_operation(entry.store_path), { timeout_in_seconds: products_timeout_in_seconds });
       products = parse_products(result.stdout);
     }
     store.add_build({
@@ -95,7 +95,7 @@ export function piece_operation(path: string, block: number): Operation {
 
 // Finds the product on the host that built it, answering its real path and size, or why it cannot be sent.
 export async function locate_product(agent: Agent, build: BuildRecord, product: BuildProduct): Promise<{ path: string; size: number } | { error: string }> {
-  const result = await agent.run(locate_operation(build.store_path!, product.path), products_timeout_in_seconds);
+  const result = await agent.run(locate_operation(build.store_path!, product.path), { timeout_in_seconds: products_timeout_in_seconds });
   const located = result.exit_code === 0 ? read_facts<LocatedFile>(result.stdout) : null;
   if (located === null || typeof located.path !== "string" || typeof located.size !== "number") return { error: result.stderr.trim() || `The host answered with status ${result.exit_code}` };
   return { path: located.path, size: located.size };
@@ -111,7 +111,7 @@ export function product_stream(agent: Agent, path: string, size: number): Readab
         this.push(null);
         return;
       }
-      void agent.run(piece_operation(path, block), piece_timeout_in_seconds).then((result) => {
+      void agent.run(piece_operation(path, block), { timeout_in_seconds: piece_timeout_in_seconds }).then((result) => {
         if (result.exit_code !== 0) {
           this.destroy(new Error(`Could not read ${path}: ${result.stderr.trim() || `status ${result.exit_code}`}`));
           return;

@@ -164,8 +164,9 @@ export class FakeAgent implements Agent {
     return operation.kind === "store_probe" ? this.gc_probe_result : this.command_result;
   }
 
-  async start(run_id: string, operation: Operation, stdin: string | null = null): Promise<LongRun> {
+  async start(run_id: string, operation: Operation, options: { stdin?: string | null } = {}): Promise<LongRun> {
     if (this.start_error !== null) throw this.start_error;
+    const stdin = options.stdin ?? null;
     this.runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true });
     return { run_id, pid: 4242, started_epoch: clock.now, state: "running", exit_code: null };
   }

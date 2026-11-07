@@ -6,15 +6,18 @@ import { join } from "node:path";
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
+import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
+import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+
 import { start_agent, type RunningAgent } from "../src/agent/agent.ts";
-import { LongRuns } from "../src/agent/long_runs.ts";
 import { parse_ls_remote, parse_pull_settings, pull_switch_operation, Puller, PullConfigError, type PullSettings } from "../src/agent/pull.ts";
+import { operation_runner, operation_runs } from "../src/agent/tasks.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
-import { AgentHub } from "../src/server/agents/hub.ts";
-import { LocalAgent } from "../src/server/agents/local.ts";
-import { register_agent_route } from "../src/server/agents/route.ts";
+import { create_hub } from "../src/server/agents/hub.ts";
 import { record_pulls } from "../src/server/pull_reports.ts";
 import type { PullReport, RunResult } from "../src/shared/agent_protocol.ts";
+import type { Operation } from "../src/shared/operations.ts";
 import { clock, make_deployment, result } from "./fake_agent.ts";
 
 const first_revision = "1".repeat(40);
@@ -58,7 +61,7 @@ describe("pull mode", () => {
   // A puller whose remotes answer what the test sets, and whose switch only prints its arguments.
   function make_puller(after = "0s") {
     const folder = mkdtempSync(join(tmpdir(), "x-nix-pull-"));
-    const runs = new LongRuns(folder, { tail_interval_in_milliseconds: 10 });
+    const runs = operation_runs(folder, { tail_interval_in_milliseconds: 10 });
     const settings: PullSettings = parse_pull_settings({
       remotes: ["https://primary.example/config", { url: "https://mirror.example/config", branch: "main" }], after, rebuild_bin: "echo", require_sudo: false,
     }, "odin");
@@ -81,7 +84,7 @@ describe("pull mode", () => {
     return { puller, runs, folder, head, asked, state, lines };
   }
 
-  async function settle(runs: LongRuns): Promise<void> {
+  async function settle(runs: LongRuns<Operation>): Promise<void> {
     while (runs.list().some((run) => run.state === "running")) await sleep(20);
   }
 
@@ -194,7 +197,7 @@ describe("a reconnecting agent", () => {
     execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "x-nix-agent-odin", "-f", key_file], { stdio: "ignore" });
     const state_directory = join(folder, "agent");
     // A switch an earlier run of the agent finished while the server was away.
-    const runs = new LongRuns(state_directory);
+    const runs = operation_runs(state_directory);
     runs.start("pull-1-abc", { kind: "programs", steps: [{ argv: ["echo", "switched"] }] }, null);
     while (runs.get("pull-1-abc").state === "running") await sleep(20);
     writeFileSync(join(state_directory, "pull.json"), JSON.stringify({
@@ -202,13 +205,16 @@ describe("a reconnecting agent", () => {
       records: [{ run_id: "pull-1-abc", remote: "https://git.example/config", branch: "main", revision: second_revision, command: "echo switched", started_epoch: 1, finished_epoch: 2, exit_code: 0 }],
     }));
 
-    const hub = new AgentHub(new AgentPool("heimdall", new LocalAgent(join(folder, "local"))));
-    hub.set_agent_keys(new Map([["odin", readFileSync(`${key_file}.pub`, "utf8").trim()]]));
     const received: PullReport[] = [];
-    hub.on_pulls = (host, pulls) => {
-      received.push(...pulls.map((pull) => ({ ...pull, remote: `${host}:${pull.remote}` })));
-      return pulls.map((pull) => pull.run_id);
-    };
+    const local = new LocalAgent(join(folder, "local"), { runner: operation_runner });
+    const hub = create_hub(new AgentPool("heimdall", local), local, {
+      on_pulls: (host, pulls) => {
+        const reports = pulls as PullReport[];
+        received.push(...reports.map((pull) => ({ ...pull, remote: `${host}:${pull.remote}` })));
+        return reports.map((pull) => pull.run_id);
+      },
+    });
+    hub.set_agent_keys(new Map([["odin", readFileSync(`${key_file}.pub`, "utf8").trim()]]));
     app = fastify();
     await register_agent_route(app, hub);
     await app.listen({ host: "127.0.0.1", port: 0 });

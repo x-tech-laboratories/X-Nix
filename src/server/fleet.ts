@@ -8,9 +8,10 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+
 import type { DeploymentSettings, FleetSettings } from "./config.ts";
 import type { Deployment } from "./deployment.ts";
-import { format_duration } from "./durations.ts";
 import type { Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
