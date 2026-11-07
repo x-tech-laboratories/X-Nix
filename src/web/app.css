@@ -1,0 +1,8 @@
+/* X-Nix's own page styles, drawn on top of Halon's tokens and components. */
+
+.products { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
+.stage-list { min-width: 260px; min-height: calc(3 * var(--control-height)); }
+.closure-sizes { margin-left: var(--space-4); font-variant-numeric: tabular-nums; }
+.activities { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); font-size: var(--text-control); }
+.activities li { display: flex; gap: var(--space-4); align-items: baseline; flex-wrap: wrap; }
+.path { overflow-wrap: anywhere; }

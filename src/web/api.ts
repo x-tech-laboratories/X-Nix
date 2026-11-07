@@ -1,7 +1,9 @@
 // Calls the server's JSON API and names the shapes it answers with.
 
+import { LoginNeeded } from "@x-tech-laboratories/x-libs/web/states";
+
 // The session has lapsed or never began, so the page asks for the password.
-export class LoginNeeded extends Error {}
+export { LoginNeeded };
 
 export class ApiError extends Error {
   status: number | null;
