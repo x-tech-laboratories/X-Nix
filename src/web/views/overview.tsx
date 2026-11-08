@@ -2,7 +2,7 @@
 // state is on the Hosts page, which every row here links to.
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
-import { Section, Stack, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { PageHeading, Section, Stack, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
@@ -23,10 +23,7 @@ export function OverviewView() {
 
   return (
     <div className="page">
-      <h1>Overview</h1>
-      <p className="muted">
-        {health.data && <>X-Nix {health.data.version} on {health.data.server_name}, started <Age epoch={health.data.started_epoch} />.</>}
-      </p>
+      <PageHeading title="Overview" subtitle={health.data && <>X-Nix {health.data.version} on {health.data.server_name}, started <Age epoch={health.data.started_epoch} />.</>} />
       <Stack>
         <Loaded resource={rows}>
           {(found) => {

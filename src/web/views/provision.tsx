@@ -3,7 +3,7 @@
 // media to download. A named host shows its key on its Machine tab.
 
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { Facts, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Facts, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
@@ -45,8 +45,7 @@ export function ProvisionView() {
 
   return (
     <div className="page">
-      <h1>Provision</h1>
-      <p className="muted">Install NixOS on a reachable Linux host with nixos-anywhere, and build install media for a configuration.</p>
+      <PageHeading title="Provision" subtitle="Install NixOS on a reachable Linux host with nixos-anywhere, and build install media for a configuration." />
       <Section title="Install NixOS on a host">
         <Stack><Loaded resource={install_form}>{(found) => <InstallFields {...found} done={done} />}</Loaded></Stack>
       </Section>

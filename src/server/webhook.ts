@@ -9,9 +9,10 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
 import type { FastifyInstance } from "fastify";
+
+import { read_secret_file } from "@x-tech-laboratories/x-libs/server/config";
 
 import type { Deployment } from "./deployment.ts";
 import type { Flake } from "./flake.ts";
@@ -64,14 +65,11 @@ const event_headers = ["x-github-event", "x-gitea-event", "x-forgejo-event", "x-
 
 // Reads the shared secret from its file, without its trailing newline.
 export function load_webhook_secret(path: string): string {
-  let secret: string;
   try {
-    secret = readFileSync(path, "utf8").replace(/\r?\n$/, "");
+    return read_secret_file(path);
   } catch (error) {
-    throw new WebhookError(`Could not read the webhook secret at ${path}: ${(error as Error).message}`);
+    throw new WebhookError((error as Error).message);
   }
-  if (secret.trim() === "") throw new WebhookError(`The webhook secret at ${path} is empty`);
-  return secret;
 }
 
 // ── Checking ─────────────────────────────────────────────────────────────────

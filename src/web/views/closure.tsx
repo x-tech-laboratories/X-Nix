@@ -1,7 +1,7 @@
 // The closure browser: a system closure's dependency tree with each path's own size and closure size, and its largest
 // paths, to find what makes a closure large.
 
-import { Crumbs, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Crumbs, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
@@ -42,7 +42,7 @@ export function ClosureView({ host_name, generation, which }: { host_name: strin
   return (
     <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [host_name, link(["hosts", host_name])], ["Closure", null]]} />
-      <h1>{closure_title(generation, which)}</h1>
+      <PageHeading title={closure_title(generation, which)} />
       <Tabs label="Closure" active={active} items={choices} />
       <Stack>
         <Loaded resource={closure}>{(tree) => <ClosureBody tree={tree} />}</Loaded>

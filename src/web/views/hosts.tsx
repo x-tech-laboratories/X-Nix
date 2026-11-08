@@ -3,7 +3,8 @@
 
 import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { Crumbs, Facts, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
+import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
@@ -103,22 +104,14 @@ export function HostsView() {
 
   return (
     <div className="page">
-      <h1>Hosts</h1>
-      <p className="muted">Each machine X-Nix reaches, and the NixOS system it runs against what its flake evaluates to. Search by a name glob or @tag, or tick hosts, to run one action across them.</p>
+      <PageHeading title="Hosts" subtitle="Each machine X-Nix reaches, and the NixOS system it runs against what its flake evaluates to. Search by a name glob or @tag, or tick hosts, to run one action across them." />
       <Stack tight>
-        <form className="toolbar" onSubmit={(event) => {
-          event.preventDefault();
-          void find(search);
-        }}>
-          <label className="field">
-            <span className="field-label">Search</span>
-            <input type="search" className="filter" placeholder="web-* @canary" aria-label="Search" value={search} onChange={(event) => set_search(event.currentTarget.value)} />
-          </label>
-          <button type="submit">Pick</button>
+        <Toolbar>
+          <SearchBox label="Search by glob or @tag" value={search} on_input={set_search} on_submit={(selector) => void find(selector)} submit_label="Pick" />
           <button type="button" onClick={() => pick(deployments.map((deployment) => deployment.id))}>All</button>
           <button type="button" onClick={() => pick([])}>None</button>
           <span className="muted">{loaded.data && `${selected.size} of ${deployments.length} picked`}</span>
-        </form>
+        </Toolbar>
         {fleet && fleet.tags.length > 0 && (
           <Chips>
             {fleet.tags.map((tag) => <Chip key={tag} on_click={() => {
@@ -256,20 +249,15 @@ export function HostView({ name, asked }: { name: string; asked: HostTab | null 
   return (
     <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [name, null]]} />
-      <header className="page-head">
-        <div className="card-head">
-          <h1>{shown?.host.display_name ?? name}</h1>
-          {shown && <span><StatusBadge status={row_status({ host: shown.host, deployment })} /></span>}
-        </div>
-        <div className="head-actions">
-          {shown && <>
-            <button onClick={() => void run_refresh()}>Check now</button>
-            {/* A deployment's Reboot reboots its host, so only the host's shows. */}
-            {deployment?.actions.filter((action) => action.id !== "reboot").map((action) => <ActionButton key={action.id} deployment={deployment} action={action} done={refresh} />)}
-            {shown.host.actions.map((action) => <HostActionButton key={action.id} host={shown.host} action={action} done={refresh} />)}
-          </>}
-        </div>
-      </header>
+      <PageHeading
+        title={<>{shown?.host.display_name ?? name} {shown && <StatusBadge status={row_status({ host: shown.host, deployment })} />}</>}
+        actions={shown && <>
+          <button onClick={() => void run_refresh()}>Check now</button>
+          {/* A deployment's Reboot reboots its host, so only the host's shows. */}
+          {deployment?.actions.filter((action) => action.id !== "reboot").map((action) => <ActionButton key={action.id} deployment={deployment} action={action} done={refresh} />)}
+          {shown.host.actions.map((action) => <HostActionButton key={action.id} host={shown.host} action={action} done={refresh} />)}
+        </>}
+      />
       {shown
         ? <Tabs label="Host" active={shown.tab} items={host_tabs.filter((choice) => shown.has[choice] || choice === shown.tab).map((choice) => ({ id: choice, label: tab_labels[choice], href: link(["hosts", name, choice]) }))} />
         : <nav className="tabs" aria-label="Host" />}

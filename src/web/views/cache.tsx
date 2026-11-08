@@ -2,7 +2,7 @@
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Card, Cards, Crumbs, Facts, PageHeading, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
@@ -22,8 +22,7 @@ export function CachesView() {
   const caches = use_resource(() => api<Cache[]>("/api/caches"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
     <div className="page">
-      <h1>Cache</h1>
-      <p className="muted">Whether each closure is built from the flake's latest revision and pushed to its Attic cache.</p>
+      <PageHeading title="Cache" subtitle="Whether each closure is built from the flake's latest revision and pushed to its Attic cache." />
       <Stack>
         <Loaded resource={caches}>
           {(found) => (found.length === 0
@@ -134,24 +133,19 @@ export function CacheView({ id }: { id: string }) {
   return (
     <div className="page">
       <Crumbs items={[["Cache", link(["cache"])], [id, null]]} />
-      <header className="page-head">
-        <div className="card-head">
-          <h1>{cache?.name ?? id}</h1>
-          {cache && <span><StatusBadge status={cache.reading?.status ?? null} /></span>}
-        </div>
-        <div className="head-actions">
-          {cache && <>
-            <button disabled={cache.running_job !== null} title={cache.running_job ? "A job is running" : undefined} onClick={() => void run_refresh()}>Check now</button>
-            <button className="accent solid" disabled={cache.build_all_refusal !== null} title={cache.build_all_refusal ?? undefined} onClick={() => confirm_dialog({
-              title: `Build all of ${cache.name}`,
-              message: `Evaluate every target in one pass and build each as soon as it is evaluated?${pushed_note(cache)}`,
-              confirm_label: "Build all",
-              danger: true,
-              run: run_build_all,
-            })}>Build all</button>
-          </>}
-        </div>
-      </header>
+      <PageHeading
+        title={<>{cache?.name ?? id} {cache && <StatusBadge status={cache.reading?.status ?? null} />}</>}
+        actions={cache && <>
+          <button disabled={cache.running_job !== null} title={cache.running_job ? "A job is running" : undefined} onClick={() => void run_refresh()}>Check now</button>
+          <button className="accent solid" disabled={cache.build_all_refusal !== null} title={cache.build_all_refusal ?? undefined} onClick={() => confirm_dialog({
+            title: `Build all of ${cache.name}`,
+            message: `Evaluate every target in one pass and build each as soon as it is evaluated?${pushed_note(cache)}`,
+            confirm_label: "Build all",
+            danger: true,
+            run: run_build_all,
+          })}>Build all</button>
+        </>}
+      />
       <Stack>
         <Loaded resource={page}>
           {({ cache: found, jobs, events }) => {

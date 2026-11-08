@@ -1,7 +1,7 @@
 // The Flakes pages: every flake as a card, and one flake with its locked inputs, its Update and what names it.
 
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { Card, Cards, Crumbs, Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Card, Cards, Crumbs, Facts, PageHeading, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
@@ -20,8 +20,7 @@ export function FlakesView() {
   const flakes = use_resource(() => api<Flake[]>("/api/flakes"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
     <div className="page">
-      <h1>Flakes</h1>
-      <p className="muted">Each flake's locked inputs and how old they are, and the update that moves them on for every deployment naming it.</p>
+      <PageHeading title="Flakes" subtitle="Each flake's locked inputs and how old they are, and the update that moves them on for every deployment naming it." />
       <Stack>
         <Loaded resource={flakes}>
           {(found) => (found.length === 0
@@ -100,18 +99,13 @@ export function FlakeView({ id }: { id: string }) {
   return (
     <div className="page">
       <Crumbs items={[["Flakes", link(["flakes"])], [id, null]]} />
-      <header className="page-head">
-        <div className="card-head">
-          <h1>{flake?.name ?? id}</h1>
-          {flake && <span><StatusBadge status={flake.reading?.status ?? null} /></span>}
-        </div>
-        <div className="head-actions">
-          {flake && <>
-            <button disabled={flake.running_job !== null} title={flake.running_job ? "An update is running" : undefined} onClick={() => void run_refresh()}>Read now</button>
-            <button className="accent solid" disabled={flake.update_refusal !== null} title={flake.update_refusal ?? undefined} onClick={() => ask_update(flake)}>Update</button>
-          </>}
-        </div>
-      </header>
+      <PageHeading
+        title={<>{flake?.name ?? id} {flake && <StatusBadge status={flake.reading?.status ?? null} />}</>}
+        actions={flake && <>
+          <button disabled={flake.running_job !== null} title={flake.running_job ? "An update is running" : undefined} onClick={() => void run_refresh()}>Read now</button>
+          <button className="accent solid" disabled={flake.update_refusal !== null} title={flake.update_refusal ?? undefined} onClick={() => ask_update(flake)}>Update</button>
+        </>}
+      />
       <Stack>
         <Loaded resource={page}>
           {({ flake: found, jobs, events }) => <>

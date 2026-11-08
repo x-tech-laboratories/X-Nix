@@ -1,6 +1,6 @@
 // The fleet runs: the table of them on the Hosts page, and one fleet run followed host by host.
 
-import { Crumbs, Facts, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Crumbs, Facts, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
@@ -52,12 +52,7 @@ export function FleetRunView({ id }: { id: number }) {
   return (
     <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [`Run ${id}`, null]]} />
-      <header className="page-head">
-        <h1>Fleet run {id}</h1>
-        <div className="head-actions">
-          {shown && shown.state === "running" && !shown.stop_requested && <button className="danger" onClick={() => void stop()}>Stop</button>}
-        </div>
-      </header>
+      <PageHeading title={`Fleet run ${id}`} actions={shown && shown.state === "running" && !shown.stop_requested && <button className="danger" onClick={() => void stop()}>Stop</button>} />
       <Stack>
         <Loaded resource={run}>
           {(found) => <>

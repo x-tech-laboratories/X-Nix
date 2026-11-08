@@ -3,6 +3,7 @@
 import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
+import { describe_error } from "@x-tech-laboratories/x-libs/web/errors";
 import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
 import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
@@ -93,7 +94,7 @@ function Login({ on_login }: { on_login: (user_name: string) => void }) {
       await api("/api/login", "POST", { name: user_name, password: password.current!.value });
       on_login(user_name.trim().toLowerCase());
     } catch (error) {
-      set_message(error instanceof Error ? error.message : String(error));
+      set_message(describe_error(error));
       password.current?.select();
       set_busy(false);
     }

@@ -5,6 +5,7 @@ import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
+import { describe_error } from "@x-tech-laboratories/x-libs/web/errors";
 import { age, bytes, stamp } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState, type ReactNode } from "react";
@@ -25,7 +26,7 @@ export function job_toast(message: string, job_id: number | null): void {
 }
 
 export function error_toast(error: unknown): void {
-  toast((error as Error).message, { tone: "bad" });
+  toast(describe_error(error), { tone: "bad" });
 }
 
 // ── Deployments ──────────────────────────────────────────────────────────────
@@ -116,7 +117,7 @@ export function ActionButton({ deployment, action, done }: { deployment: Deploym
         ? <p className="muted">{outcome.message ?? "Nothing to compare."}</p>
         : <DiffView diff={outcome.diff} />;
     } catch (error) {
-      body = <p className="tone-bad">Could not compare the closures: {(error as Error).message}</p>;
+      body = <p className="tone-bad">Could not compare the closures: {describe_error(error)}</p>;
     } finally {
       set_comparing(false);
     }

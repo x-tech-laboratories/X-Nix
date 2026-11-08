@@ -5,6 +5,7 @@ import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { read_server_config } from "@x-tech-laboratories/x-libs/server/config";
 import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
 
 import { operation_runner } from "../agent/tasks.ts";
@@ -26,16 +27,26 @@ import { load_webhook_secret, Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
-const host = process.env.HOST ?? "127.0.0.1";
-const port = Number(process.env.PORT ?? 7720);
+// Users log in by name and password, so there is no server secret, and the page is a Vite build served only in production.
+const settings = read_server_config({
+  program: "x-nix", summary: "Serves the X-Nix portal and watches its deployments.", env_prefix: "X_NIX", default_port: 7720, secret: false,
+  built_in: { host: { variable: "HOST" }, port: { variable: "PORT" } },
+  options: {
+    config: { variable: "X_NIX_CONFIG", help: "the deployments to watch", placeholder: "<file>" },
+    state_dir: { variable: "X_NIX_STATE_DIR", help: "where the database and job output live", placeholder: "<folder>", default: "state" },
+    server_name: { variable: "X_NIX_SERVER_NAME", help: "what the page calls this machine", placeholder: "<name>", default: hostname() },
+    webhook_secret_file: { variable: "X_NIX_WEBHOOK_SECRET_FILE", help: "the push webhook's shared secret; the webhook is off without it", placeholder: "<file>" },
+    webhook_debounce: { variable: "X_NIX_WEBHOOK_DEBOUNCE", help: "how long after the last push an evaluation starts", placeholder: "<duration>", default: "10s" },
+  },
+});
+const { host, port } = settings;
 const is_production = process.env.NODE_ENV === "production";
-const state_directory = process.env.X_NIX_STATE_DIR ?? "state";
-const config_path = process.env.X_NIX_CONFIG;
-const server_name = process.env.X_NIX_SERVER_NAME || hostname();
+const state_directory = settings.values.state_dir || "state";
+const config_path = settings.values.config;
+const server_name = settings.values.server_name || hostname();
 const accounts = load_accounts();
-// The push webhook is on only when its secret file is named.
-const webhook_secret_file = process.env.X_NIX_WEBHOOK_SECRET_FILE;
-const webhook_debounce = parse_duration(process.env.X_NIX_WEBHOOK_DEBOUNCE || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
+const webhook_secret_file = settings.values.webhook_secret_file;
+const webhook_debounce = parse_duration(settings.values.webhook_debounce || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
 
 // ── Start ────────────────────────────────────────────────────────────────────
 

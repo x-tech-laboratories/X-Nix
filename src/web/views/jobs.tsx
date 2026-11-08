@@ -2,7 +2,8 @@
 // The Builds tab beside the list is builds.tsx.
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
-import { Crumbs, Facts, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { FollowingOutput } from "@x-tech-laboratories/x-libs/web/react/following";
+import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useState } from "react";
@@ -22,12 +23,11 @@ export function JobsView({ show_evaluations }: { show_evaluations: boolean }) {
   const jobs = use_resource(() => api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`), [show_evaluations], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   return (
     <div className="page">
-      <h1>Jobs</h1>
-      <JobsTabs active="jobs" />
-      <p className="muted">
+      <PageHeading title="Jobs" subtitle={<>
         Every update, build, switch, reboot, collection, cache build and push, install and media build, newest first.{" "}
         <a href={link(["jobs"], { evaluations: show_evaluations ? null : "1" })}>{show_evaluations ? "Hide evaluations and checks" : "Show evaluations and checks"}</a>
-      </p>
+      </>} />
+      <JobsTabs active="jobs" />
       <Section title="History">
         <Stack>
           <Loaded resource={jobs}>
@@ -55,7 +55,7 @@ export function JobView({ id }: { id: number }) {
   return (
     <div className="page">
       <Crumbs items={[["Jobs", link(["jobs"])], [`Job ${id}`, null]]} />
-      <h1>Job {id}</h1>
+      <PageHeading title={`Job ${id}`} />
       <Stack>
         <Loaded resource={job}>
           {(found) => {
@@ -74,7 +74,7 @@ export function JobView({ id }: { id: number }) {
               {found.live && <Section title="Progress"><ProgressView progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} /></Section>}
               <Section title={operation === null ? "Command" : "Operation"}><pre className="output">{operation ?? found.command}</pre></Section>
               <Section title="Output">
-                {found.output ? <pre className="output run-output">{found.output}</pre> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
+                {found.output ? <FollowingOutput text={found.output} active={found.state === "running"} toggle={found.state === "running"} class_name="run-output" /> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
               </Section>
             </>;
           }}

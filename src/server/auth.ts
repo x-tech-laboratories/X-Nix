@@ -10,6 +10,7 @@ import fastify_cookie from "@fastify/cookie";
 import fastify_rate_limit from "@fastify/rate-limit";
 import fastify_session from "@fastify/session";
 import { load_accounts as load_accounts_from, hash_password, verify_password, type Accounts } from "@x-tech-laboratories/x-libs/server/passwords";
+import { register_sign_in_guard } from "@x-tech-laboratories/x-libs/server/sign_in";
 import type { FastifyInstance } from "fastify";
 
 export { hash_password, parse_accounts, verify_password, type Accounts } from "@x-tech-laboratories/x-libs/server/passwords";
@@ -58,10 +59,9 @@ export async function register_auth(app: FastifyInstance, accounts: Accounts): P
     errorResponseBuilder: () => ({ statusCode: 429, error: "Too many tries; wait a few minutes." }),
   });
 
-  app.addHook("onRequest", async (request, reply) => {
-    const path = request.url.split("?")[0];
-    if (!path.startsWith("/api/") || open_routes.has(path)) return;
-    if (request.session.name === undefined) return reply.code(401).send({ error: "Log in first." });
+  // The page loads without a session and logs in itself, so only API calls are turned away.
+  register_sign_in_guard(app, {
+    is_signed_in: (request) => request.session.name !== undefined, login_path: null, refusal: "json", refusal_text: "Log in first.", open_paths: open_routes,
   });
 
   app.post<{ Body: { name?: unknown; password?: unknown } }>("/api/login", {

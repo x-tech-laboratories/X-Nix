@@ -2,7 +2,7 @@
 // products, filtered by deployment or cache and target.
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
-import { Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { PageHeading, Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
@@ -28,9 +28,8 @@ export function BuildsView({ owner, target }: { owner: string; target: string })
 
   return (
     <div className="page">
-      <h1>Jobs</h1>
+      <PageHeading title="Jobs" subtitle="Every finished build, newest first, with its log and what it made. Products that are files inside their build's store path can be downloaded." />
       <JobsTabs active="builds" />
-      <p className="muted">Every finished build, newest first, with its log and what it made. Products that are files inside their build's store path can be downloaded.</p>
       <Section title="History">
         <Toolbar>{first.current && <FilterFields answer={first.current} owner={owner} target={target} />}</Toolbar>
         <Stack>

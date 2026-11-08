@@ -1,12 +1,12 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
-import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
-import fastify_static from "@fastify/static";
+import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
 import { agent_statuses, type Hub } from "./agents/hub.ts";
@@ -771,15 +771,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   // ── Page ─────────────────────────────────────────────────────────────────
 
   // An API path the server does not know answers as JSON, never with the page.
-  app.setNotFoundHandler((request, reply) => {
-    if (request.url.startsWith("/api/") || !options.serve_web) return reply.code(404).send({ error: "Not found" });
-    return reply.sendFile("index.html");
-  });
-
-  if (options.serve_web) {
-    if (!existsSync(web_build_directory)) throw new Error(`The web page is not built; run npm run build to fill ${web_build_directory}`);
-    await app.register(fastify_static, { root: web_build_directory });
-  }
+  const api_not_found = (_request: FastifyRequest, reply: FastifyReply) => reply.code(404).send({ error: "Not found" });
+  if (options.serve_web) await register_web_folder(app, { folder: web_build_directory, when_missing: "throw", page_fallback: true, api_not_found });
+  else app.setNotFoundHandler(api_not_found);
 
   return app;
 }
