@@ -205,6 +205,7 @@ export interface JobFilter {
 export class Store {
   private readonly database: DatabaseSync;
   private readonly listeners = new Set<() => void>();
+  private readonly job_listeners = new Set<(owner_id: string) => void>();
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -224,6 +225,12 @@ export class Store {
   on_change(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
+  }
+
+  // Calls the listener with the owner of every job created, until the returned function is called.
+  on_job_created(listener: (owner_id: string) => void): () => void {
+    this.job_listeners.add(listener);
+    return () => void this.job_listeners.delete(listener);
   }
 
   private run(sql: string, ...values: SQLInputValue[]): StatementResultingChanges {
@@ -285,6 +292,7 @@ export class Store {
   create_job(job: Pick<Job, "deployment_id" | "kind" | "command" | "agent" | "run_id" | "trigger" | "started_epoch">): number {
     const result = this.run(`INSERT INTO jobs (deployment_id, kind, command, agent, run_id, state, trigger, started_epoch)
       VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`, job.deployment_id, job.kind, job.command, job.agent, job.run_id, job.trigger, job.started_epoch);
+    for (const listener of this.job_listeners) listener(job.deployment_id);
     return Number(result.lastInsertRowid);
   }
 

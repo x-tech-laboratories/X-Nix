@@ -8,6 +8,7 @@ import type { Cache } from "./cache.ts";
 import type { Deployment } from "./deployment.ts";
 import type { Flake } from "./flake.ts";
 import type { Host } from "./host.ts";
+import type { Store } from "./store.ts";
 
 // What the poller drives; flakes, deployments and caches share one id space and hosts have their own, so their timers never collide.
 export interface Watched {
@@ -68,6 +69,14 @@ export class Poller {
   // Polls soon after an action, so a started job's output shows up without waiting a whole interval.
   soon(watched: Watched): void {
     this.schedule(watched, 2);
+  }
+
+  // Polls whatever owns each new job soon, as a cache whose build a deployment started would otherwise wait a whole interval.
+  follow_new_jobs(store: Store): () => void {
+    return store.on_job_created((owner_id) => {
+      const owner = this.watched().find((watched) => watched.id === owner_id);
+      if (owner !== undefined) this.soon(owner);
+    });
   }
 
   private async tick(watched: Watched, force_eval = false): Promise<void> {
