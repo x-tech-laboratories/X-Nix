@@ -24,9 +24,9 @@ const theme = theme_choice("x-nix-theme");
 
 const sections: ShellSection[] = [
   { id: "", label: "Overview", href: "#/" },
-  { id: "hosts", label: "Hosts", href: "#/hosts" },
   { id: "flakes", label: "Flakes", href: "#/flakes" },
   { id: "cache", label: "Cache", href: "#/cache" },
+  { id: "hosts", label: "Hosts", href: "#/hosts" },
   { id: "jobs", label: "Jobs", href: "#/jobs" },
   { id: "provision", label: "Provision", href: "#/provision" },
 ];
