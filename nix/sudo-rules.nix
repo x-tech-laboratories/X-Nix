@@ -13,6 +13,13 @@ let
   ];
 
   # The service user activates whole systems, so it is root-equivalent and wildcard arguments widen nothing.
+  # Update Flake on a local checkout, with or without nix_args before the subcommand; it may keep NIX_CONFIG, which
+  # carries the flake's access_tokens_file.
+  flake_updates = [
+    "${system_bin}/nix flake update --flake *"
+    "${system_bin}/nix * flake update --flake *"
+  ];
+
   commands =
     # Switch, boot, test and dry activation with nixos-rebuild, which pull mode's switch to a git+ flake also uses.
     map (mode: "${system_bin}/nixos-rebuild ${mode} --flake *") modes
@@ -23,11 +30,6 @@ let
     ++ [
       "${system_bin}/nix-env -p ${system_profile} --switch-generation *"
       "${system_profile}/bin/switch-to-configuration switch"
-    ]
-    # Update Flake on a local checkout, with or without nix_args before the subcommand.
-    ++ [
-      "${system_bin}/nix flake update --flake *"
-      "${system_bin}/nix * flake update --flake *"
     ]
     # Reboot, and Collect Garbage with whatever gc_args the deployment sets.
     ++ [
@@ -64,8 +66,16 @@ let
 in
 {
   users = [ user ];
-  commands = map (command: {
-    inherit command;
-    options = [ "NOPASSWD" ];
-  }) commands;
+  commands =
+    map (command: {
+      inherit command;
+      options = [ "NOPASSWD" ];
+    }) commands
+    ++ map (command: {
+      inherit command;
+      options = [
+        "NOPASSWD"
+        "SETENV"
+      ];
+    }) flake_updates;
 }

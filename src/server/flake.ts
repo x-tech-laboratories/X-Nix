@@ -3,8 +3,9 @@
 // Every `interval` the flake's host reads `nix flake metadata`, which gives the revision, when the flake last changed and
 // each locked input. Update runs as a long run on that host that outlives a restart of the server: a local checkout's
 // lock is written in place, and a github: flake with a `push_ssh_key` is cloned, updated and pushed back. With
-// `update_at` it also runs daily. Once an update ends well, or a read finds the flake changed since the last one, every
-// deployment and cache naming the flake evaluates afresh.
+// `update_at` it also runs daily. Every `input_check_interval` the host asks each input's Git remote where its branch
+// points, with `git ls-remote` rather than a forge's API, and updates as soon as one moved. Once an update ends well, or
+// a read finds the flake changed since the last one, every deployment and cache naming the flake evaluates afresh.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -15,8 +16,9 @@ import { format_age, format_duration } from "@x-tech-laboratories/x-libs/duratio
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { level_of_status, worse, type FlakeSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
-import { can_update, metadata_operation, update_operation } from "./nixos/commands.ts";
-import { parse_metadata, short_revision, type LockedInput } from "./nixos/flake.ts";
+import type { RemoteHeads } from "../shared/operations.ts";
+import { can_update, metadata_operation, remote_heads_operation, update_operation } from "./nixos/commands.ts";
+import { parse_metadata, resolve_ref, short_revision, type LockedInput } from "./nixos/flake.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, Store } from "./store.ts";
 
@@ -52,6 +54,10 @@ export interface FlakeState {
   // The last daily update slot handled.
   scheduled_update?: number;
   last_update?: UpdateOutcome;
+  // The commit each input's remote was at when it last started an update, so a failing update is not retried every check.
+  input_heads_tried?: Record<string, string>;
+  // Why the last check of the inputs failed, so one failure is logged once.
+  input_check_error?: string | null;
 }
 
 export interface FlakeActionOutcome {
@@ -111,6 +117,21 @@ export class Flake {
     return this.running_job() !== null;
   }
 
+  // How often the poller cycles the flake while no update runs.
+  idle_interval(): number {
+    return this.checks_inputs() ? Math.min(this.settings.interval, this.settings.input_check_interval!) : this.settings.interval;
+  }
+
+  checks_inputs(): boolean {
+    return this.settings.input_check_interval !== null && can_update(this.settings);
+  }
+
+  // The locked inputs whose remotes are watched, from the last read.
+  watched_inputs(): LockedInput[] {
+    const names = this.settings.watch_inputs;
+    return (this.reading()?.inputs ?? []).filter((input) => input.remote != null && (names === null || names.includes(input.name)));
+  }
+
   // Why Update cannot run now, or null when it can.
   update_refusal(): string | null {
     if (!can_update(this.settings)) {
@@ -122,15 +143,23 @@ export class Flake {
 
   // ── Cycle ────────────────────────────────────────────────────────────────
 
-  // Follows the running update, starts a daily one that is due, or reads the flake's metadata.
-  cycle(): Promise<void> {
+  // Follows the running update, starts a daily one that is due, or reads the flake's metadata when due and checks its inputs.
+  cycle(options: { force_eval?: boolean } = {}): Promise<void> {
     return this.serial(async () => {
       const job = this.running_job();
       if (job !== null) return this.poll_job(job);
       const slot = this.update_due();
       if (slot !== null) return this.launch_scheduled(slot);
-      if (await this.read()) this.on_updated(this);
+      if ((options.force_eval || this.read_due()) && (await this.read())) this.on_updated(this);
+      if (this.checks_inputs()) await this.check_inputs();
     });
+  }
+
+  // Whether `interval` has passed since the last read, or the last read predates the inputs' remotes.
+  private read_due(): boolean {
+    const reading = this.reading();
+    if (reading === null || reading.inputs.some((input) => input.remote === undefined)) return true;
+    return this.now() - reading.checked_epoch >= this.settings.interval;
   }
 
   private serial<Answer>(work: () => Promise<Answer>): Promise<Answer> {
@@ -203,6 +232,39 @@ export class Flake {
     this.store.add_event(this.id, reading.checked_epoch, level, reason ? `Now ${reading.status}: ${reason.text}` : `Now ${reading.status}`);
   }
 
+  // ── Input check ──────────────────────────────────────────────────────────
+
+  // Asks each watched input's remote where it points, and starts an update when one moved past its locked revision.
+  private async check_inputs(): Promise<void> {
+    const inputs = this.watched_inputs();
+    if (inputs.length === 0) return;
+    const operation = remote_heads_operation(inputs.map((input) => input.remote!));
+    const result = await this.agents.get(this.settings.host).run(operation, { timeout_in_seconds: this.settings.timeout });
+    const answers = result.exit_code === 0 ? parse_heads(result.stdout) : null;
+    if (answers === null) return this.note_check_error(clip(result.stderr || result.stdout, 400) || `The check exited ${result.exit_code}`);
+    const failed = inputs.flatMap((input, index) => (answers[index]?.exit_code === 0 ? [] : [`${input.name}: ${answers[index]?.error || "no answer"}`]));
+    this.note_check_error(failed.length === 0 ? null : clip(failed.join("; "), 400));
+    const tried = this.state().input_heads_tried ?? {};
+    const moved = inputs.flatMap((input, index) => {
+      const head = resolve_ref(input.remote!.ref, answers[index]?.heads ?? {});
+      return head !== null && head !== input.revision && head !== tried[input.name] ? [{ name: input.name, head }] : [];
+    });
+    if (moved.length === 0) return;
+    this.store.save_evaluation(this.id, { ...this.state(), input_heads_tried: { ...tried, ...Object.fromEntries(moved.map((input) => [input.name, input.head])) } });
+    const names = moved.map((input) => input.name).join(", ");
+    this.store.add_event(this.id, this.now(), "info", `${names} moved upstream; updating`);
+    await this.start_update(`input ${names}`);
+  }
+
+  // Logs a check's failure once, and once more when checks work again.
+  private note_check_error(error: string | null): void {
+    const state = this.state();
+    if ((state.input_check_error ?? null) === error) return;
+    this.store.save_evaluation(this.id, { ...state, input_check_error: error });
+    if (error !== null) this.store.add_event(this.id, this.now(), "warning", `Could not check the inputs: ${error}`);
+    else this.store.add_event(this.id, this.now(), "info", "Checking the inputs works again");
+  }
+
   // ── Daily update ─────────────────────────────────────────────────────────
 
   // The latest daily slot when it is newer than the one last handled; a schedule seen for the first time starts at its next slot.
@@ -233,17 +295,19 @@ export class Flake {
 
   // Updates the flake's lock, naming in the job what started it.
   update(trigger = "manual"): Promise<FlakeActionOutcome> {
-    return this.serial(async () => {
-      const refusal = this.update_refusal();
-      if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      const launched = await this.launch(trigger);
-      if (launched.job_id === null) {
-        const job_id = this.record_failed_launch(trigger, launched.error);
-        return { ok: false, message: `Could not start the update: ${launched.error}`, job_id };
-      }
-      this.store.add_event(this.id, this.now(), "info", "Update started");
-      return { ok: true, message: "Update started", job_id: launched.job_id };
-    });
+    return this.serial(() => this.start_update(trigger));
+  }
+
+  private async start_update(trigger: string): Promise<FlakeActionOutcome> {
+    const refusal = this.update_refusal();
+    if (refusal !== null) return { ok: false, message: refusal, job_id: null };
+    const launched = await this.launch(trigger);
+    if (launched.job_id === null) {
+      const job_id = this.record_failed_launch(trigger, launched.error);
+      return { ok: false, message: `Could not start the update: ${launched.error}`, job_id };
+    }
+    this.store.add_event(this.id, this.now(), "info", "Update started");
+    return { ok: true, message: "Update started", job_id: launched.job_id };
   }
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
@@ -301,4 +365,13 @@ export class Flake {
 
 function clip(text: string, length: number): string {
   return text.trim().slice(0, length);
+}
+
+function parse_heads(raw: string): RemoteHeads[] | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) ? (value as RemoteHeads[]) : null;
+  } catch {
+    return null;
+  }
 }

@@ -16,7 +16,7 @@ import { normalize_repository, repository_of } from "../src/server/nixos/flake.t
 import { Poller } from "../src/server/poller.ts";
 import { Store } from "../src/server/store.ts";
 import { is_signed, load_webhook_secret, push_matches, read_push, Webhook, WebhookError } from "../src/server/webhook.ts";
-import { FakeAgent, make_deployment } from "./fake_agent.ts";
+import { FakeAgent, make_deployment, metadata } from "./fake_agent.ts";
 
 // A made-up secret for these tests only.
 const secret = "test-webhook-secret";
@@ -143,6 +143,30 @@ describe("the webhook", () => {
 
     expect(read).toEqual(["config"]);
     expect(store.events("config")[0].message).toContain("reading the flake again");
+  });
+
+  it("updates every flake with a watched input following the pushed branch", async () => {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const originals = { tools: { type: "github", owner: "Owner", repo: "Tools" }, pinned: { type: "github", owner: "owner", repo: "tools", rev: "a".repeat(40) } };
+    agent.answers.push(["flake metadata", metadata({ originals, inputs: { tools: 1, pinned: 1 } })]);
+    const agents = new AgentPool("host", agent);
+    const local = new Flake(flake_settings({ id: "local", url: "/etc/nixos" }), { store, agents });
+    const unwatched = new Flake(flake_settings({ id: "unwatched", url: "/srv/other", watch_inputs: ["pinned"] }), { store, agents });
+    await local.cycle();
+    await unwatched.cycle();
+    const updated: string[] = [];
+    const webhook = new Webhook({
+      secret, debounce_in_seconds: 0, store, deployments: new Map(), evaluate: () => {},
+      flakes: new Map([[local.id, local], [unwatched.id, unwatched]]), update: (flake: Flake, inputs: string) => updated.push(`${flake.id}: ${inputs}`),
+    });
+    const body = push_payload("main", "owner/tools");
+
+    const answer = webhook.receive("192.0.2.1", { "x-github-event": "push", "x-hub-signature-256": sign(body) }, Buffer.from(body));
+
+    expect(updated).toEqual(["local: tools"]);
+    expect(answer.body.message).toBe("Updating local");
+    expect(store.events("local").some((event) => event.message === "Push to tools received; updating the flake")).toBe(true);
   });
 
   it("answers a ping, ignores other events, and turns away an address after ten unsigned deliveries", () => {

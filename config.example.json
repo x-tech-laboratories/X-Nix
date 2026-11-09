@@ -28,7 +28,9 @@
       "name": "Fleet",
       "url": "github:example/nixos-config",
       "push_ssh_key": "/var/lib/x-nix/deploy_key",
-      "update_at": "02:00"
+      "update_at": "02:00",
+      "watch_inputs": ["home-manager", "x-nix"],
+      "access_tokens_file": "/run/secrets/rendered/nix-access-tokens"
     }
   ],
   "deployments": [

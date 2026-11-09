@@ -1,4 +1,4 @@
-// Runs each flake's, deployment's and cache's cycle on its own timer: every `interval`, or every `job_poll` while a long run is going.
+// Runs each flake's, deployment's and cache's cycle on its own timer: every `interval` (or its own idle interval), or every `job_poll` while a long run is going.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,8 @@ export interface Watched {
   busy(): boolean;
   // How soon a busy one is polled again, when sooner than its job_poll.
   poll_interval?(): number;
+  // How soon an idle one is cycled again, when not its interval.
+  idle_interval?(): number;
 }
 
 // ── Poller ───────────────────────────────────────────────────────────────────
@@ -85,7 +87,7 @@ export class Poller {
     } catch (error) {
       this.log?.error({ err: error, id: watched.id }, "Cycle failed");
     }
-    this.schedule(watched, watched.busy() ? (watched.poll_interval?.() ?? watched.settings.job_poll) : watched.settings.interval);
+    this.schedule(watched, watched.busy() ? (watched.poll_interval?.() ?? watched.settings.job_poll) : (watched.idle_interval?.() ?? watched.settings.interval));
   }
 
   private schedule(watched: Watched, delay_in_seconds: number): void {

@@ -1,15 +1,15 @@
 // The operations a deployment's and a flake's jobs ask an agent for: evaluation, build, switch, switch from cache, reboot,
-// and the flake's update.
+// and the flake's update and the check of its inputs.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { RunResult } from "../agents/agent.ts";
 import type { DeploymentSettings, FlakeSettings } from "../config.ts";
 import {
-  eval_mark, is_store_path, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type Step,
-  type TimedOperation,
+  eval_mark, is_store_path, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type RemoteHeadsOperation,
+  type Step, type TimedOperation,
 } from "../../shared/operations.ts";
-import { github_repository, local_path } from "./flake.ts";
+import { github_repository, local_path, refs_to_ask, type InputRemote } from "./flake.ts";
 
 export { eval_mark, is_store_path, timed_out_exit_code } from "../../shared/operations.ts";
 
@@ -79,21 +79,34 @@ export function split_eval_output(output: string, missing: string): Record<"eval
 // Reads the flake's metadata and lock, fetching a remote flake afresh.
 export function metadata_operation(settings: FlakeSettings): Operation {
   const refresh = refreshes(settings.url) ? ["--refresh"] : [];
-  return { kind: "programs", steps: [{ argv: [...nix(settings), "flake", "metadata", "--json", "--no-write-lock-file", ...refresh, settings.url] }] };
+  return with_access_tokens(settings, { kind: "programs", steps: [{ argv: [...nix(settings), "flake", "metadata", "--json", "--no-write-lock-file", ...refresh, settings.url] }] });
+}
+
+// Has nix read the flake's access_tokens_file, so forges count its API calls against the account rather than the address.
+export function with_access_tokens(settings: Pick<FlakeSettings, "access_tokens_file">, operation: Operation): Operation {
+  return settings.access_tokens_file === null ? operation : { kind: "nix_config", file: settings.access_tokens_file, operation };
+}
+
+// Asks where each input's remote ref points, without fetching anything.
+export function remote_heads_operation(remotes: InputRemote[]): RemoteHeadsOperation {
+  return { kind: "remote_heads", remotes: remotes.map((remote) => ({ url: remote.url, refs: refs_to_ask(remote.ref) })) };
 }
 
 // Updates every input of the lock, refetching each branch it follows rather than trusting nix's cached lookup of it,
 // which may be up to an hour old.
 export function update_operation(settings: FlakeSettings): Operation {
   if (!pushes_to_github(settings)) {
-    return { kind: "programs", steps: [{ argv: [...sudo(settings), ...nix(settings), "flake", "update", "--refresh", "--flake", settings.url] }] };
+    // sudo keeps NIX_CONFIG only when asked, so the access tokens reach nix running as root.
+    const keep = settings.require_sudo && settings.access_tokens_file !== null ? ["--preserve-env=NIX_CONFIG"] : [];
+    const argv = [...sudo(settings), ...keep, ...nix(settings), "flake", "update", "--refresh", "--flake", settings.url];
+    return with_access_tokens(settings, { kind: "programs", steps: [{ argv }] });
   }
   const repository = github_repository(settings.url)!;
   const [name, email = ""] = settings.commit_author.split("<", 2);
-  return {
+  return with_access_tokens(settings, {
     kind: "github_update", nix: nix(settings), ssh_url: repository.ssh_url, branch: repository.branch, ssh_key: settings.push_ssh_key!,
     author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message,
-  };
+  });
 }
 
 // ── Build ────────────────────────────────────────────────────────────────────

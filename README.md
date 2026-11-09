@@ -52,12 +52,42 @@ and switch, but has no page and no Update.
 | `job_poll`       | `30s`                         | How often a running update is read.                        |
 | `max_input_age`  | none                          | Warn once the oldest locked input is older than this.      |
 | `update_at`      | none                          | Update daily at this local time, such as `02:00`.          |
+| `input_check_interval` | `1m`                    | How often each watched input's remote is asked whether it moved; `null` never asks. |
+| `watch_inputs`   | every input                   | The inputs that check and the push webhook watch, by name. |
+| `access_tokens_file` | none                      | A nix.conf file on the flake's host holding `access-tokens`, read when the flake is read or updated. |
 | `push_ssh_key`   | none                          | The key a `github:` flake's update pushes with.            |
 | `commit_author`  | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
 | `commit_message` | `chore(flake): update inputs` | The update commit's message.                               |
 | `require_sudo`   | `true`                        | Update a local checkout under `sudo -n`.                   |
 | `nix_bin`        | `nix`                         | The nix program.                                           |
 | `nix_args`       | the experimental features     | Arguments before nix's subcommand.                         |
+
+### Input checks
+
+Every `input_check_interval` the flake's host runs `git ls-remote` against each watched input's
+remote, asking only where its branch or tag points. That goes over Git's own protocol rather than a
+forge's API, so it costs nothing against GitHub's API rate limit. Once an input's remote points past
+its locked revision, Update starts at once; an update that fails is not retried for the same upstream
+commit. `github:`, `gitlab:`, `sourcehut:` and `git+https://` or `git+ssh://` inputs are watched;
+`follows`, `path:`, tarball, registry (`nixpkgs` without a scheme) and commit-pinned inputs are not.
+The flake's metadata is still read every `interval`. A channel such as `nixos-unstable` moves several
+times a day, and each move is an update and a commit; leave it out of `watch_inputs` to move it only
+with `update_at`.
+
+### Access tokens
+
+Updating a `github:` input asks GitHub's API, which allows 60 calls an hour per address without a
+token. `access_tokens_file` names a file in nix.conf syntax on the flake's host, such as
+`access-tokens = github.com=<token>`. X-Nix never reads the file: nix includes it through
+`NIX_CONFIG`, and `sudo` keeps that for a local checkout's update, which the module's sudo rules
+allow. With sops-nix, a template renders it:
+
+```nix
+sops.templates."nix-access-tokens".content = "access-tokens = github.com=${config.sops.placeholder.github-token}";
+# The user that runs on the flake's host: x-nix for the server's own host, x-nix-agent for an agent's.
+sops.templates."nix-access-tokens".owner = "x-nix";
+services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-access-tokens".path;
+```
 
 ## Users
 
@@ -278,7 +308,9 @@ sync (an evaluation running or due). The config file's `fleet` object sets:
 
 With `X_NIX_WEBHOOK_SECRET_FILE` set, `POST /api/webhook` takes push deliveries without a login and
 evaluates every deployment whose flake follows the pushed repository and branch at once, instead of
-waiting for `eval_interval`, and reads every such flake again. A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or
+waiting for `eval_interval`, and reads every such flake again. Every flake with a watched input
+following the pushed branch updates at once, so a webhook on an input's own repository skips even the
+input check's wait. A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or
 `git+ssh://` one, follows its repository; a flake naming no branch follows the default branch, and a
 pinned one follows nothing. Pushes to one deployment within `X_NIX_WEBHOOK_DEBOUNCE` start one
 evaluation, and an address sending ten unsigned deliveries is turned away for five minutes.
