@@ -2,6 +2,7 @@
 // products, filtered by deployment or cache and target.
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { BarChart, Strip } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { Select } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { PageHeading, Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
@@ -37,7 +38,7 @@ export function BuildsView({ owner, target }: { owner: string; target: string })
           <Loaded resource={answer}>
             {(found) => (found.builds.length === 0
               ? <Empty title="No builds yet." hint="Each Build of a deployment, and each Build or Build all of a cache, shows here once it ends." />
-              : <BuildsTable builds={found.builds} />)}
+              : <><BuildCharts builds={found.builds} /><BuildsTable builds={found.builds} /></>)}
           </Loaded>
         </Stack>
       </Section>
@@ -57,6 +58,23 @@ function FilterFields({ answer, owner, target }: { answer: BuildsAnswer; owner: 
     <Select label="For" options={options(owners, "Every deployment and cache")} value={owner} on_change={(chosen) => choose({ owner: chosen, target: null })} />
     <Select label="Target" options={options(targets, "Every target")} value={target} on_change={(chosen) => choose({ target: chosen })} />
   </>;
+}
+
+// How many of the newest builds the charts show.
+const charted_count = 60;
+
+// The newest builds oldest first: whether each built, and how long each took.
+function BuildCharts({ builds }: { builds: BuildRecord[] }) {
+  const charted = builds.slice(0, charted_count).reverse();
+  const name = (build: BuildRecord) => `#${build.job_id} ${build.owner_id} ${build.target}`;
+  return (
+    <div className="charts">
+      <Strip title={`Last ${charted.length} builds`} cells={charted.map((build) => ({ label: name(build), ok: build.succeeded }))} />
+      <BarChart title="Build durations" format={duration} bars={charted.map((build) => ({
+        label: name(build), value: Math.max(0, build.finished_epoch - build.started_epoch), color: build.succeeded ? "var(--series-1)" : "var(--status-danger)",
+      }))} />
+    </div>
+  );
 }
 
 function BuildsTable({ builds }: { builds: BuildRecord[] }) {

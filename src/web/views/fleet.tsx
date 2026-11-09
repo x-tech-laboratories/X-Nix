@@ -1,11 +1,12 @@
 // The fleet runs: the table of them on the Hosts page, and one fleet run followed host by host.
 
+import { StackedBarChart, type Stack as ChartStack } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { Crumbs, Facts, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { api, type FleetActionId, type FleetOutcome, type FleetRun } from "../api.ts";
+import { api, type FleetActionId, type FleetHostState, type FleetOutcome, type FleetRun } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { FleetHostBadge, FleetRunBadge } from "../ui.tsx";
 import { error_toast, live } from "./shared.tsx";
@@ -65,11 +66,33 @@ export function FleetRunView({ id }: { id: number }) {
               ["Finished", <Age epoch={found.finished_epoch} />],
               ["Outcome", found.message ?? summary(found)],
             ]} />
+            {found.staged && <StageChart run={found} />}
             <Section title="Hosts"><HostsTable run={found} /></Section>
           </>}
         </Loaded>
       </Stack>
     </div>
+  );
+}
+
+const host_state_parts: [state: FleetHostState, color: string][] = [
+  ["succeeded", "var(--status-success)"],
+  ["failed", "var(--status-danger)"],
+  ["running", "var(--accent)"],
+  ["verifying", "var(--series-2)"],
+  ["queued", "var(--border-hover)"],
+  ["skipped", "var(--text-tertiary)"],
+];
+
+// One bar per stage, its hosts stacked by how far each has got.
+function StageChart({ run }: { run: FleetRun }) {
+  const stacks: ChartStack[] = run.stages.map((stage, index) => ({
+    label: `${index + 1}: ${stage}`,
+    parts: host_state_parts.map(([state, color]) => ({ label: state, color, value: run.hosts.filter((host) => host.stage === index && host.state === state).length })),
+  }));
+  return (
+    <StackedBarChart title="Hosts by stage" stacks={stacks} legend={host_state_parts.map(([state, color]): [string, string] => [state, color])}
+      format={(value) => `${Math.round(value)} hosts`} />
   );
 }
 

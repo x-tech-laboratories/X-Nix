@@ -1,5 +1,6 @@
 // The Flakes pages: every flake as a card, and one flake with its locked inputs, its Update and what names it.
 
+import { Meters } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Card, Cards, Crumbs, Facts, PageHeading, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
@@ -113,7 +114,7 @@ export function FlakeView({ id }: { id: string }) {
             <Section title="Findings"><MessagesList messages={found.reading?.messages ?? []} /></Section>
             <Section title="Details"><Details flake={found} /></Section>
             <Section title="Used by"><UsedBy flake={found} /></Section>
-            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <InputsTable flake={found} />}</Section>
+            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <><InputAges flake={found} /><InputsTable flake={found} /></>}</Section>
             <Section title="Jobs">{jobs.length === 0 ? <Empty title="No updates yet." /> : <JobsTable jobs={jobs} show_deployment={false} />}</Section>
             <Section title="Events">{events.length === 0 ? <Empty title="No events yet." /> : <EventsList events={events} />}</Section>
           </>}
@@ -152,6 +153,25 @@ function last_update_word(flake: Flake): string {
 // Whether an input last changed longer ago than the flake's max_input_age allows.
 function is_stale(flake: Flake, epoch: number | null): boolean {
   return flake.max_input_age !== null && epoch !== null && Date.now() / 1000 - epoch > flake.max_input_age;
+}
+
+// How old each input is, against the max_input_age when the flake sets one, oldest first.
+function InputAges({ flake }: { flake: Flake }) {
+  const now = Date.now() / 1000;
+  const dated = flake.reading!.inputs.filter((input) => input.last_modified_epoch !== null).sort((first, second) => first.last_modified_epoch! - second.last_modified_epoch!);
+  const oldest = dated.length === 0 ? 1 : now - dated[0].last_modified_epoch!;
+  // The limit sits three quarters along, so inputs past it still show how far past.
+  const scale = flake.max_input_age === null ? oldest : Math.max(oldest, flake.max_input_age / 0.75);
+  return (
+    <Meters message="No input has a date." rows={dated.map((input) => {
+      const stale = is_stale(flake, input.last_modified_epoch);
+      return {
+        label: input.name, href: null, value_text: age(input.last_modified_epoch!), percent: Math.min(100, ((now - input.last_modified_epoch!) / Math.max(1, scale)) * 100),
+        color: stale ? "var(--status-warning)" : "var(--series-1)", marks: flake.max_input_age === null ? [] : [(flake.max_input_age / scale) * 100],
+        title: stale ? "Older than the flake's max_input_age" : null,
+      };
+    })} />
+  );
 }
 
 function InputsTable({ flake }: { flake: Flake }) {

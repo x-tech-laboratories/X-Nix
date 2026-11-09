@@ -2,7 +2,7 @@
 //
 // Every `interval` its agent reads the Nix store and its garbage collection, unless `gc` is false, and the boot loader's
 // entries, unless `boot` is false. Collect Garbage runs the same collection the timer does as a long run, and Reboot and
-// Set next boot run at once rather than as long runs, waking a host that sleeps first. Its jobs and events are kept under `host:<name>`, so
+// Set next boot run at once rather than as long runs, waking a host that sleeps first. Its jobs, events and samples are kept under `host:<name>`, so
 // a host may share its name with a deployment.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -166,6 +166,7 @@ export class Host {
     const state = this.state();
     state.last_collection = fold_collection(state.last_collection, observed_collection(fields));
     this.store.save_evaluation(this.id, state);
+    this.sample_collection(state.last_collection);
     return assess_store(gc, fields, state.last_collection, this.now());
   }
 
@@ -174,6 +175,7 @@ export class Host {
     const previous = this.reading()?.store ?? null;
     this.store.save_reading(this.id, reading);
     const store = reading.store;
+    if (store !== null && store.status !== "unavailable") this.sample_store(store);
     if (store === null || previous?.status === store.status) return;
     const level = level_of_status[store.status];
     const reason = store.messages.find((message: Message) => message.level === level && level !== "info");
@@ -251,6 +253,19 @@ export class Host {
     return { ok, message, job_id };
   }
 
+  // ── Samples ──────────────────────────────────────────────────────────────
+
+  private sample_store(store: StoreReading): void {
+    if (store.used_percent !== null) this.store.add_sample(this.id, "store_used_percent", store.checked_epoch, store.used_percent);
+    if (store.used_bytes !== null) this.store.add_sample(this.id, "store_used_bytes", store.checked_epoch, store.used_bytes);
+    if (store.paths !== null) this.store.add_sample(this.id, "store_paths", store.checked_epoch, store.paths);
+  }
+
+  // Each collection is kept once, at the time it ran.
+  private sample_collection(collection: Collection | null): void {
+    if (collection?.succeeded && collection.freed_bytes !== null) this.store.add_sample(this.id, "collection_freed_bytes", collection.epoch, collection.freed_bytes);
+  }
+
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   private async poll_job(job: Job): Promise<void> {
@@ -264,6 +279,7 @@ export class Host {
     // A manual collection is the last collection, just as a timer run would be.
     const last_collection = finished_collection(finished.output, finished.state === "succeeded", finished.error, this.now());
     this.store.save_evaluation(this.id, { ...this.state(), last_collection });
+    this.sample_collection(last_collection);
     if (finished.state === "succeeded") this.store.add_event(this.id, this.now(), "info", "Collection finished");
     else this.store.add_event(this.id, this.now(), "error", `Collection failed: ${finished.error}`);
     await this.read();
