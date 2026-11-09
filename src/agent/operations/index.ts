@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 
 import { timed_out_exit_code, type KeptAwakeOperation, type NixConfigOperation, type Operation, type TimedOperation } from "../../shared/operations.ts";
-import { send_magic_packet } from "../../shared/wake.ts";
+import { send_magic_packet } from "@x-tech-laboratories/x-libs/agent/wake";
 import { run_steps, step_argv, type Context } from "../programs.ts";
 import { boot_probe } from "./boot.ts";
 import { cache_build, cache_build_all, cache_check, cache_push } from "./cache.ts";

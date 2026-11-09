@@ -2,17 +2,16 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { AgentError, type AgentPool } from "./agents/agent.ts";
+import { follow_run, type Followed, type RunSink } from "@x-tech-laboratories/x-libs/server/runs";
+
+import type { AgentPool } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
 import type { Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Following ────────────────────────────────────────────────────────────────
 
-export interface Followed {
-  outcome: "running" | "ended" | "unreachable";
-  error: string;
-}
+export type { Followed };
 
 // Turns a piece of a run's output into what the job keeps; ended is set once with nothing more to come.
 export type Translate = (job: Job, chunk: string, ended: boolean) => string;
@@ -24,29 +23,13 @@ export async function follow(
 ): Promise<Followed> {
   // A run still waiting on its host to wake has nothing to read yet.
   if (agents.is_starting(job.run_id)) return { outcome: "running", error: "" };
-  const agent = agents.get(job.agent);
-  let offset = job.output_offset;
-  let poll;
-  try {
-    do {
-      poll = await agent.poll(job.run_id!, offset);
-      store.append_output(job.id, translate === null ? poll.new_output : translate(job, poll.new_output, false), poll.next_offset);
-      offset = poll.next_offset;
-    } while (offset < poll.size && poll.new_output !== "");
-  } catch (error) {
-    if (error instanceof AgentError && error.unreachable) return { outcome: "unreachable", error: error.message };
-    // A run the agent no longer knows has ended without a word.
-    poll = { alive: false, exit_code: null };
-  }
-  if (poll.alive) return { outcome: "running", error: "" };
-  if (translate !== null) store.append_output(job.id, translate(job, "", true));
-
-  let error: string | null = null;
-  if (poll.exit_code === null) error = "The run ended without writing an exit code";
-  else if (poll.exit_code !== 0) error = describe(poll.exit_code) ?? `Exited with status ${poll.exit_code}`;
-  store.finish_job(job.id, error === null ? "succeeded" : "failed", poll.exit_code, error, now());
-  await agent.forget(job.run_id!);
-  return { outcome: "ended", error: error ?? "" };
+  const sink: RunSink = {
+    append_output: (text, next_offset) => store.append_output(job.id, text, next_offset ?? null),
+    finish: (state, exit_code, error) => store.finish_job(job.id, state, exit_code, error, now()),
+  };
+  return follow_run(agents.get(job.agent), job.run_id!, job.output_offset, sink, {
+    describe, translate: translate === null ? undefined : (chunk, ended) => translate(job, chunk, ended),
+  });
 }
 
 // ── Starting ─────────────────────────────────────────────────────────────────

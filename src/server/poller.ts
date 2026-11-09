@@ -1,7 +1,9 @@
 // Runs each flake's, deployment's and cache's cycle on its own timer: every `interval` (or its own idle interval), or every `job_poll` while a long run is going.
+// Flakes, deployments and caches share one id space and hosts have their own, so their timers never collide.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
+import { CyclePoller, type Watched } from "@x-tech-laboratories/x-libs/server/poller";
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Cache } from "./cache.ts";
@@ -10,17 +12,7 @@ import type { Flake } from "./flake.ts";
 import type { Host } from "./host.ts";
 import type { Store } from "./store.ts";
 
-// What the poller drives; flakes, deployments and caches share one id space and hosts have their own, so their timers never collide.
-export interface Watched {
-  readonly id: string;
-  readonly settings: { interval: number; job_poll: number };
-  cycle(options?: { force_eval?: boolean }): Promise<void>;
-  busy(): boolean;
-  // How soon a busy one is polled again, when sooner than its job_poll.
-  poll_interval?(): number;
-  // How soon an idle one is cycled again, when not its interval.
-  idle_interval?(): number;
-}
+export type { Watched };
 
 // ── Poller ───────────────────────────────────────────────────────────────────
 
@@ -32,9 +24,7 @@ export class Poller {
   readonly hosts: Map<string, Host>;
   // Anything else that follows long runs, such as the provisioner, each with an id no flake, deployment or cache can take.
   private readonly others: Watched[];
-  private readonly timers = new Map<string, NodeJS.Timeout>();
-  private readonly log: FastifyBaseLogger | null;
-  private running = false;
+  private readonly cycles: CyclePoller;
 
   constructor(
     deployments: Deployment[], log: FastifyBaseLogger | null = null, caches: Cache[] = [], others: Watched[] = [], flakes: Flake[] = [], hosts: Host[] = [],
@@ -44,7 +34,7 @@ export class Poller {
     this.flakes = new Map(flakes.map((flake) => [flake.id, flake]));
     this.hosts = new Map(hosts.map((host) => [host.name, host]));
     this.others = others;
-    this.log = log;
+    this.cycles = new CyclePoller(() => this.watched(), log);
   }
 
   private watched(): Watched[] {
@@ -52,25 +42,21 @@ export class Poller {
   }
 
   start(): void {
-    this.running = true;
-    for (const watched of this.watched()) void this.tick(watched);
+    this.cycles.start();
   }
 
   stop(): void {
-    this.running = false;
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
+    this.cycles.stop();
   }
 
   // Runs a cycle now, as a person asking for fresh facts, and starts the timer over from it.
-  async refresh(watched: Watched): Promise<void> {
-    clearTimeout(this.timers.get(watched.id));
-    await this.tick(watched, true);
+  refresh(watched: Watched): Promise<void> {
+    return this.cycles.refresh(watched);
   }
 
   // Polls soon after an action, so a started job's output shows up without waiting a whole interval.
   soon(watched: Watched): void {
-    this.schedule(watched, 2);
+    this.cycles.soon(watched);
   }
 
   // Polls whatever owns each new job soon, as a cache whose build a deployment started would otherwise wait a whole interval.
@@ -79,20 +65,5 @@ export class Poller {
       const owner = this.watched().find((watched) => watched.id === owner_id);
       if (owner !== undefined) this.soon(owner);
     });
-  }
-
-  private async tick(watched: Watched, force_eval = false): Promise<void> {
-    try {
-      await watched.cycle({ force_eval });
-    } catch (error) {
-      this.log?.error({ err: error, id: watched.id }, "Cycle failed");
-    }
-    this.schedule(watched, watched.busy() ? (watched.poll_interval?.() ?? watched.settings.job_poll) : (watched.idle_interval?.() ?? watched.settings.interval));
-  }
-
-  private schedule(watched: Watched, delay_in_seconds: number): void {
-    if (!this.running) return;
-    clearTimeout(this.timers.get(watched.id));
-    this.timers.set(watched.id, setTimeout(() => void this.tick(watched), delay_in_seconds * 1000));
   }
 }

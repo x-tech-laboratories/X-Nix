@@ -4,7 +4,7 @@
 
 import type { KeptAwakeOperation, Operation, WakeOperation } from "../../shared/operations.ts";
 
-export { magic_packet, send_magic_packet } from "../../shared/wake.ts";
+export { magic_packet, send_magic_packet } from "@x-tech-laboratories/x-libs/agent/wake";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
