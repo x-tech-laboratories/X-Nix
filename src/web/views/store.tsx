@@ -1,12 +1,14 @@
-// The Store tab of a host's page: its Nix store, its profiles' generations, and the collections that keep it in check.
+// The Store tab of a host's page: its Nix store and how it grew, its profiles' generations, and the collections that keep it in check.
 
+import { BarChart, LineChart, type Limit } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { Facts, Section, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
-import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
+import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
-import { api, type Host, type Job, type Profile } from "../api.ts";
+import { api, type Host, type Job, type Profile, type Sample } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { until } from "../ui.tsx";
+import { load_samples, points_of } from "./charts.tsx";
 import { JobsTable, MessagesList } from "./shared.tsx";
 
 type Tone = "good" | "warn" | "bad" | "none";
@@ -25,6 +27,7 @@ export function StoreTab({ host, jobs }: { host: Host; jobs: Job[] | null }) {
   return <>
     <StoreTiles host={host} />
     <Section title="Findings"><MessagesList messages={store?.messages ?? []} /></Section>
+    <Section title={`Last ${history_days} days`}><History host={host} /></Section>
     <Section title="Details"><Details host={host} /></Section>
     <Section title="Profiles">{store === null || store.profiles.length === 0 ? <Empty title="No profiles read yet." /> : <ProfilesTable profiles={store.profiles} />}</Section>
     <Section title="Collections">{jobs.length === 0 ? <Empty title="No collections run from here yet." /> : <JobsTable jobs={jobs} show_deployment={false} />}</Section>
@@ -51,6 +54,34 @@ function StoreTiles({ host }: { host: Host }) {
       <Tile label="Generations" value={store?.generations ?? "—"} />
       <Tile label="GC roots" value={store?.roots == null ? "—" : store.roots.toLocaleString()} />
     </Tiles>
+  );
+}
+
+// How many days the store's charts cover.
+const history_days = 30;
+
+// The store's use against where it warns and collects, its paths, and what each collection freed.
+function History({ host }: { host: Host }) {
+  const samples = use_resource(() => load_samples(["store_used_percent", "store_paths", "collection_freed_bytes"], history_days, `host:${host.name}`), [host.name]);
+  return <Loaded resource={samples} lines={4}>{(found) => <HistoryCharts host={host} samples={found} />}</Loaded>;
+}
+
+function HistoryCharts({ host, samples }: { host: Host; samples: Sample[] }) {
+  const gc = host.gc!;
+  const limits: Limit[] = [];
+  if (gc.warning !== null) limits.push({ label: "warns at", value: gc.warning, color: "var(--status-warning)" });
+  if (gc.threshold !== null) limits.push({ label: "collects at", value: gc.threshold, color: "var(--status-danger)" });
+  const freed = points_of(samples, "collection_freed_bytes").map(([epoch, value]) => ({ label: new Date(epoch * 1000).toLocaleString(), value, color: "var(--series-2)" }));
+  return (
+    <div className="charts">
+      <LineChart title="Store used" format={(value) => `${Math.round(value)}%`} limits={limits} series={[
+        { label: "used", color: "var(--series-1)", points: points_of(samples, "store_used_percent") },
+      ]} />
+      <LineChart title="Store paths" format={(value) => Math.round(value).toLocaleString()} series={[
+        { label: "paths", color: "var(--series-3)", points: points_of(samples, "store_paths") },
+      ]} />
+      <BarChart title="Freed by each collection" format={bytes} bars={freed} />
+    </div>
   );
 }
 
@@ -104,6 +135,14 @@ function next_text(host: Host): string {
   if (store.collecting) return "Collecting now";
   if (!store.timer_active) return "Not scheduled";
   return store.next_epoch === null ? "—" : until(store.next_epoch);
+}
+
+// The store's fill in the color of where it stands against its warning and collection levels.
+export function store_used_color(host: Host, used_percent: number): string {
+  const gc = host.gc;
+  if (gc?.threshold != null && used_percent >= gc.threshold) return "var(--status-danger)";
+  if (gc?.warning != null && used_percent >= gc.warning) return "var(--status-warning)";
+  return "var(--series-1)";
 }
 
 function tile_class(tone: Tone): string | null {

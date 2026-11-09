@@ -1,5 +1,5 @@
 // Keeps what X-Nix learns in one SQLite file: each deployment's evaluation and last reading, each cache's last reading,
-// the jobs with their output and the events of both, every finished build with its products, and the fleet runs. Jobs and events name their deployment or cache in
+// the jobs with their output and the events of both, every finished build with its products, the fleet runs, and samples of readings over time. Jobs and events name their deployment or cache in
 // `deployment_id`, as ids are unique across the two.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -73,6 +73,28 @@ export interface BuildFilter {
   target?: string;
   limit?: number;
 }
+
+// A reading taken over time, such as a host's store use, kept for charts.
+export const metric_names = ["store_used_percent", "store_used_bytes", "store_paths", "collection_freed_bytes", "cache_size_bytes"] as const;
+
+export type Metric = (typeof metric_names)[number];
+
+export interface Sample {
+  owner_id: string;
+  metric: Metric;
+  epoch: number;
+  value: number;
+}
+
+export interface SampleFilter {
+  // Every owner's when left out.
+  owner_id?: string;
+  metrics: Metric[];
+  since_epoch: number;
+}
+
+// How long samples are kept.
+export const sample_retention_in_seconds = 180 * 86400;
 
 export interface EventRow {
   id: number;
@@ -150,6 +172,13 @@ const schema = `
     state TEXT NOT NULL,
     run TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS samples (
+    owner_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (owner_id, metric, epoch)
+  );
 `;
 
 const job_columns = "id, deployment_id, kind, command, agent, run_id, state, exit_code, error, progress, live, output_offset, trigger, started_epoch, finished_epoch";
@@ -168,6 +197,8 @@ export interface JobFilter {
   // Evaluations and cache checks run every hour and would push every other job out of the list, so they are left out
   // unless asked for.
   include_evaluations?: boolean;
+  // Only jobs started at or after this time.
+  since_epoch?: number;
   limit?: number;
 }
 
@@ -296,7 +327,7 @@ export class Store {
 
   jobs(filter: JobFilter = {}): Job[] {
     const conditions: string[] = [];
-    const values: string[] = [];
+    const values: (string | number)[] = [];
     if (filter.deployment_id !== undefined) {
       conditions.push("deployment_id = ?");
       values.push(filter.deployment_id);
@@ -305,6 +336,10 @@ export class Store {
       conditions.push("kind = ?");
       values.push(filter.kind);
     } else if (!filter.include_evaluations) conditions.push("kind NOT IN ('eval', 'check')");
+    if (filter.since_epoch !== undefined) {
+      conditions.push("started_epoch >= ?");
+      values.push(filter.since_epoch);
+    }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.database.prepare(`SELECT ${job_columns} FROM jobs ${where} ORDER BY id DESC LIMIT ${Math.trunc(filter.limit ?? 100)}`).all(...values);
     return rows as unknown as Job[];
@@ -388,6 +423,26 @@ export class Store {
     const values = options.state === undefined ? [] : [options.state];
     const rows = this.database.prepare(`SELECT run FROM fleet_runs ${where} ORDER BY id DESC LIMIT ${Math.trunc(options.limit ?? 50)}`).all(...values) as { run: string }[];
     return rows.map((row) => JSON.parse(row.run) as Shape);
+  }
+
+  // ── Samples ──────────────────────────────────────────────────────────────
+
+  // Keeps one reading, once per time, dropping that owner's readings of it older than the retention.
+  add_sample(owner_id: string, metric: Metric, epoch: number, value: number): void {
+    this.database.prepare("INSERT OR IGNORE INTO samples (owner_id, metric, epoch, value) VALUES (?, ?, ?, ?)").run(owner_id, metric, epoch, value);
+    this.database.prepare("DELETE FROM samples WHERE owner_id = ? AND metric = ? AND epoch < ?").run(owner_id, metric, epoch - sample_retention_in_seconds);
+  }
+
+  // The readings oldest first.
+  samples(filter: SampleFilter): Sample[] {
+    if (filter.metrics.length === 0) return [];
+    const conditions = [`metric IN (${filter.metrics.map(() => "?").join(", ")})`, "epoch >= ?"];
+    const values: (string | number)[] = [...filter.metrics, filter.since_epoch];
+    if (filter.owner_id !== undefined) {
+      conditions.push("owner_id = ?");
+      values.push(filter.owner_id);
+    }
+    return this.database.prepare(`SELECT owner_id, metric, epoch, value FROM samples WHERE ${conditions.join(" AND ")} ORDER BY epoch`).all(...values) as unknown as Sample[];
   }
 
   // ── Events ───────────────────────────────────────────────────────────────

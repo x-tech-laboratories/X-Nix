@@ -1,6 +1,7 @@
 // The closure browser: a system closure's dependency tree with each path's own size and closure size, and its largest
 // paths, to find what makes a closure large.
 
+import { Meters } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { Crumbs, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -65,6 +66,7 @@ function ClosureBody({ tree }: { tree: ClosureTree }) {
       <div className="tree"><TreeNode tree={tree} index={0} opened /></div>
     </Section>
     <Section title={`Largest ${largest.length} paths by own size`}>
+      <LargestMeters largest={largest.slice(0, meter_count)} root={root} />
       <DataTable<ClosurePath> caption="Largest paths" rows={largest} row_key={(path) => path.path} columns={[
         { label: "Path", cell: (path) => <code title={path.path}>{path_name(path.path)}</code> },
         { label: "Own", class: "number", cell: (path) => bytes(path.nar_size) },
@@ -73,6 +75,20 @@ function ClosureBody({ tree }: { tree: ClosureTree }) {
       ]} />
     </Section>
   </>;
+}
+
+// How many of the largest paths are drawn as meters above their table.
+const meter_count = 10;
+
+// The largest paths as bars of their share of the whole closure.
+function LargestMeters({ largest, root }: { largest: ClosurePath[]; root: ClosurePath }) {
+  const total = Math.max(1, root.closure_size);
+  return (
+    <Meters message="No paths." rows={largest.map((path) => ({
+      label: path_name(path.path), href: null, value_text: `${bytes(path.nar_size)} · ${((path.nar_size / total) * 100).toFixed(1)}%`,
+      percent: (path.nar_size / total) * 100, color: "var(--series-1)", marks: [], title: path.path,
+    }))} />
+  );
 }
 
 // ── Tree ─────────────────────────────────────────────────────────────────────

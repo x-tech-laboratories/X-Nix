@@ -26,7 +26,7 @@ import { github_repository } from "./nixos/flake.ts";
 import { collect_command } from "./nixos/garbage.ts";
 import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
-import type { BuildRecord, EventRow, Job, JobKind, Store } from "./store.ts";
+import { metric_names, sample_retention_in_seconds, type BuildRecord, type EventRow, type Job, type JobKind, type Metric, type Sample, type Store } from "./store.ts";
 import { register_webhook_route, type Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -552,6 +552,14 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     return answer.error === null ? answer : reply.code(502).send(answer);
   });
 
+  // The closure size of each system generation, read apart from the list as it takes longer.
+  app.get<{ Params: { id: string } }>("/api/deployments/:id/generations/sizes", async (request, reply) => {
+    const deployment = find(request.params.id, reply);
+    if (deployment === null) return reply;
+    const answer = await deployment.generation_sizes();
+    return answer.error === null ? answer : reply.code(502).send(answer);
+  });
+
   // Activates an earlier generation of the system profile, with an optional reason kept in the history.
   app.post<{ Params: { id: string }; Body: { generation?: unknown; reason?: unknown } | undefined }>("/api/deployments/:id/rollback", async (request, reply) => {
     const deployment = find(request.params.id, reply);
@@ -726,16 +734,31 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
-  app.get<{ Querystring: { deployment?: string; kind?: string; evaluations?: string; limit?: string } }>("/api/jobs", async (request): Promise<Job[]> => store.jobs({
-    deployment_id: request.query.deployment || undefined,
-    kind: (request.query.kind as JobKind) || undefined,
-    include_evaluations: request.query.evaluations === "1",
-    limit: Math.min(500, Math.max(1, Number(request.query.limit) || 100)),
-  }));
+  // A `since` time lets charts take every job after it, rather than the newest few hundred.
+  app.get<{ Querystring: { deployment?: string; kind?: string; evaluations?: string; since?: string; limit?: string } }>("/api/jobs", async (request): Promise<Job[]> => {
+    const since = Number(request.query.since) || undefined;
+    return store.jobs({
+      deployment_id: request.query.deployment || undefined,
+      kind: (request.query.kind as JobKind) || undefined,
+      include_evaluations: request.query.evaluations === "1",
+      since_epoch: since,
+      limit: Math.min(since === undefined ? 500 : 5000, Math.max(1, Number(request.query.limit) || 100)),
+    });
+  });
 
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (request, reply) => {
     const job = store.job(Number(request.params.id));
     return job ?? reply.code(404).send({ error: "No such job" });
+  });
+
+  // ── Samples ──────────────────────────────────────────────────────────────
+
+  // Readings over time for charts: one owner's or everyone's, of the named metrics, since a time within the retention.
+  app.get<{ Querystring: { owner?: string; metrics?: string; since?: string } }>("/api/samples", async (request, reply): Promise<Sample[] | FastifyReply> => {
+    const metrics = (request.query.metrics ?? "").split(",").filter((metric): metric is Metric => (metric_names as readonly string[]).includes(metric));
+    if (metrics.length === 0) return reply.code(400).send({ error: `Name the metrics, any of ${metric_names.join(", ")}` });
+    const oldest = Math.floor(Date.now() / 1000) - sample_retention_in_seconds;
+    return store.samples({ owner_id: request.query.owner || undefined, metrics, since_epoch: Math.max(oldest, Number(request.query.since) || oldest) });
   });
 
   // ── Builds ───────────────────────────────────────────────────────────────

@@ -127,12 +127,17 @@ function unit_bytes(unit: string): number {
 }
 
 // The closure size of each path `nix path-info -S --json` names, from either the old list or the newer object form.
-function closure_sizes(json: string): Map<string, number> {
+export function closure_sizes(json: string): Map<string, number> {
   const sizes = new Map<string, number>();
   for (const entry of path_info_entries(json)) {
     if (typeof entry.info.closureSize === "number") sizes.set(entry.path, entry.info.closureSize);
   }
   return sizes;
+}
+
+// Prints the closure size of each path, such as every system generation's.
+export function closure_size_operation(settings: DeploymentSettings, paths: string[]): Operation {
+  return { kind: "programs", steps: [{ argv: [...nix(settings), "path-info", "--closure-size", "--json", ...paths] }] };
 }
 
 // ── Closure graph ────────────────────────────────────────────────────────────

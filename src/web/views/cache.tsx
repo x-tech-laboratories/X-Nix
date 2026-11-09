@@ -1,6 +1,7 @@
 // The Cache pages: every Attic cache as a card, and one cache with each target's build and push state and its buttons.
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Donut, LineChart } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Card, Cards, Crumbs, Facts, PageHeading, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
@@ -9,9 +10,10 @@ import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { Fragment } from "react";
-import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
+import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Sample as HistorySample, type Status, type TargetRow } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
+import { load_samples, points_of } from "./charts.tsx";
 import { duration, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
@@ -57,7 +59,11 @@ interface CachePage {
   cache: Cache;
   jobs: Job[];
   events: EventRow[];
+  samples: HistorySample[];
 }
+
+// How many days the cache size chart covers.
+const size_days = 30;
 
 interface MissingPath {
   name: string;
@@ -67,12 +73,13 @@ interface MissingPath {
 export function CacheView({ id }: { id: string }) {
   const path = `/api/caches/${encodeURIComponent(id)}`;
   const page = use_resource(async (): Promise<CachePage> => {
-    const [cache, jobs, events] = await Promise.all([
+    const [cache, jobs, events, samples] = await Promise.all([
       api<Cache>(path),
       api<Job[]>(`/api/jobs?deployment=${encodeURIComponent(id)}&evaluations=1&limit=10`),
       api<EventRow[]>(`${path}/events`),
+      load_samples(["cache_size_bytes"], size_days, id).catch((): HistorySample[] => []),
     ]);
-    return { cache, jobs, events };
+    return { cache, jobs, events, samples };
   }, [id], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
   const cache = page.data?.cache ?? null;
 
@@ -148,12 +155,20 @@ export function CacheView({ id }: { id: string }) {
       />
       <Stack>
         <Loaded resource={page}>
-          {({ cache: found, jobs, events }) => {
+          {({ cache: found, jobs, events, samples }) => {
             const rows = found.reading?.rows ?? [];
             const missing: MissingPath[] = rows.flatMap((row) => row.missing.map((store_path) => ({ name: row.name, store_path })));
             return <>
               <CacheTiles cache={found} />
               <Section title="Findings"><MessagesList messages={found.reading?.messages ?? []} /></Section>
+              {rows.length > 0 && (
+                <div className="charts">
+                  <TargetsDonut rows={rows} />
+                  {found.server?.size_bytes != null && (
+                    <LineChart title={`Cache size, last ${size_days} days`} format={bytes} series={[{ label: "size", color: "var(--series-1)", points: points_of(samples, "cache_size_bytes") }]} />
+                  )}
+                </div>
+              )}
               <Section title="Details"><Details cache={found} /></Section>
               {found.server && <Section title={<span>Cache server <StatusBadge status={found.server.status} /></span>}><ServerDetails cache={found} /></Section>}
               <Section title="Tracked targets">{rows.length === 0 ? <Empty title="Not checked yet." /> : targets_table(found, rows)}</Section>
@@ -200,6 +215,17 @@ function CacheTiles({ cache }: { cache: Cache }) {
 }
 
 // The cache server's state in a word or two.
+// The tracked targets by how far each has got: pushed, built only, or not built from the latest revision.
+function TargetsDonut({ rows }: { rows: TargetRow[] }) {
+  const parts = [
+    { label: "Pushed", color: "var(--status-success)", value: rows.filter((row) => row.pushed_ok).length },
+    { label: "Built, not pushed", color: "var(--series-2)", value: rows.filter((row) => !row.pushed_ok && row.built === true).length },
+    { label: "Not built", color: "var(--status-warning)", value: rows.filter((row) => !row.pushed_ok && row.built === false).length },
+    { label: "Not checked", color: "var(--text-tertiary)", value: rows.filter((row) => !row.pushed_ok && row.built === null).length },
+  ];
+  return <Donut title="Tracked targets" parts={parts} center={`${parts[0].value} of ${rows.length}`} center_label="pushed" message="Not checked yet." />;
+}
+
 function server_word(cache: Cache): string {
   const server = cache.server;
   if (server === null) return "—";

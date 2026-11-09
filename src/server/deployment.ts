@@ -35,7 +35,9 @@ import type { Host } from "./host.ts";
 import { parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
-import { closure_operation, diff_operation, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree } from "./nixos/closure.ts";
+import {
+  closure_operation, closure_size_operation, closure_sizes, diff_operation, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree,
+} from "./nixos/closure.ts";
 import {
   build_operation, cache_holds_operation, eval_operation, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
 } from "./nixos/commands.ts";
@@ -1140,6 +1142,21 @@ export class Deployment {
     const generations = parse_generations(result.stdout);
     if (generations.length === 0) return { generations, error: `Could not read the system profile's generations: ${clip(result.stderr || result.stdout, 200) || "none found"}` };
     return { generations, error: null };
+  }
+
+  // The closure size of each system generation, newest first, leaving out any nix could not size.
+  async generation_sizes(): Promise<{ sizes: { generation: number; closure_size_bytes: number }[]; error: string | null }> {
+    const { generations, error } = await this.generations();
+    if (error !== null) return { sizes: [], error };
+    const paths = generations.map((generation) => generation.path).filter(is_store_path);
+    const result = await this.agents.get(this.settings.host).run(closure_size_operation(this.settings, paths), { timeout_in_seconds: closure_timeout_in_seconds });
+    const sized = closure_sizes(result.stdout);
+    if (sized.size === 0) return { sizes: [], error: `Could not size the system generations: ${clip(result.stderr || result.stdout, 200) || `status ${result.exit_code}`}` };
+    const sizes = generations.flatMap((generation) => {
+      const size = sized.get(generation.path);
+      return size === undefined ? [] : [{ generation: generation.generation, closure_size_bytes: size }];
+    });
+    return { sizes, error: null };
   }
 
   // Activates an earlier generation of the system profile, recording why.

@@ -2,26 +2,29 @@
 // runs, its Store, its Boot entries and the Machine itself as tabs under one header.
 
 import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Meters, Sparkline } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
+import { bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { current_route, link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState } from "react";
 import {
   api, type ActionOutcome, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Job, type ProvisionedAgent, type Provisioning,
-  type Status,
+  type Sample, type Status,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { BootTab, load_boot } from "./boot.tsx";
+import { load_samples, points_of } from "./charts.tsx";
 import { action_labels, RunsTable } from "./fleet.tsx";
 import {
   ActionButton, duration, error_toast, EventsList, HostActionButton, refresh_interval_in_milliseconds, short_revision, TagChips, WaitingOn,
 } from "./shared.tsx";
-import { last_collection_tone, load_store, StoreTab } from "./store.tsx";
+import { last_collection_tone, load_store, store_used_color, StoreTab } from "./store.tsx";
 import { GenerationsSection, load_system, SystemTab, type SystemData } from "./system.tsx";
 
 export type HostTab = "system" | "store" | "boot" | "machine";
@@ -63,11 +66,12 @@ export function HostsView() {
   const [stages, set_stages] = useState<string | null>(null);
   const [parallel, set_parallel] = useState("");
   const loaded = use_resource(async () => {
-    const [rows, fleet] = await Promise.all([host_rows(), api<Fleet>("/api/fleet")]);
-    return { rows, fleet };
+    const [rows, fleet, samples] = await Promise.all([host_rows(), api<Fleet>("/api/fleet"), load_samples(["store_used_percent"], 1).catch((): Sample[] => [])]);
+    return { rows, fleet, samples };
   }, [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
 
   const rows = loaded.data?.rows ?? [];
+  const samples = loaded.data?.samples ?? [];
   const fleet = loaded.data?.fleet ?? null;
   const stages_text = stages ?? fleet?.stages.join("\n") ?? "";
   const deployments = rows.flatMap((row) => (row.deployment === null ? [] : [row.deployment]));
@@ -123,7 +127,7 @@ export function HostsView() {
         <Stack>
           {loaded.data && (rows.length === 0
             ? <Empty title="No hosts yet." hint="Name each machine under hosts in the config file, or name it as a deployment's host." />
-            : <HostsTable rows={rows} selected={selected} on_change={set_selected} />)}
+            : <HostsTable rows={rows} samples={samples} selected={selected} on_change={set_selected} />)}
         </Stack>
       </Stack>
       {/* The run controls show only while something is picked. */}
@@ -161,7 +165,7 @@ export function HostsView() {
 }
 
 // Every host with its deployment's state, and a checkbox for each host that runs a deployment.
-function HostsTable({ rows, selected, on_change }: { rows: Row[]; selected: Set<string>; on_change: (selected: Set<string>) => void }) {
+function HostsTable({ rows, samples, selected, on_change }: { rows: Row[]; samples: Sample[]; selected: Set<string>; on_change: (selected: Set<string>) => void }) {
   const toggle = (id: string, on: boolean) => {
     const changed = new Set(selected);
     if (on) changed.add(id);
@@ -180,7 +184,7 @@ function HostsTable({ rows, selected, on_change }: { rows: Row[]; selected: Set<
       { label: "NixOS", cell: ({ deployment }) => deployment?.reading?.version ?? "—" },
       { label: "Updated", cell: ({ deployment }) => (deployment?.reading?.switched_epoch ? <Age epoch={deployment.reading.switched_epoch} /> : "—") },
       { label: "Pin", cell: ({ deployment }) => (deployment === null ? none : deployment.pin === null ? <span className="muted">head</span> : <code>{short_revision(deployment.pin)}</code>) },
-      { label: "Store used", cell: ({ host }) => <StoreUsed host={host} /> },
+      { label: "Store used", cell: ({ host }) => <StoreUsed host={host} samples={samples} /> },
       { label: "Waiting on", cell: ({ deployment }) => (deployment === null ? <span className="muted">Not deployed</span> : <WaitingOn deployment={deployment} />) },
       { label: "Running", cell: ({ host, deployment }) => {
         const job = deployment?.running_job ?? host.running_job;
@@ -190,11 +194,24 @@ function HostsTable({ rows, selected, on_change }: { rows: Row[]; selected: Set<
   );
 }
 
-function StoreUsed({ host }: { host: Host }) {
-  const used = host.reading?.store?.used_percent ?? null;
-  if (used === null) return <>—</>;
-  const tone = host.gc === null ? "none" : last_collection_tone(host);
-  return <span className={tone === "none" ? undefined : `tone-${tone}`}>{used.toFixed(1)}%</span>;
+// How full the store is against where it warns and collects, with the last day of readings beside it.
+function StoreUsed({ host, samples }: { host: Host; samples: Sample[] }) {
+  const store = host.reading?.store ?? null;
+  const used = store?.used_percent ?? null;
+  if (store === null || used === null || host.gc === null) return <>—</>;
+  const tone = last_collection_tone(host);
+  const color = store_used_color(host, used);
+  const points = points_of(samples, "store_used_percent", `host:${host.name}`);
+  const marks = [host.gc.warning, host.gc.threshold].filter((mark): mark is number => mark !== null);
+  return (
+    <div className="store-used">
+      <Meters message="" rows={[{
+        label: store.used_bytes === null || store.size_bytes === null ? "Store" : `${bytes(store.used_bytes)} of ${bytes(store.size_bytes)}`, href: null, value_text: `${used.toFixed(1)}%`, percent: used, color, marks,
+        title: tone === "none" ? null : "The last collection failed or is overdue",
+      }]} />
+      {points.length > 1 && <Sparkline label={`Store used over the last day, now ${used.toFixed(1)}%`} points={points} top={100} color={color} />}
+    </div>
+  );
 }
 
 // ── One host ─────────────────────────────────────────────────────────────────

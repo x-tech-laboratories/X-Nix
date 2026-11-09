@@ -1,7 +1,8 @@
-// The Overview: the fleet in counts, the hosts that need attention and why, and the jobs running now. Each host's own
-// state is on the Hosts page, which every row here links to.
+// The Overview: the fleet in counts and by status, the hosts that need attention and why, the jobs running now, and the
+// last week of jobs by day and by owner. Each host's own state is on the Hosts page, which every row here links to.
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Donut } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { PageHeading, Section, Stack, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -9,6 +10,7 @@ import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type Health, type Job, type Status } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
+import { JobsPerDay, JobTimeline, load_recent_jobs, OutcomeDonut } from "./charts.tsx";
 import { host_rows, row_status, type Row } from "./hosts.tsx";
 import { drift_state, JobsTable, refresh_interval_in_milliseconds } from "./shared.tsx";
 import { last_collection_tone } from "./store.tsx";
@@ -20,6 +22,7 @@ export function OverviewView() {
   const rows = use_resource(host_rows, [], refresh);
   const running = use_resource(async () => (await api<Job[]>("/api/jobs?limit=100")).filter((job) => job.state === "running"), [], refresh);
   const health = use_resource(() => api<Health>("/api/health"), []);
+  const recent = use_resource(() => load_recent_jobs(chart_days), [], refresh);
 
   return (
     <div className="page">
@@ -31,6 +34,7 @@ export function OverviewView() {
             const attention = found.filter((row) => reasons(row).length > 0 || troubled.has(row_status(row) ?? "online"));
             return <>
               <SummaryTiles rows={found} />
+              <div className="charts"><StatusDonut rows={found} /></div>
               <Section title="Needs attention">{attention.length === 0 ? <Empty title="Nothing needs attention." /> : <AttentionTable rows={attention} />}</Section>
             </>;
           }}
@@ -43,9 +47,25 @@ export function OverviewView() {
           </Loaded>
         </Stack>
       </Section>
+      <Section title={`Last ${chart_days} days`}>
+        <Stack>
+          <Loaded resource={recent}>
+            {(jobs) => <>
+              <div className="charts">
+                <OutcomeDonut jobs={jobs} title="Outcomes" />
+                <JobsPerDay jobs={jobs} days={chart_days} />
+              </div>
+              <JobTimeline jobs={jobs} days={chart_days} />
+            </>}
+          </Loaded>
+        </Stack>
+      </Section>
     </div>
   );
 }
+
+// How many days the job charts cover.
+const chart_days = 7;
 
 // The statuses that put a host on the attention list even when no reason below names why; its page says.
 const troubled = new Set<Status>(["unavailable", "warning", "failed"]);
@@ -66,6 +86,21 @@ function SummaryTiles({ rows }: { rows: Row[] }) {
     </Tiles>
   );
 }
+
+// The hosts by the worse of their own and their deployment's status, with the share that is fine in the middle.
+function StatusDonut({ rows }: { rows: Row[] }) {
+  const statuses = rows.map(row_status);
+  const parts = status_parts.map(([label, color, matches]) => ({ label, color, value: statuses.filter(matches).length }));
+  return <Donut title="Hosts by status" parts={parts} center={`${parts[0].value} of ${rows.length}`} center_label="OK" message="No hosts read yet." />;
+}
+
+const status_parts: [label: string, color: string, matches: (status: Status | null) => boolean][] = [
+  ["OK", "var(--status-success)", (status) => status === "online" || status === "info"],
+  ["Warning", "var(--status-warning)", (status) => status === "warning"],
+  ["Unreachable", "var(--series-2)", (status) => status === "unavailable"],
+  ["Failed", "var(--status-danger)", (status) => status === "failed"],
+  ["Not read yet", "var(--text-tertiary)", (status) => status === null],
+];
 
 function AttentionTable({ rows }: { rows: Row[] }) {
   return (
