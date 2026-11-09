@@ -283,3 +283,30 @@ describe("/api/caches", () => {
     expect((await inject("GET", "/api/caches/nope")).statusCode).toBe(404);
   });
 });
+
+// ── Change feed ──────────────────────────────────────────────────────────────
+
+describe("/api/events", () => {
+  it("needs a session", async () => {
+    const { server } = await start_app();
+
+    expect((await server.inject({ method: "GET", url: "/api/events" })).statusCode).toBe(401);
+  });
+
+  it("tells an open page once the store changes", async () => {
+    const harness = make_deployment();
+    const { server } = await start_app(harness);
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
+    const address = await server.listen({ host: "127.0.0.1", port: 0 });
+    const response = await fetch(`${address}/api/events`, { headers: { cookie: String(login.headers["set-cookie"]).split(";")[0] } });
+    const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let seen = "";
+    while (!seen.includes("event: hello")) seen += (await reader.read()).value ?? "";
+
+    harness.store.add_event(harness.deployment.id, 1, "info", "Something changed");
+    while (!seen.includes("event: changed")) seen += (await reader.read()).value ?? "";
+    await reader.cancel();
+
+    expect(seen).toContain("event: changed");
+  });
+});

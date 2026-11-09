@@ -3,13 +3,13 @@
 // media to download. A named host shows its key on its Machine tab.
 
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { Facts, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { Facts, FormRow, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import {
   api, type ActionOutcome, type AgentEntry, type Deployment, type Health, type Host, type InstallView, type MediaFormat, type MediaView, type ProvisionedAgent,
   type Provisioning,
@@ -17,14 +17,14 @@ import {
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge } from "../ui.tsx";
 import { forget_key } from "./hosts.tsx";
-import { error_toast, job_toast, refresh_interval_in_milliseconds } from "./shared.tsx";
+import { error_toast, job_toast, live } from "./shared.tsx";
 
 const format_labels: Record<MediaFormat, string> = { iso: "Installer ISO", netboot: "Netboot (iPXE)", kexec: "Kexec tarball" };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export function ProvisionView() {
-  const refresh = { refresh_in_milliseconds: refresh_interval_in_milliseconds };
+  const refresh = live;
   const fetch_provisioning = () => api<Provisioning>("/api/provisioning");
   const installs = use_resource(async () => (await fetch_provisioning()).installs, [], refresh);
   const keys = use_resource(async () => {
@@ -66,15 +66,6 @@ export function ProvisionView() {
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────
-
-function FormRow({ label, id, hint, hidden = false, children }: { label: string; id: string; hint?: string; hidden?: boolean; children: ReactNode }) {
-  return (
-    <div className="form-row" hidden={hidden}>
-      <label htmlFor={id}>{label}</label>
-      <div>{children}{hint && <p className="muted small">{hint}</p>}</div>
-    </div>
-  );
-}
 
 // The text a form field holds, by its name.
 function field(form: FormData, name: string): string {

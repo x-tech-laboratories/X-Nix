@@ -6,7 +6,7 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementResultingChanges } from "node:sqlite";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -173,6 +173,7 @@ export interface JobFilter {
 
 export class Store {
   private readonly database: DatabaseSync;
+  private readonly listeners = new Set<() => void>();
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -188,6 +189,18 @@ export class Store {
     this.database.close();
   }
 
+  // Calls the listener after every write, until the returned function is called.
+  on_change(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => void this.listeners.delete(listener);
+  }
+
+  private run(sql: string, ...values: SQLInputValue[]): StatementResultingChanges {
+    const result = this.database.prepare(sql).run(...values);
+    for (const listener of this.listeners) listener();
+    return result;
+  }
+
   // ── Deployment state ─────────────────────────────────────────────────────
 
   evaluation<Shape>(deployment_id: string): Shape | null {
@@ -195,8 +208,8 @@ export class Store {
   }
 
   save_evaluation(deployment_id: string, evaluation: unknown): void {
-    this.database.prepare(`INSERT INTO deployment_state (deployment_id, evaluation) VALUES (?, ?)
-      ON CONFLICT (deployment_id) DO UPDATE SET evaluation = excluded.evaluation`).run(deployment_id, JSON.stringify(evaluation));
+    this.run(`INSERT INTO deployment_state (deployment_id, evaluation) VALUES (?, ?)
+      ON CONFLICT (deployment_id) DO UPDATE SET evaluation = excluded.evaluation`, deployment_id, JSON.stringify(evaluation));
   }
 
   reading<Shape>(deployment_id: string): Shape | null {
@@ -204,8 +217,8 @@ export class Store {
   }
 
   save_reading(deployment_id: string, reading: unknown): void {
-    this.database.prepare(`INSERT INTO deployment_state (deployment_id, reading) VALUES (?, ?)
-      ON CONFLICT (deployment_id) DO UPDATE SET reading = excluded.reading`).run(deployment_id, JSON.stringify(reading));
+    this.run(`INSERT INTO deployment_state (deployment_id, reading) VALUES (?, ?)
+      ON CONFLICT (deployment_id) DO UPDATE SET reading = excluded.reading`, deployment_id, JSON.stringify(reading));
   }
 
   private state_column<Shape>(deployment_id: string, column: "evaluation" | "reading"): Shape | null {
@@ -221,8 +234,8 @@ export class Store {
   }
 
   save_cache_reading(cache_id: string, reading: unknown): void {
-    this.database.prepare(`INSERT INTO cache_state (cache_id, reading) VALUES (?, ?)
-      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`).run(cache_id, JSON.stringify(reading));
+    this.run(`INSERT INTO cache_state (cache_id, reading) VALUES (?, ?)
+      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`, cache_id, JSON.stringify(reading));
   }
 
   // What the cache server's own endpoints last answered.
@@ -232,41 +245,40 @@ export class Store {
   }
 
   save_cache_server_reading(cache_id: string, reading: unknown): void {
-    this.database.prepare(`INSERT INTO cache_server_state (cache_id, reading) VALUES (?, ?)
-      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`).run(cache_id, JSON.stringify(reading));
+    this.run(`INSERT INTO cache_server_state (cache_id, reading) VALUES (?, ?)
+      ON CONFLICT (cache_id) DO UPDATE SET reading = excluded.reading`, cache_id, JSON.stringify(reading));
   }
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   create_job(job: Pick<Job, "deployment_id" | "kind" | "command" | "agent" | "run_id" | "trigger" | "started_epoch">): number {
-    const result = this.database.prepare(`INSERT INTO jobs (deployment_id, kind, command, agent, run_id, state, trigger, started_epoch)
-      VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`).run(job.deployment_id, job.kind, job.command, job.agent, job.run_id, job.trigger, job.started_epoch);
+    const result = this.run(`INSERT INTO jobs (deployment_id, kind, command, agent, run_id, state, trigger, started_epoch)
+      VALUES (?, ?, ?, ?, ?, 'running', ?, ?)`, job.deployment_id, job.kind, job.command, job.agent, job.run_id, job.trigger, job.started_epoch);
     return Number(result.lastInsertRowid);
   }
 
   append_output(job_id: number, text: string, output_offset: number | null = null): void {
     if (text === "" && output_offset === null) return;
     const progress = text.split("\n").map((line) => line.trim()).filter(Boolean).pop()?.slice(0, 200) ?? null;
-    this.database.prepare(`UPDATE jobs SET output = output || ?, progress = COALESCE(?, progress),
-      output_offset = COALESCE(?, output_offset) WHERE id = ?`).run(text, progress, output_offset, job_id);
+    this.run(`UPDATE jobs SET output = output || ?, progress = COALESCE(?, progress),
+      output_offset = COALESCE(?, output_offset) WHERE id = ?`, text, progress, output_offset, job_id);
   }
 
   // For a job whose run has not started yet, such as a switch waiting on a cache build that brought a newer system.
   set_command(job_id: number, command: string): void {
-    this.database.prepare("UPDATE jobs SET command = ? WHERE id = ?").run(command, job_id);
+    this.run("UPDATE jobs SET command = ? WHERE id = ?", command, job_id);
   }
 
   set_progress(job_id: number, progress: string): void {
-    this.database.prepare("UPDATE jobs SET progress = ? WHERE id = ?").run(progress.slice(0, 200), job_id);
+    this.run("UPDATE jobs SET progress = ? WHERE id = ?", progress.slice(0, 200), job_id);
   }
 
   set_live(job_id: number, live: unknown): void {
-    this.database.prepare("UPDATE jobs SET live = ? WHERE id = ?").run(JSON.stringify(live), job_id);
+    this.run("UPDATE jobs SET live = ? WHERE id = ?", JSON.stringify(live), job_id);
   }
 
   finish_job(job_id: number, state: Exclude<JobState, "running">, exit_code: number | null, error: string | null, finished_epoch: number): void {
-    this.database.prepare("UPDATE jobs SET state = ?, exit_code = ?, error = ?, finished_epoch = ? WHERE id = ?")
-      .run(state, exit_code, error, finished_epoch, job_id);
+    this.run("UPDATE jobs SET state = ?, exit_code = ?, error = ?, finished_epoch = ? WHERE id = ?", state, exit_code, error, finished_epoch, job_id);
   }
 
   job(job_id: number): JobWithOutput | null {
@@ -318,20 +330,19 @@ export class Store {
 
   // Keeps a host's new agent key, replacing the key of an earlier install of the same host.
   save_provisioned_agent(agent: ProvisionedAgent): void {
-    this.database.prepare(`INSERT INTO provisioned_agents (host, public_line, job_id, added_epoch) VALUES (?, ?, ?, ?)
-      ON CONFLICT (host) DO UPDATE SET public_line = excluded.public_line, job_id = excluded.job_id, added_epoch = excluded.added_epoch`)
-      .run(agent.host, agent.public_line, agent.job_id, agent.added_epoch);
+    this.run(`INSERT INTO provisioned_agents (host, public_line, job_id, added_epoch) VALUES (?, ?, ?, ?)
+      ON CONFLICT (host) DO UPDATE SET public_line = excluded.public_line, job_id = excluded.job_id, added_epoch = excluded.added_epoch`, agent.host, agent.public_line, agent.job_id, agent.added_epoch);
   }
 
   forget_provisioned_agent(host: string): boolean {
-    return this.database.prepare("DELETE FROM provisioned_agents WHERE host = ?").run(host).changes > 0;
+    return this.run("DELETE FROM provisioned_agents WHERE host = ?", host).changes > 0;
   }
 
   // ── Builds ───────────────────────────────────────────────────────────────
 
   add_build(build: Omit<BuildRecord, "id">): number {
-    const result = this.database.prepare(`INSERT INTO builds (job_id, owner_id, target, agent, store_path, succeeded, started_epoch, finished_epoch, products)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(build.job_id, build.owner_id, build.target, build.agent, build.store_path, build.succeeded ? 1 : 0,
+    const result = this.run(`INSERT INTO builds (job_id, owner_id, target, agent, store_path, succeeded, started_epoch, finished_epoch, products)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, build.job_id, build.owner_id, build.target, build.agent, build.store_path, build.succeeded ? 1 : 0,
       build.started_epoch, build.finished_epoch, JSON.stringify(build.products));
     return Number(result.lastInsertRowid);
   }
@@ -367,14 +378,14 @@ export class Store {
 
   // Keeps a new fleet run, answering with its id; the run is stored whole as JSON beside its state.
   create_fleet_run(state: string, run: unknown): number {
-    const result = this.database.prepare("INSERT INTO fleet_runs (state, run) VALUES (?, '{}')").run(state);
+    const result = this.run("INSERT INTO fleet_runs (state, run) VALUES (?, '{}')", state);
     const id = Number(result.lastInsertRowid);
     this.save_fleet_run(id, state, { ...(run as object), id });
     return id;
   }
 
   save_fleet_run(id: number, state: string, run: unknown): void {
-    this.database.prepare("UPDATE fleet_runs SET state = ?, run = ? WHERE id = ?").run(state, JSON.stringify(run), id);
+    this.run("UPDATE fleet_runs SET state = ?, run = ? WHERE id = ?", state, JSON.stringify(run), id);
   }
 
   fleet_run<Shape>(id: number): Shape | null {
@@ -393,7 +404,7 @@ export class Store {
   // ── Events ───────────────────────────────────────────────────────────────
 
   add_event(deployment_id: string, epoch: number, level: EventLevel, message: string): void {
-    this.database.prepare("INSERT INTO events (deployment_id, epoch, level, message) VALUES (?, ?, ?, ?)").run(deployment_id, epoch, level, message);
+    this.run("INSERT INTO events (deployment_id, epoch, level, message) VALUES (?, ?, ?, ?)", deployment_id, epoch, level, message);
   }
 
   events(deployment_id: string, limit = 100): EventRow[] {

@@ -22,7 +22,7 @@ import { StatusBadge } from "../ui.tsx";
 import { BootTab, load_boot } from "./boot.tsx";
 import { action_labels, RunsTable } from "./fleet.tsx";
 import {
-  ActionButton, error_toast, EventsList, HostActionButton, refresh_interval_in_milliseconds, short_revision, TagChips, WaitingOn,
+  ActionButton, error_toast, EventsList, HostActionButton, live, short_revision, TagChips, WaitingOn,
 } from "./shared.tsx";
 import { last_collection_tone, load_store, StoreTab } from "./store.tsx";
 import { GenerationsSection, load_system, SystemTab, type SystemData } from "./system.tsx";
@@ -68,7 +68,7 @@ export function HostsView() {
   const loaded = use_resource(async () => {
     const [rows, fleet] = await Promise.all([host_rows(), api<Fleet>("/api/fleet")]);
     return { rows, fleet };
-  }, [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  }, [], live);
 
   const rows = loaded.data?.rows ?? [];
   const fleet = loaded.data?.fleet ?? null;
@@ -232,7 +232,7 @@ export function HostView({ name, asked }: { name: string; asked: HostTab | null 
     const has: Record<HostTab, boolean> = { system: deployment !== null, store: host.gc !== null, boot: host.boot, machine: true };
     const tab = asked ?? host_tabs.find((choice) => has[choice])!;
     return { host, deployment, has, tab, contents: await load_contents(tab, host, deployment) };
-  }, [name, asked], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  }, [name, asked], live);
   const refresh = () => page.reload(true);
   const shown = page.data;
   const deployment = shown?.deployment ?? null;

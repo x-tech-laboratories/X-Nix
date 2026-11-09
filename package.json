@@ -25,7 +25,7 @@
     "@fastify/static": "^10.1.7",
     "@fastify/websocket": "^11.3.5",
     "@x-tech-laboratories/halon": "^0.10.0",
-    "@x-tech-laboratories/x-libs": "^0.20.0",
+    "@x-tech-laboratories/x-libs": "^0.21.0",
     "fastify": "^5.12.7",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

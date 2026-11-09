@@ -12,7 +12,7 @@ import { useRef } from "react";
 import { api, type BuildRecord, type BuildsAnswer } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobsTabs } from "./jobs.tsx";
-import { refresh_interval_in_milliseconds } from "./shared.tsx";
+import { live } from "./shared.tsx";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ export function BuildsView({ owner, target }: { owner: string; target: string })
     if (owner) search.set("owner", owner);
     if (target) search.set("target", target);
     return api<BuildsAnswer>(`/api/builds?${search}`);
-  }, [owner, target], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  }, [owner, target], live);
   // The filters are drawn from the first answer, so a quiet refresh never takes a choice out from under the pointer.
   const first = useRef<BuildsAnswer | null>(null);
   if (first.current === null && answer.data !== null) first.current = answer.data;

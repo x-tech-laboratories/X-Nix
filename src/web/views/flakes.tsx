@@ -10,14 +10,14 @@ import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type ActionOutcome, type EventRow, type Flake, type Job, type LockedInput, type Status } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
-import { error_toast, EventsList, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
+import { error_toast, EventsList, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
 export function FlakesView() {
-  const flakes = use_resource(() => api<Flake[]>("/api/flakes"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  const flakes = use_resource(() => api<Flake[]>("/api/flakes"), [], live);
   return (
     <div className="page">
       <PageHeading title="Flakes" subtitle="Each flake's locked inputs and how old they are, and the update that moves them on for every deployment naming it." />
@@ -66,7 +66,7 @@ export function FlakeView({ id }: { id: string }) {
       api<EventRow[]>(`${path}/events`),
     ]);
     return { flake, jobs, events };
-  }, [id], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  }, [id], live);
   const flake = page.data?.flake ?? null;
 
   const run_refresh = async () => {

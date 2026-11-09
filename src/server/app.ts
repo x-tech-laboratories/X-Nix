@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
 import { register_error_replies, send_error } from "@x-tech-laboratories/x-libs/server/replies";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
@@ -255,6 +256,9 @@ const confirmations: Partial<Record<ActionId, (name: string) => string>> = {
 const web_build_directory = fileURLToPath(new URL("../../dist", import.meta.url));
 const package_file = fileURLToPath(new URL("../../package.json", import.meta.url));
 
+// Changes are announced to open pages at most this often.
+const announce_interval_in_milliseconds = 1000;
+
 // ── Views ────────────────────────────────────────────────────────────────────
 
 function clock(at: TimeOfDay | null): string | null {
@@ -393,6 +397,29 @@ function flake_view(flake: Flake, poller: Poller): FlakeView {
 
 // ── App ──────────────────────────────────────────────────────────────────────
 
+// Tells every open page when something changed: any write to the store, or an agent dialling in or dropping, at most
+// once a second, as a running build writes its output many times a second.
+function register_change_feed(app: FastifyInstance, store: Store, hub: Hub | undefined): void {
+  const changes = new EventStream();
+  changes.register(app, "/api/events");
+  let waiting: NodeJS.Timeout | null = null;
+  const announce = () => {
+    waiting ??= setTimeout(() => {
+      waiting = null;
+      changes.announce_change();
+    }, announce_interval_in_milliseconds);
+  };
+  const stop_listening = store.on_change(announce);
+  hub?.on("connect", announce);
+  hub?.on("disconnect", announce);
+  app.addHook("onClose", async () => {
+    stop_listening();
+    hub?.off("connect", announce);
+    hub?.off("disconnect", announce);
+    if (waiting !== null) clearTimeout(waiting);
+  });
+}
+
 export async function build_app(options: app_options): Promise<FastifyInstance> {
   // A reverse proxy on this machine passes on the visitor's address and whether they came over https.
   const app = fastify({ logger: options.logger, trustProxy: ["127.0.0.1", "::1"] });
@@ -406,6 +433,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   await register_auth(app, options.accounts);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
+  register_change_feed(app, store, options.hub);
 
   const find = (id: string, reply: FastifyReply): Deployment | null => {
     const deployment = poller.deployments.get(id) ?? null;

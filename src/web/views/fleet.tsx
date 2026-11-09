@@ -8,7 +8,7 @@ import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type FleetActionId, type FleetOutcome, type FleetRun } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { FleetHostBadge, FleetRunBadge } from "../ui.tsx";
-import { error_toast, refresh_interval_in_milliseconds } from "./shared.tsx";
+import { error_toast, live } from "./shared.tsx";
 
 export const action_labels: Record<FleetActionId, string> = { build: "Build", switch: "Rebuild and switch", reboot: "Reboot" };
 
@@ -37,7 +37,7 @@ export function RunsTable({ runs }: { runs: FleetRun[] }) {
 // ── One fleet run ────────────────────────────────────────────────────────────
 
 export function FleetRunView({ id }: { id: number }) {
-  const run = use_resource(() => api<FleetRun>(`/api/fleet/runs/${id}`), [id], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  const run = use_resource(() => api<FleetRun>(`/api/fleet/runs/${id}`), [id], live);
 
   const stop = async () => {
     try {

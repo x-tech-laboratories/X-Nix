@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge } from "../ui.tsx";
-import { job_owner_link, JobsTable, refresh_interval_in_milliseconds } from "./shared.tsx";
+import { job_owner_link, JobsTable, live } from "./shared.tsx";
 
 // The tabs over the job history: every job, or the finished builds with what they made.
 export function JobsTabs({ active }: { active: "jobs" | "builds" }) {
@@ -21,7 +21,7 @@ export function JobsTabs({ active }: { active: "jobs" | "builds" }) {
 // ── List ─────────────────────────────────────────────────────────────────────
 
 export function JobsView({ show_evaluations }: { show_evaluations: boolean }) {
-  const jobs = use_resource(() => api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`), [show_evaluations], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  const jobs = use_resource(() => api<Job[]>(`/api/jobs?limit=200${show_evaluations ? "&evaluations=1" : ""}`), [show_evaluations], live);
   return (
     <div className="page">
       <PageHeading title="Jobs" subtitle={<>
@@ -47,7 +47,7 @@ export function JobsView({ show_evaluations }: { show_evaluations: boolean }) {
 export function JobView({ id }: { id: number }) {
   // A finished job's output no longer changes, so its page stops fetching it again.
   const [finished, set_finished] = useState(false);
-  const job = use_resource(() => api<JobWithOutput>(`/api/jobs/${id}`), [id], { refresh_in_milliseconds: finished ? undefined : refresh_interval_in_milliseconds });
+  const job = use_resource(() => api<JobWithOutput>(`/api/jobs/${id}`), [id], finished ? {} : live);
   const state = job.data?.state;
   useEffect(() => {
     if (state !== undefined) set_finished(state !== "running");

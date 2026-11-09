@@ -10,13 +10,13 @@ import { age, size, size_change, stamp } from "@x-tech-laboratories/x-libs/web/f
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState, type ReactNode } from "react";
 import {
-  api, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type Host, type Job, type Message, type PackageChange,
+  api, changes, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type Host, type Job, type Message, type PackageChange,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge, LevelBadge } from "../ui.tsx";
 
-// How often an open page fetches again, so a running job's progress shows.
-export const refresh_interval_in_milliseconds = 10_000;
+// An open page loads again whenever the server says something changed, and each minute for what it does not announce.
+export const live = { watch: changes, refresh_in_milliseconds: 60_000 };
 
 // ── Toasts ───────────────────────────────────────────────────────────────────
 

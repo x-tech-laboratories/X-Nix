@@ -10,13 +10,13 @@ import { api, type Health, type Job, type Status } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { host_rows, row_status, type Row } from "./hosts.tsx";
-import { drift_state, JobsTable, refresh_interval_in_milliseconds } from "./shared.tsx";
+import { drift_state, JobsTable, live } from "./shared.tsx";
 import { last_collection_tone } from "./store.tsx";
 
 // ── View ─────────────────────────────────────────────────────────────────────
 
 export function OverviewView() {
-  const refresh = { refresh_in_milliseconds: refresh_interval_in_milliseconds };
+  const refresh = live;
   const rows = use_resource(host_rows, [], refresh);
   const running = use_resource(async () => (await api<Job[]>("/api/jobs?limit=100")).filter((job) => job.state === "running"), [], refresh);
   const health = use_resource(() => api<Health>("/api/health"), []);

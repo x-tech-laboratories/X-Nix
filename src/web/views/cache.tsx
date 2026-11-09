@@ -12,14 +12,14 @@ import { Fragment } from "react";
 import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
-import { error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
+import { error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
 export function CachesView() {
-  const caches = use_resource(() => api<Cache[]>("/api/caches"), [], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  const caches = use_resource(() => api<Cache[]>("/api/caches"), [], live);
   return (
     <div className="page">
       <PageHeading title="Cache" subtitle="Whether each closure is built from the flake's latest revision and pushed to its Attic cache." />
@@ -73,7 +73,7 @@ export function CacheView({ id }: { id: string }) {
       api<EventRow[]>(`${path}/events`),
     ]);
     return { cache, jobs, events };
-  }, [id], { refresh_in_milliseconds: refresh_interval_in_milliseconds });
+  }, [id], live);
   const cache = page.data?.cache ?? null;
 
   const run_refresh = async () => {

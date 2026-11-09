@@ -1,15 +1,16 @@
-// The page: the login, the shell around every view (header, sidebar, theme) and the router between views.
+// The page: the login, the shell around every view (header, sidebar, theme), the server's change feed and the router between views.
 
 import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
-import { describe_error } from "@x-tech-laboratories/x-libs/web/errors";
+import { follow_changes } from "@x-tech-laboratories/x-libs/web/events";
+import { LoginForm, use_session } from "@x-tech-laboratories/x-libs/web/react/login";
 import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
 import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
-import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { api, LoginNeeded } from "./api.ts";
+import { api, changes } from "./api.ts";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
 import { closure_title, ClosureView } from "./views/closure.tsx";
@@ -72,77 +73,21 @@ function page_for({ parts, query }: Route): Page {
   return { title: "Overview", view: <OverviewView /> };
 }
 
-// ── Login ────────────────────────────────────────────────────────────────────
-
-function Login({ on_login }: { on_login: (user_name: string) => void }) {
-  const name = useRef<HTMLInputElement>(null);
-  const password = useRef<HTMLInputElement>(null);
-  const [message, set_message] = useState("");
-  const [busy, set_busy] = useState(false);
-
-  useEffect(() => {
-    document.title = "Log in · X-Nix";
-    name.current?.focus();
-  }, []);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    set_busy(true);
-    set_message("");
-    const user_name = name.current!.value;
-    try {
-      await api("/api/login", "POST", { name: user_name, password: password.current!.value });
-      on_login(user_name.trim().toLowerCase());
-    } catch (error) {
-      set_message(describe_error(error));
-      password.current?.select();
-      set_busy(false);
-    }
-  };
-
-  return (
-    <form className="login" onSubmit={(event) => void submit(event)}>
-      <div className="login-brand"><img src="/icon.svg" alt="" width={96} height={96} /><h1>X-Nix</h1></div>
-      <label className="field">
-        <span className="field-label">User name</span>
-        <input ref={name} type="text" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} required aria-label="User name" />
-      </label>
-      <label className="field">
-        <span className="field-label">Password</span>
-        <input ref={password} type="password" name="password" autoComplete="current-password" required aria-label="Password" />
-      </label>
-      <button type="submit" className="accent solid" disabled={busy}>Log in</button>
-      <p className="tone-bad" role="alert">{message}</p>
-    </form>
-  );
-}
-
 // ── App ──────────────────────────────────────────────────────────────────────
 
-// Whether a session is open, and for whom: checking until the first request answers.
-type Session = { state: "checking" } | { state: "login" } | { state: "open"; user: string };
-
 function App() {
-  const [session, set_session] = useState<Session>({ state: "checking" });
+  const [session, set_session] = use_session(async () => (await api<{ name?: string }>("/api/me")).name ?? "");
   const route = use_route();
 
-  useEffect(() => {
-    // The first request tells whether a session is still open.
-    void api<{ name?: string }>("/api/me").then(
-      (me) => set_session({ state: "open", user: me.name ?? "" }),
-      (error) => set_session(error instanceof LoginNeeded ? { state: "login" } : { state: "open", user: "" }),
-    );
-    // A session can lapse while any view is fetching, so a LoginNeeded from anywhere brings the login back.
-    const lapsed = (event: PromiseRejectionEvent) => {
-      if (!(event.reason instanceof LoginNeeded)) return;
-      event.preventDefault();
-      set_session({ state: "login" });
-    };
-    window.addEventListener("unhandledrejection", lapsed);
-    return () => window.removeEventListener("unhandledrejection", lapsed);
-  }, []);
-
   const logged_in = session.state === "open";
+
+  // The server's change feed needs a session, so it opens at login and closes at logout.
+  useEffect(() => {
+    if (!logged_in) return;
+    const feed = follow_changes("/api/events", { watch: changes });
+    return () => feed.close();
+  }, [logged_in]);
+
   const shown = logged_in ? page_for(route) : null;
   const view_key = `${route.parts.join("/")}?${route.query}`;
 
@@ -166,7 +111,9 @@ function App() {
       on_logout={() => void log_out()}
       view_key={view_key}
     >
-      {session.state === "login" && <Login on_login={(user) => set_session({ state: "open", user })} />}
+      {session.state === "login" && (
+        <LoginForm title="X-Nix" icon="/icon.svg" log_in={(name, password) => api("/api/login", "POST", { name, password })} on_login={(user) => set_session({ state: "open", user })} />
+      )}
       {/* A new address draws its view afresh, as each view loads what it shows when it starts. */}
       {shown && <Fragment key={view_key}>{shown.view}</Fragment>}
     </Shell>

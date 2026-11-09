@@ -1,18 +1,11 @@
 // Calls the server's JSON API and names the shapes it answers with.
 
+import { create_api } from "@x-tech-laboratories/x-libs/web/api";
 import { LoginNeeded } from "@x-tech-laboratories/x-libs/web/states";
+import { create_watch } from "@x-tech-laboratories/x-libs/web/watch";
 
 // The session has lapsed or never began, so the page asks for the password.
 export { LoginNeeded };
-
-export class ApiError extends Error {
-  status: number | null;
-
-  constructor(message: string, status: number | null) {
-    super(message);
-    this.status = status;
-  }
-}
 
 // ── Answers ──────────────────────────────────────────────────────────────────
 
@@ -530,14 +523,7 @@ export interface ActionOutcome {
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-export async function api<Answer>(path: string, method: "GET" | "POST" = "GET", body: unknown = undefined): Promise<Answer> {
-  const init: RequestInit = body === undefined
-    ? { method, headers: { accept: "application/json" } }
-    : { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) };
-  const response = await fetch(path, init);
-  if (response.status === 401 && path !== "/api/login") throw new LoginNeeded("Log in first.");
-  if (response.status === 204) return undefined as Answer;
-  const answer = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(answer?.message ?? answer?.error ?? `${response.status} ${response.statusText}`, response.status);
-  return answer as Answer;
-}
+export const api = create_api({ open_paths: ["/api/login"] });
+
+// Bumped whenever the server says something changed, so every open view loads again.
+export const changes = create_watch();
