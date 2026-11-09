@@ -76,6 +76,12 @@ export interface FlakeSettings {
   timeout: number;
   max_input_age: number | null;
   update_at: TimeOfDay | null;
+  // How often the inputs' remotes are asked whether they moved, starting an update when one did; null never asks.
+  input_check_interval: number | null;
+  // The inputs that check watches; null watches every one.
+  watch_inputs: string[] | null;
+  // A nix.conf file on the flake's host holding access-tokens, which nix reads when it reads or updates the flake.
+  access_tokens_file: string | null;
   push_ssh_key: string | null;
   commit_author: string;
   commit_message: string;
@@ -351,6 +357,9 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
     timeout: read.duration("timeout", "2m"),
     max_input_age: read.optional_duration("max_input_age"),
     update_at: read.time_of_day("update_at"),
+    input_check_interval: values.input_check_interval === null ? null : read.duration("input_check_interval", "1m"),
+    watch_inputs: values.watch_inputs == null ? null : read.list("watch_inputs", []),
+    access_tokens_file: read.text("access_tokens_file"),
     push_ssh_key: read.text("push_ssh_key"),
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",

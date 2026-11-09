@@ -94,6 +94,7 @@ const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, pok
 const webhook = webhook_secret_file ? new Webhook({
   secret: load_webhook_secret(webhook_secret_file), debounce_in_seconds: webhook_debounce, deployments: poller.deployments, store,
   evaluate: (deployment) => void poller.refresh(deployment), flakes: poller.flakes, read: (flake) => void poller.refresh(flake),
+  update: (flake, inputs) => void flake.update(`push to ${inputs}`).then((outcome) => outcome.ok && poller.soon(flake)),
 }) : undefined;
 const app = await build_app({ serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook });
 

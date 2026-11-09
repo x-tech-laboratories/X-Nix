@@ -1,5 +1,5 @@
 // The cheap reads of a host, each printing its facts as one JSON value: the running system, the Nix store and its
-// garbage collection, the system profile's generations, and a build's products.
+// garbage collection, the system profile's generations, a build's products, and where remote refs point.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -9,7 +9,7 @@ import { hostname } from "node:os";
 import { basename, resolve } from "node:path";
 
 import { boot_parts, generation_of, type BuildProduct, type GcFields, type Generation, type ProbeFields, type Profile } from "../../shared/facts.ts";
-import type { LocateOperation, PieceOperation, ProductsOperation, StoreProbeOperation } from "../../shared/operations.ts";
+import type { LocateOperation, PieceOperation, ProductsOperation, RemoteHeads, RemoteHeadsOperation, StoreProbeOperation } from "../../shared/operations.ts";
 import type { Context } from "../programs.ts";
 
 // ── Files ────────────────────────────────────────────────────────────────────
@@ -259,4 +259,24 @@ export async function piece(context: Context, operation: PieceOperation): Promis
 function fail(context: Context, message: string, exit_code: number): number {
   context.err.write(message);
   return exit_code;
+}
+
+// ── Remote heads ─────────────────────────────────────────────────────────────
+
+// Lists each remote's refs over Git's own protocol, never prompting for a login, so one private remote fails rather than waits.
+export async function remote_heads(context: Context, operation: RemoteHeadsOperation): Promise<number> {
+  const { SSH_ASKPASS: _ssh_askpass, GIT_ASKPASS: _git_askpass, ...inherited } = process.env;
+  const env = { ...inherited, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes" };
+  const answers: RemoteHeads[] = [];
+  for (const remote of operation.remotes) {
+    const argv = ["git", "-c", "core.askPass=", "ls-remote", "--", remote.url, ...remote.refs];
+    const listed = await context.program(context, argv, { stdout: "keep", stderr: "keep", env });
+    const heads: Record<string, string> = {};
+    for (const line of listed.stdout.split("\n")) {
+      const [commit, name] = line.trim().split("\t");
+      if (commit && name) heads[name] = commit;
+    }
+    answers.push({ exit_code: listed.exit_code, heads, error: listed.stderr.trim().slice(0, 400) });
+  }
+  return print(context, answers);
 }

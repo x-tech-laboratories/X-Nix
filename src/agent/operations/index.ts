@@ -4,14 +4,14 @@
 
 import { spawn } from "node:child_process";
 
-import { timed_out_exit_code, type KeptAwakeOperation, type Operation, type TimedOperation } from "../../shared/operations.ts";
+import { timed_out_exit_code, type KeptAwakeOperation, type NixConfigOperation, type Operation, type TimedOperation } from "../../shared/operations.ts";
 import { send_magic_packet } from "../../shared/wake.ts";
 import { run_steps, step_argv, type Context } from "../programs.ts";
 import { boot_probe } from "./boot.ts";
 import { cache_build, cache_build_all, cache_check, cache_push } from "./cache.ts";
 import { build, cache_holds, closure_diff, evaluate, github_update } from "./deploy.ts";
 import { install, media } from "./provision.ts";
-import { generations, locate, piece, probe, products, store_probe } from "./reads.ts";
+import { generations, locate, piece, probe, products, remote_heads, store_probe } from "./reads.ts";
 import { confirm_switch, signal_rollback, switch_system } from "./switch.ts";
 
 // ── Performing ───────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ export async function perform(context: Context, operation: Operation): Promise<n
     case "piece": return piece(context, operation);
     case "cache_holds": return cache_holds(context, operation);
     case "closure_diff": return closure_diff(context, operation);
+    case "remote_heads": return remote_heads(context, operation);
     case "programs":
       if (operation.note !== undefined) context.out.write(`${operation.note}\n`);
       return run_steps(context, operation.steps);
@@ -35,6 +36,7 @@ export async function perform(context: Context, operation: Operation): Promise<n
       return 0;
     case "kept_awake": return kept_awake(context, operation);
     case "timed": return timed(context, operation);
+    case "nix_config": return nix_config(context, operation);
     case "evaluate": return evaluate(context, operation);
     case "build": return build(context, operation);
     case "switch": return switch_system(context, operation);
@@ -90,4 +92,14 @@ async function timed(context: Context, operation: TimedOperation): Promise<numbe
     clearTimeout(timer);
     context.signal.removeEventListener("abort", forward);
   }
+}
+
+// Adds an include of the file to NIX_CONFIG for every program the operation runs; a missing file fails nix rather than going unnoticed.
+function nix_config(context: Context, operation: NixConfigOperation): Promise<number> {
+  const program: Context["program"] = (inner, argv, options = {}) => {
+    const env = options.env ?? process.env;
+    const config = [env.NIX_CONFIG, `include ${operation.file}`].filter(Boolean).join("\n");
+    return context.program(inner, argv, { ...options, env: { ...env, NIX_CONFIG: config } });
+  };
+  return perform({ ...context, program }, operation.operation);
 }

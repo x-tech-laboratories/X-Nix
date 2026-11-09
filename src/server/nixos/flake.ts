@@ -144,6 +144,14 @@ export interface LockedInput {
   follows: string | null;
   revision: string | null;
   last_modified_epoch: number | null;
+  // The Git remote and ref the input follows, or null for one that follows nothing a remote can be asked about.
+  remote?: InputRemote | null;
+}
+
+export interface InputRemote {
+  url: string;
+  // The branch or tag, or null for the remote's default branch.
+  ref: string | null;
 }
 
 export function parse_metadata(raw: string): FlakeMetadata | null {
@@ -167,12 +175,46 @@ function root_inputs(locks: Record<string, unknown>): LockedInput[] {
   const root = as_object(nodes[text(locks.root) ?? "root"]);
   const inputs = as_object(root?.inputs) ?? {};
   return Object.entries(inputs).map(([name, target]): LockedInput => {
-    if (Array.isArray(target)) return { name, source: null, follows: target.join("/"), revision: null, last_modified_epoch: null };
+    if (Array.isArray(target)) return { name, source: null, follows: target.join("/"), revision: null, last_modified_epoch: null, remote: null };
     const node = as_object(nodes[String(target)]);
     const locked = as_object(node?.locked) ?? {};
     const stamp = number(locked.lastModified);
-    return { name, source: source_of(locked), follows: null, revision: text(locked.rev), last_modified_epoch: stamp === null ? null : Math.floor(stamp) };
+    return {
+      name, source: source_of(locked), follows: null, revision: text(locked.rev), last_modified_epoch: stamp === null ? null : Math.floor(stamp),
+      remote: remote_of(as_object(node?.original) ?? {}),
+    };
   });
+}
+
+// The remote an input's original reference follows; one pinned to a commit, a path, a tarball or a registry name follows none.
+export function remote_of(original: Record<string, unknown>): InputRemote | null {
+  if (text(original.rev) !== null) return null;
+  const type = text(original.type);
+  const ref = text(original.ref);
+  const owner = text(original.owner);
+  const repo = text(original.repo);
+  if (type === "github" || type === "gitlab" || type === "sourcehut") {
+    if (owner === null || repo === null) return null;
+    const host = text(original.host) ?? forge_hosts[`${type}:`];
+    return { url: `https://${host}/${owner}/${repo}${type === "gitlab" ? ".git" : ""}`, ref };
+  }
+  const url = text(original.url);
+  if (type !== "git" || url === null || !/^(https?|ssh|git):\/\//.test(url)) return null;
+  return { url: url.split("?", 1)[0], ref };
+}
+
+// The refs to ask a remote for to learn where the ref points, a tag's peeled commit among them.
+export function refs_to_ask(ref: string | null): string[] {
+  if (ref === null) return ["HEAD"];
+  if (ref.startsWith("refs/")) return [ref, `${ref}^{}`];
+  return [`refs/heads/${ref}`, `refs/tags/${ref}`, `refs/tags/${ref}^{}`];
+}
+
+// The commit a ref points at among the heads a remote listed, a branch before a tag, or null when it lists none.
+export function resolve_ref(ref: string | null, heads: Record<string, string>): string | null {
+  const wanted = ref === null ? ["HEAD"] : ref.startsWith("refs/") ? [`${ref}^{}`, ref] : [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`];
+  for (const name of wanted) if (heads[name] !== undefined) return heads[name];
+  return null;
 }
 
 // A locked input's source in the short form a flake reference takes.

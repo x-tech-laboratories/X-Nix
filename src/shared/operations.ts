@@ -78,6 +78,19 @@ export interface ClosureDiffOperation {
   to: string;
 }
 
+// Where each remote's refs point, asked with `git ls-remote` rather than any forge's API; prints one RemoteHeads per remote as JSON.
+export interface RemoteHeadsOperation {
+  kind: "remote_heads";
+  remotes: { url: string; refs: string[] }[];
+}
+
+export interface RemoteHeads {
+  exit_code: number;
+  // Each ref listed, by name, to its commit.
+  heads: Record<string, string>;
+  error: string;
+}
+
 // ── Plain programs ───────────────────────────────────────────────────────────
 
 // Runs each program in turn, stopping at the first that fails, after printing an optional note.
@@ -110,6 +123,14 @@ export interface KeptAwakeOperation {
 export interface TimedOperation {
   kind: "timed";
   seconds: number;
+  operation: Operation;
+}
+
+// Has every program the operation runs read a nix.conf file, such as one holding access-tokens, through NIX_CONFIG, so
+// neither the agent nor the server ever reads the file itself.
+export interface NixConfigOperation {
+  kind: "nix_config";
+  file: string;
   operation: Operation;
 }
 
@@ -287,15 +308,15 @@ export interface MediaOperation extends NixSettings {
 
 export type Operation =
   | ProbeOperation | StoreProbeOperation | BootProbeOperation | GenerationsOperation | ProductsOperation | LocateOperation | PieceOperation
-  | CacheHoldsOperation | ClosureDiffOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
-  | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
+  | CacheHoldsOperation | ClosureDiffOperation | RemoteHeadsOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
+  | NixConfigOperation | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
   | CacheCheckOperation | CacheBuildOperation | CachePushOperation | CacheBuildAllOperation | InstallOperation | MediaOperation;
 
 export type OperationKind = Operation["kind"];
 
 export const operation_kinds: OperationKind[] = [
-  "probe", "store_probe", "boot_probe", "generations", "products", "locate", "piece", "cache_holds", "closure_diff", "programs", "wake",
-  "kept_awake", "timed", "evaluate", "build", "switch", "github_update", "confirm_switch", "signal_rollback", "cache_check", "cache_build",
+  "probe", "store_probe", "boot_probe", "generations", "products", "locate", "piece", "cache_holds", "closure_diff", "remote_heads", "programs", "wake",
+  "kept_awake", "timed", "nix_config", "evaluate", "build", "switch", "github_update", "confirm_switch", "signal_rollback", "cache_check", "cache_build",
   "cache_push", "cache_build_all", "install", "media",
 ];
 
@@ -318,7 +339,7 @@ export function operation_of(command: string): Operation | null {
 // The operation inside any wrappers.
 export function innermost(operation: Operation): Operation {
   let current = operation;
-  while (current.kind === "kept_awake" || current.kind === "timed") current = current.operation;
+  while (current.kind === "kept_awake" || current.kind === "timed" || current.kind === "nix_config") current = current.operation;
   return current;
 }
 

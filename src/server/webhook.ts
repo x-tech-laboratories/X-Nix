@@ -1,5 +1,6 @@
 // The push webhook: a forge such as GitHub or Forgejo posts each push here, and every deployment whose flake follows the
-// pushed repository and branch evaluates at once instead of waiting for its `eval_interval`, as every such flake is read again.
+// pushed repository and branch evaluates at once instead of waiting for its `eval_interval`, as every such flake is read again,
+// and every flake with a watched input following it updates at once.
 //
 // The request proves it knows the shared secret, read from a file: by GitHub's X-Hub-Signature-256 HMAC of the body,
 // Gitea's and Forgejo's own signature headers, an `Authorization: Bearer` token, or GitLab's X-Gitlab-Token. Pushes are
@@ -16,7 +17,8 @@ import { read_secret_file } from "@x-tech-laboratories/x-libs/server/config";
 
 import type { Deployment } from "./deployment.ts";
 import type { Flake } from "./flake.ts";
-import { normalize_repository, repository_of } from "./nixos/flake.ts";
+import { can_update } from "./nixos/commands.ts";
+import { normalize_repository, repository_of, type InputRemote } from "./nixos/flake.ts";
 import type { Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -33,6 +35,8 @@ export interface WebhookOptions {
   flakes?: Map<string, Flake>;
   // Reads the flake again now.
   read?: (flake: Flake) => unknown;
+  // Updates the flake now, naming the inputs the push moved.
+  update?: (flake: Flake, inputs: string) => unknown;
   now?: () => number;
 }
 
@@ -146,6 +150,12 @@ export function follows_push(push: Push, flake: string): boolean {
   return push.default_branch === null || push.default_branch === push.branch;
 }
 
+// Whether the push moved the branch a flake input's remote follows.
+export function input_follows_push(push: Push, remote: InputRemote): boolean {
+  const reference = `git+${remote.url}${remote.ref === null ? "" : `?ref=${encodeURIComponent(remote.ref)}`}`;
+  return follows_push(push, reference);
+}
+
 // ── Webhook ──────────────────────────────────────────────────────────────────
 
 export interface WebhookAnswer {
@@ -190,8 +200,18 @@ export class Webhook {
       this.options.store.add_event(flake.id, this.now(), "info", `Push to ${push.branch} received; reading the flake again`);
       this.schedule(flake.id, () => this.options.read?.(flake));
     }
+    const updating: string[] = [];
+    for (const flake of this.options.flakes?.values() ?? []) {
+      if (!can_update(flake.settings)) continue;
+      const inputs = flake.watched_inputs().filter((input) => input_follows_push(push, input.remote!)).map((input) => input.name).join(", ");
+      if (inputs === "") continue;
+      updating.push(flake.id);
+      this.options.store.add_event(flake.id, this.now(), "info", `Push to ${inputs} received; updating the flake`);
+      this.schedule(`${flake.id} inputs`, () => this.options.update?.(flake, inputs));
+    }
     const names = matched.map((deployment) => deployment.id);
-    return { status: 202, body: { message: names.length === 0 ? "No deployment follows that branch" : `Evaluating ${names.join(", ")}`, matched: names } };
+    const doing = [...(names.length === 0 ? [] : [`Evaluating ${names.join(", ")}`]), ...(updating.length === 0 ? [] : [`Updating ${updating.join(", ")}`])];
+    return { status: 202, body: { message: doing.length === 0 ? "No deployment follows that branch" : doing.join("; "), matched: names } };
   }
 
   // Runs the work once the debounce after the last push for this id ends.

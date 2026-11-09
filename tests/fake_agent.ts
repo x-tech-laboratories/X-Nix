@@ -68,6 +68,8 @@ interface MetadataOptions {
   last_modified_epoch?: number;
   inputs?: Record<string, number>;
   dirty?: boolean;
+  // Each input's original reference in the lock, such as { type: "github", owner: "NixOS", repo: "nixpkgs", ref: "nixos-26.05" }.
+  originals?: Record<string, Record<string, unknown>>;
 }
 
 // What `nix flake metadata --json` prints.
@@ -75,7 +77,7 @@ export function metadata(options: MetadataOptions = {}): RunResult {
   const last_modified = options.last_modified_epoch ?? clock.now - 7200;
   const inputs = options.inputs ?? { nixpkgs: clock.now - 86400 };
   const nodes: Record<string, unknown> = { root: { inputs: Object.fromEntries(Object.keys(inputs).map((name) => [name, name])) } };
-  for (const [name, stamp] of Object.entries(inputs)) nodes[name] = { locked: { lastModified: stamp, rev: "0".repeat(40) } };
+  for (const [name, stamp] of Object.entries(inputs)) nodes[name] = { locked: { lastModified: stamp, rev: "0".repeat(40) }, original: options.originals?.[name] ?? { type: "path", path: "/x" } };
   return result(0, JSON.stringify({
     lastModified: last_modified,
     locked: { [options.dirty ? "dirtyRev" : "rev"]: options.revision ?? "f".repeat(40), lastModified: last_modified },

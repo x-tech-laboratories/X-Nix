@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { build, cache_holds, evaluate, github_update } from "../src/agent/operations/deploy.ts";
+import { perform } from "../src/agent/operations/index.ts";
 import type { Context, ProgramOptions, ProgramResult, RunProgram } from "../src/agent/programs.ts";
 import { ConfigError, deployment_settings, flake_settings, host_settings, parse_config } from "../src/server/config.ts";
 import {
@@ -293,6 +294,38 @@ describe("the update", () => {
 
 // ── Flake metadata ───────────────────────────────────────────────────────────
 
+describe("an access_tokens_file", () => {
+  const file = "/var/lib/x-nix/nix-access-tokens.conf";
+  const tokens = { access_tokens_file: file };
+
+  it("is handed to nix by path for the read and the update, sudo keeping NIX_CONFIG", () => {
+    const update = update_operation(flake(tokens));
+
+    expect(metadata_operation(flake(tokens))).toMatchObject({ kind: "nix_config", file, operation: { kind: "programs" } });
+    expect(update).toMatchObject({ kind: "nix_config", file });
+    expect((inner_config(update) as { steps: { argv: string[] }[] }).steps[0].argv.slice(0, 3)).toEqual(["sudo", "-n", "--preserve-env=NIX_CONFIG"]);
+    expect(inner_config(update_operation(flake({ ...tokens, url: "github:owner/config", push_ssh_key: "/k" }))).kind).toBe("github_update");
+    expect(metadata_operation(flake()).kind).toBe("programs");
+  });
+
+  it("is included through NIX_CONFIG after what the agent already sets", async () => {
+    const environments: (string | undefined)[] = [];
+    const { context } = fake_context((_argv, options) => {
+      environments.push(options.env?.NIX_CONFIG);
+      return {};
+    });
+
+    await perform(context, metadata_operation(flake(tokens)));
+
+    expect(environments[0]?.endsWith(`include ${file}`)).toBe(true);
+  });
+});
+
+// The operation inside a nix_config wrapper.
+function inner_config(operation: Operation): Operation {
+  return operation.kind === "nix_config" ? operation.operation : operation;
+}
+
 describe("the flake's metadata read", () => {
   it("fetches a remote flake afresh, and reads a local one from disk", () => {
     const argv = (values: Record<string, unknown>) => (metadata_operation(flake(values)) as { steps: { argv: string[] }[] }).steps[0].argv;
@@ -319,6 +352,11 @@ describe("a flake in the config", () => {
   it("needs a url and an id no deployment or cache takes", () => {
     expect(() => flake_settings({ id: "fleet" })).toThrow(ConfigError);
     expect(() => parse_config({ flakes: [{ id: "odin", url: "/etc/nixos" }], deployments: [{ id: "odin" }] })).toThrow(/Two flakes, deployments or caches/);
+  });
+
+  it("checks every input each minute unless told otherwise", () => {
+    expect(flake()).toMatchObject({ input_check_interval: 60, watch_inputs: null, access_tokens_file: null });
+    expect(flake({ input_check_interval: null, watch_inputs: ["nixpkgs"] })).toMatchObject({ input_check_interval: null, watch_inputs: ["nixpkgs"] });
   });
 
   it.each(["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"])("takes %s, which a deployment refuses", (key) => {
