@@ -89,6 +89,7 @@ const on_updated = (flake: Flake) => {
 };
 const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated }));
 const poller = new Poller(deployments, null, caches, [provisioner], flakes, [...hosts.values()]);
+poller.follow_new_jobs(store);
 const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });
 const webhook = webhook_secret_file ? new Webhook({
   secret: load_webhook_secret(webhook_secret_file), debounce_in_seconds: webhook_debounce, deployments: poller.deployments, store,
