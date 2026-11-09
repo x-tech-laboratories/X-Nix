@@ -3,10 +3,9 @@
 import { Facts, Section, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
-import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
+import { age, bytes, until } from "@x-tech-laboratories/x-libs/web/format";
 import { api, type Host, type Job, type Profile } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { until } from "../ui.tsx";
 import { JobsTable, MessagesList } from "./shared.tsx";
 
 type Tone = "good" | "warn" | "bad" | "none";

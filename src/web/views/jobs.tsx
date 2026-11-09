@@ -4,6 +4,7 @@
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { FollowingOutput } from "@x-tech-laboratories/x-libs/web/react/following";
 import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { ProgressBar } from "@x-tech-laboratories/x-libs/web/react/progress";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useState } from "react";
@@ -98,6 +99,7 @@ function ProgressView({ progress, running }: { progress: BuildProgress; running:
   const built = Math.max(0, progress.builds_done - progress.builds_failed);
   return (
     <Stack tight>
+      {running && <ProgressBar label="Built" value={progress.builds_expected === null ? null : built} max={progress.builds_expected ?? undefined} detail={`${built}${of(progress.builds_expected)} built`} />}
       <Tiles>
         <Tile label="Built" value={`${built}${of(progress.builds_expected)}`} />
         <Tile label="Building" value={String(building.length)} />

@@ -6,7 +6,7 @@ import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { describe_error } from "@x-tech-laboratories/x-libs/web/errors";
-import { age, bytes, stamp } from "@x-tech-laboratories/x-libs/web/format";
+import { age, size, size_change, stamp } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState, type ReactNode } from "react";
 import {
@@ -165,11 +165,6 @@ export function HostActionButton({ host, action, done }: { host: Host; action: H
 
 // ── Package diff ─────────────────────────────────────────────────────────────
 
-function size_change(delta: number | null): string {
-  if (delta === null || delta === 0) return "";
-  return `${delta > 0 ? "+" : "−"}${bytes(Math.abs(delta))}`;
-}
-
 function versions(list: string[]): string {
   return list.length === 0 ? "∅" : list.map((version) => version || "ε").join(", ");
 }
@@ -186,7 +181,7 @@ export function DiffView({ diff }: { diff: ClosureDiff }) {
   ];
   const before = diff.closure_before_bytes;
   const after = diff.closure_after_bytes;
-  const size = before !== null && after !== null ? `Closure ${bytes(before)} → ${bytes(after)} (${size_change(after - before) || "no change"})` : null;
+  const closure_change = before !== null && after !== null ? `Closure ${size(before)} → ${size(after)} (${after === before ? "no change" : size_change(after - before)})` : null;
   return (
     <div className="stack diff">
       <div className="change-summary">
@@ -194,7 +189,7 @@ export function DiffView({ diff }: { diff: ClosureDiff }) {
         <Badge tone="good">{diff.added.length} added</Badge>
         <Badge tone="bad">{diff.removed.length} removed</Badge>
         {diff.resized.length > 0 && <Badge>{diff.resized.length} resized</Badge>}
-        {size && <span className="muted small">{size}</span>}
+        {closure_change && <span className="muted small">{closure_change}</span>}
       </div>
       {rows.length > 0
         ? <DataTable<ChangeRow> caption="Package changes" rows={rows} columns={[
@@ -216,13 +211,6 @@ export function DiffView({ diff }: { diff: ClosureDiff }) {
 }
 
 // ── Wording ──────────────────────────────────────────────────────────────────
-
-// A length of time in words, such as "3m 20s".
-export function duration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-}
 
 // A flake revision cut to fit a tile, keeping the -dirty mark.
 export function short_revision(revision: string | null): string {

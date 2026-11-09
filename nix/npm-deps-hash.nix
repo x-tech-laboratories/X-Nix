@@ -1,3 +1,3 @@
 # The hash of package-lock.json's dependencies, shared by the server and agent packages; after changing the lock, get the
 # new one with `nix run nixpkgs#prefetch-npm-deps -- package-lock.json`.
-"sha256-FqbblQ9UAkbT2ZN6huDB8bdW/Djjs6GqWrjZyMPHy6Q="
+"sha256-lbGnxFmgL8cAjyNxOFigFuQX8sgA5jZQEemBXgQe9rY="

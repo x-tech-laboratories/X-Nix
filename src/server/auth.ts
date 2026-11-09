@@ -56,7 +56,7 @@ export async function register_auth(app: FastifyInstance, accounts: Accounts): P
   });
   await app.register(fastify_rate_limit, {
     global: false,
-    errorResponseBuilder: () => ({ statusCode: 429, error: "Too many tries; wait a few minutes." }),
+    errorResponseBuilder: () => Object.assign(new Error("Too many tries; wait a few minutes."), { statusCode: 429 }),
   });
 
   // The page loads without a session and logs in itself, so only API calls are turned away.

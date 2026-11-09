@@ -6,13 +6,13 @@ import { Card, Cards, Crumbs, Facts, PageHeading, Section, Stack, Tile, Tiles, t
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
-import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
+import { age, bytes, duration } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { Fragment } from "react";
 import { api, type ActionOutcome, type BuildAllOutcome, type Cache, type CacheActionId, type EventRow, type Job, type Status, type TargetRow } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
-import { duration, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
+import { error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, refresh_interval_in_milliseconds, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 

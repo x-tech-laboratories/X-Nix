@@ -3,9 +3,10 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
-import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+import { register_error_replies, send_error } from "@x-tech-laboratories/x-libs/server/replies";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
@@ -399,6 +400,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const started_epoch = Math.floor(Date.now() / 1000);
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
+  // Errors answer as JSON { error }, as does an unknown path when the page is not served.
+  register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
   await register_auth(app, options.accounts);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
@@ -771,9 +774,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   // ── Page ─────────────────────────────────────────────────────────────────
 
   // An API path the server does not know answers as JSON, never with the page.
-  const api_not_found = (_request: FastifyRequest, reply: FastifyReply) => reply.code(404).send({ error: "Not found" });
-  if (options.serve_web) await register_web_folder(app, { folder: web_build_directory, when_missing: "throw", page_fallback: true, api_not_found });
-  else app.setNotFoundHandler(api_not_found);
+  if (options.serve_web) {
+    await register_web_folder(app, { folder: web_build_directory, when_missing: "throw", page_fallback: true, api_not_found: (_request, reply) => send_error(reply, 404, "Not found", "json") });
+  }
 
   return app;
 }

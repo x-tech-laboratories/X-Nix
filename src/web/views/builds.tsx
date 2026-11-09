@@ -2,16 +2,17 @@
 // products, filtered by deployment or cache and target.
 
 import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Select } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { PageHeading, Section, Stack, Toolbar } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
-import { bytes } from "@x-tech-laboratories/x-libs/web/format";
+import { bytes, duration } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useRef } from "react";
 import { api, type BuildRecord, type BuildsAnswer } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobsTabs } from "./jobs.tsx";
-import { duration, refresh_interval_in_milliseconds } from "./shared.tsx";
+import { refresh_interval_in_milliseconds } from "./shared.tsx";
 
 // ── List ─────────────────────────────────────────────────────────────────────
 
@@ -51,19 +52,10 @@ function FilterFields({ answer, owner, target }: { answer: BuildsAnswer; owner: 
   const choose = (values: Record<string, string | null>) => {
     location.hash = link(["builds"], { owner, target, ...values });
   };
-  const options = (choices: string[], everything: string) => [
-    <option key="" value="">{everything}</option>,
-    ...choices.map((choice) => <option key={choice} value={choice}>{choice}</option>),
-  ];
+  const options = (choices: string[], everything: string): [string, string][] => [["", everything], ...choices.map((choice): [string, string] => [choice, choice])];
   return <>
-    <label className="field">
-      <span className="field-label">For</span>
-      <select value={owner} onChange={(event) => choose({ owner: event.currentTarget.value, target: null })}>{options(owners, "Every deployment and cache")}</select>
-    </label>
-    <label className="field">
-      <span className="field-label">Target</span>
-      <select value={target} onChange={(event) => choose({ target: event.currentTarget.value })}>{options(targets, "Every target")}</select>
-    </label>
+    <Select label="For" options={options(owners, "Every deployment and cache")} value={owner} on_change={(chosen) => choose({ owner: chosen, target: null })} />
+    <Select label="Target" options={options(targets, "Every target")} value={target} on_change={(chosen) => choose({ target: chosen })} />
   </>;
 }
 

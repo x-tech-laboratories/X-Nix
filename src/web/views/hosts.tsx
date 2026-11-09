@@ -3,12 +3,15 @@
 
 import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { SearchBox } from "@x-tech-laboratories/x-libs/web/react/controls";
-import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { SearchBox, Switch } from "@x-tech-laboratories/x-libs/web/react/controls";
+import { ProgressBar } from "@x-tech-laboratories/x-libs/web/react/progress";
+import { Crumbs, Facts, PageHeading, Section, SelectionBar, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
+import { duration } from "@x-tech-laboratories/x-libs/web/format";
 import { current_route, link } from "@x-tech-laboratories/x-libs/web/router";
+import { toggled, with_range } from "@x-tech-laboratories/x-libs/web/selection";
 import { useState } from "react";
 import {
   api, type ActionOutcome, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Job, type ProvisionedAgent, type Provisioning,
@@ -19,7 +22,7 @@ import { StatusBadge } from "../ui.tsx";
 import { BootTab, load_boot } from "./boot.tsx";
 import { action_labels, RunsTable } from "./fleet.tsx";
 import {
-  ActionButton, duration, error_toast, EventsList, HostActionButton, refresh_interval_in_milliseconds, short_revision, TagChips, WaitingOn,
+  ActionButton, error_toast, EventsList, HostActionButton, refresh_interval_in_milliseconds, short_revision, TagChips, WaitingOn,
 } from "./shared.tsx";
 import { last_collection_tone, load_store, StoreTab } from "./store.tsx";
 import { GenerationsSection, load_system, SystemTab, type SystemData } from "./system.tsx";
@@ -56,7 +59,7 @@ export async function host_rows(): Promise<Row[]> {
 // Every host in a table, its deployment picked by checkbox, glob or @tag to run one action across them, at once or
 // stage by stage, with the fleet runs below.
 export function HostsView() {
-  const [selected, set_selected] = useState<Set<string>>(new Set());
+  const [picked, set_picked] = useState<string[]>([]);
   const [search, set_search] = useState("");
   const [staged, set_staged] = useState(false);
   // The stages start as the fleet's own, read once, so a refresh never wipes what a person is typing.
@@ -71,7 +74,7 @@ export function HostsView() {
   const fleet = loaded.data?.fleet ?? null;
   const stages_text = stages ?? fleet?.stages.join("\n") ?? "";
   const deployments = rows.flatMap((row) => (row.deployment === null ? [] : [row.deployment]));
-  const pick = (ids: string[]) => set_selected(new Set(ids));
+  const pick = (ids: string[]) => set_picked(ids);
 
   const find = async (selector: string) => {
     try {
@@ -84,7 +87,7 @@ export function HostsView() {
   const run = async (action: FleetActionId) => {
     try {
       const outcome = await api<FleetOutcome>("/api/fleet/runs", "POST", {
-        action, ids: [...selected], staged,
+        action, ids: picked, staged,
         stages: staged ? stages_text.split("\n").map((line) => line.trim()).filter(Boolean) : undefined,
         parallel: parallel === "" ? undefined : Number(parallel),
       });
@@ -97,9 +100,9 @@ export function HostsView() {
 
   const ask = (action: FleetActionId) => {
     if (action === "build") return void run(action);
-    const names = deployments.filter((deployment) => selected.has(deployment.id)).map((deployment) => deployment.name).join(", ");
+    const names = deployments.filter((deployment) => picked.includes(deployment.id)).map((deployment) => deployment.name).join(", ");
     const how = staged ? "stage by stage, stopping at the first failure" : "up to the parallel limit at once";
-    confirm_dialog({ title: `${action_labels[action]} ${selected.size} hosts`, message: `${action_labels[action]} ${names}, ${how}?`, confirm_label: action_labels[action], danger: true, run: () => run(action) });
+    confirm_dialog({ title: `${action_labels[action]} ${picked.length} hosts`, message: `${action_labels[action]} ${names}, ${how}?`, confirm_label: action_labels[action], danger: true, run: () => run(action) });
   };
 
   return (
@@ -108,9 +111,6 @@ export function HostsView() {
       <Stack tight>
         <Toolbar>
           <SearchBox label="Search by glob or @tag" value={search} on_input={set_search} on_submit={(selector) => void find(selector)} submit_label="Pick" />
-          <button type="button" onClick={() => pick(deployments.map((deployment) => deployment.id))}>All</button>
-          <button type="button" onClick={() => pick([])}>None</button>
-          <span className="muted">{loaded.data && `${selected.size} of ${deployments.length} picked`}</span>
         </Toolbar>
         {fleet && fleet.tags.length > 0 && (
           <Chips>
@@ -123,31 +123,31 @@ export function HostsView() {
         <Stack>
           {loaded.data && (rows.length === 0
             ? <Empty title="No hosts yet." hint="Name each machine under hosts in the config file, or name it as a deployment's host." />
-            : <HostsTable rows={rows} selected={selected} on_change={set_selected} />)}
+            : <HostsTable rows={rows} picked={picked} on_change={set_picked} />)}
         </Stack>
       </Stack>
-      {/* The run controls show only while something is picked. */}
-      {selected.size > 0 && (
-        <Section title="Run on the picked">
-          <Stack>
-            <Toolbar>
-              <label className="check"><input type="checkbox" checked={staged} onChange={(event) => set_staged(event.currentTarget.checked)} />Staged rollout</label>
-              <label className="field">
-                <span className="field-label">Stages</span>
-                <textarea className="stage-list" placeholder="One stage per line, such as @canary" aria-label="Stages" value={stages_text} onChange={(event) => set_stages(event.currentTarget.value)} />
-              </label>
-              <label className="field">
-                <span className="field-label">At once</span>
-                <input type="number" min={1} step={1} aria-label="At once" placeholder={fleet ? String(fleet.parallel) : undefined} value={parallel} onChange={(event) => set_parallel(event.currentTarget.value)} />
-              </label>
-            </Toolbar>
-            <div className="head-actions">
-              {(Object.keys(action_labels) as FleetActionId[]).map((action) => (
-                <button key={action} className={action === "reboot" ? "danger" : action === "switch" ? "accent solid" : undefined} onClick={() => ask(action)}>{action_labels[action]}</button>
-              ))}
-            </div>
-          </Stack>
+      {/* The rollout settings and the actions show only while something is picked. */}
+      {picked.length > 0 && (
+        <Section title="Rollout">
+          <Toolbar>
+            <label className="check"><Switch label="Staged rollout" checked={staged} on_change={set_staged} />Staged rollout</label>
+            <label className="field">
+              <span className="field-label">Stages</span>
+              <textarea className="stage-list" placeholder="One stage per line, such as @canary" aria-label="Stages" value={stages_text} onChange={(event) => set_stages(event.currentTarget.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">At once</span>
+              <input type="number" min={1} step={1} aria-label="At once" placeholder={fleet ? String(fleet.parallel) : undefined} value={parallel} onChange={(event) => set_parallel(event.currentTarget.value)} />
+            </label>
+          </Toolbar>
         </Section>
+      )}
+      {picked.length > 0 && (
+        <SelectionBar count={picked.length} total={deployments.length} on_clear={() => pick([])} on_select_all={() => pick(deployments.map((deployment) => deployment.id))}>
+          {(Object.keys(action_labels) as FleetActionId[]).map((action) => (
+            <button key={action} className={action === "reboot" ? "danger" : action === "switch" ? "accent solid" : undefined} onClick={() => ask(action)}>{action_labels[action]}</button>
+          ))}
+        </SelectionBar>
       )}
       <Section title="Fleet runs">
         <Stack>
@@ -160,19 +160,19 @@ export function HostsView() {
   );
 }
 
-// Every host with its deployment's state, and a checkbox for each host that runs a deployment.
-function HostsTable({ rows, selected, on_change }: { rows: Row[]; selected: Set<string>; on_change: (selected: Set<string>) => void }) {
-  const toggle = (id: string, on: boolean) => {
-    const changed = new Set(selected);
-    if (on) changed.add(id);
-    else changed.delete(id);
-    on_change(changed);
+// Every host with its deployment's state, and a checkbox for each host that runs a deployment; Shift picks every host between.
+function HostsTable({ rows, picked, on_change }: { rows: Row[]; picked: string[]; on_change: (picked: string[]) => void }) {
+  const [anchor_id, set_anchor_id] = useState<string | null>(null);
+  const order = rows.flatMap(({ deployment }) => (deployment === null ? [] : [deployment.id]));
+  const click = (id: string, shift: boolean) => {
+    on_change(shift ? with_range(order, picked, anchor_id, id) : toggled(picked, id));
+    set_anchor_id(id);
   };
   const none = <span className="muted">—</span>;
   return (
-    <DataTable<Row> caption="Hosts" rows={rows} row_key={({ host }) => host.name} columns={[
+    <DataTable<Row> caption="Hosts" rows={rows} row_key={({ host }) => host.name} row_selected={({ deployment }) => deployment !== null && picked.includes(deployment.id)} columns={[
       { label: "Pick", cell: ({ host, deployment }) => deployment && (
-        <input type="checkbox" checked={selected.has(deployment.id)} aria-label={`Select ${host.display_name}`} onChange={(event) => toggle(deployment.id, event.currentTarget.checked)} />
+        <input type="checkbox" checked={picked.includes(deployment.id)} aria-label={`Select ${host.display_name}`} onChange={() => {}} onClick={(event) => click(deployment.id, event.shiftKey)} />
       ) },
       { label: "Host", cell: ({ host }) => <span><a href={link(["hosts", host.name])}>{host.display_name}</a>{host.own && <span className="muted small"> this server</span>}</span> },
       { label: "Status", cell: (row) => <StatusBadge status={row_status(row)} /> },
@@ -194,7 +194,7 @@ function StoreUsed({ host }: { host: Host }) {
   const used = host.reading?.store?.used_percent ?? null;
   if (used === null) return <>—</>;
   const tone = host.gc === null ? "none" : last_collection_tone(host);
-  return <span className={tone === "none" ? undefined : `tone-${tone}`}>{used.toFixed(1)}%</span>;
+  return <ProgressBar label="Store used" value={used} class_name={tone === "none" ? undefined : `tone-${tone}`} detail={`${used.toFixed(1)}%`} />;
 }
 
 // ── One host ─────────────────────────────────────────────────────────────────

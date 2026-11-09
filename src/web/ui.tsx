@@ -1,4 +1,4 @@
-// The badges every view shares, and X-Nix's own way of saying until.
+// The badges every view shares.
 
 import { Badge, type Tone } from "@x-tech-laboratories/x-libs/web/react/badges";
 import type { EventLevel, FleetHostState, FleetRunState, JobState, Status } from "./api.ts";
@@ -39,13 +39,3 @@ export function FleetRunBadge({ state }: { state: FleetRunState }) {
   return <Badge tone={fleet_run_tones[state]}>{state}</Badge>;
 }
 
-// ── Times ────────────────────────────────────────────────────────────────────
-
-// How long until a time to come, such as "in 3d", or "now" once it is less than 90 seconds off or has passed.
-export function until(epoch: number): string {
-  const seconds = Math.max(0, epoch - Date.now() / 1000);
-  if (seconds < 90) return "now";
-  if (seconds < 5400) return `in ${Math.round(seconds / 60)}m`;
-  if (seconds < 129600) return `in ${Math.round(seconds / 3600)}h`;
-  return `in ${Math.round(seconds / 86400)}d`;
-}
