@@ -257,11 +257,39 @@ describe("rollback, generations and closures", () => {
     expect(harness.deployment.running_job()?.command).toContain("broken wifi");
   });
 
+  it("sizes each generation's closure in one read", async () => {
+    const [first, second] = ["a", "b"].map((letter) => `/nix/store/${letter.repeat(32)}-nixos-system`);
+    const harness = make_deployment();
+    harness.agent.answers.push(['"kind":"generations"', generations_result([{ generation: 1, path: first }, { generation: 2, path: second, current: true }])]);
+    harness.agent.answers.push(['"--closure-size"', result(0, JSON.stringify({ [first]: { closureSize: 100 }, [second]: { closureSize: 250 } }))]);
+    const { inject } = await start_app(harness);
+
+    const answer = (await inject("GET", "/api/deployments/host-deploy/generations/sizes")).json<{ sizes: unknown[] }>();
+
+    expect(answer.sizes).toEqual([{ generation: 2, closure_size_bytes: 250 }, { generation: 1, closure_size_bytes: 100 }]);
+  });
+
   it("refuses a closure for a generation that is not a number", async () => {
     const { inject } = await start_app();
 
     expect((await inject("GET", "/api/deployments/host-deploy/closure?generation=1;rm")).statusCode).toBe(400);
     expect((await inject("GET", "/api/deployments/host-deploy/closure")).statusCode).toBe(502);
+  });
+});
+
+describe("/api/samples", () => {
+  it("answers the named metrics oldest first, and refuses none", async () => {
+    const harness = make_deployment();
+    const now = Math.floor(Date.now() / 1000);
+    harness.store.add_sample("host:host", "store_paths", now - 60, 2);
+    harness.store.add_sample("host:host", "store_paths", now - 120, 1);
+    harness.store.add_sample("host:other", "store_used_percent", now - 60, 50);
+    const { inject } = await start_app(harness);
+
+    const answer = (await inject("GET", "/api/samples?owner=host:host&metrics=store_paths,store_used_percent")).json<{ value: number }[]>();
+
+    expect(answer.map((sample) => sample.value)).toEqual([1, 2]);
+    expect((await inject("GET", "/api/samples?metrics=nonsense")).statusCode).toBe(400);
   });
 });
 

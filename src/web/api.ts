@@ -148,6 +148,11 @@ export interface Generation {
   profile: boolean;
 }
 
+export interface GenerationSize {
+  generation: number;
+  closure_size_bytes: number;
+}
+
 export interface ClosurePath {
   path: string;
   nar_size: number;
@@ -444,6 +449,16 @@ export interface BuildRecord {
 export interface BuildsAnswer {
   builds: BuildRecord[];
   targets: { owner_id: string; target: string }[];
+}
+
+// A reading taken over time, kept for charts.
+export type Metric = "store_used_percent" | "store_used_bytes" | "store_paths" | "collection_freed_bytes" | "cache_size_bytes";
+
+export interface Sample {
+  owner_id: string;
+  metric: Metric;
+  epoch: number;
+  value: number;
 }
 
 export interface EventRow {

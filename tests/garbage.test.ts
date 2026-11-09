@@ -435,3 +435,39 @@ describe("sizes", () => {
     expect([format_bytes(100), format_bytes(512 * 2 ** 20), format_bytes(44.4 * gib)]).toEqual(["100 B", "512.0 MiB", "44.4 GiB"]);
   });
 });
+
+// ── Samples ──────────────────────────────────────────────────────────────────
+
+describe("samples", () => {
+  const metrics = ["store_used_percent", "store_used_bytes", "store_paths", "collection_freed_bytes"] as const;
+
+  function samples_of(harness: Harness) {
+    return harness.store.samples({ owner_id: "host:host", metrics: [...metrics], since_epoch: 0 });
+  }
+
+  it("keeps the store's use and paths each read, and each collection's yield once at its time", async () => {
+    const harness = watched();
+    await read(harness, gc_probe({ size: 100 * gib, used: 40 * gib }));
+    await read(harness, gc_probe({ size: 100 * gib, used: 40 * gib }));
+
+    const kept = samples_of(harness);
+    expect(kept.find((sample) => sample.metric === "store_used_percent")?.value).toBe(40);
+    expect(kept.find((sample) => sample.metric === "store_paths")?.value).toBe(111121);
+    const freed = kept.filter((sample) => sample.metric === "collection_freed_bytes");
+    expect(freed.map((sample) => sample.epoch)).toEqual([clock.now - day]);
+    expect(freed[0].value / gib).toBeCloseTo(44.4, 1);
+  });
+
+  it("keeps nothing from a read that reached nothing", async () => {
+    const harness = watched();
+    await read(harness, result(255, "", "ssh: connect failed"));
+    expect(samples_of(harness)).toEqual([]);
+  });
+
+  it("drops an owner's readings older than the retention", () => {
+    const harness = watched();
+    harness.store.add_sample("host:host", "store_paths", 1000, 1);
+    harness.store.add_sample("host:host", "store_paths", 1000 + 181 * day, 2);
+    expect(samples_of(harness).map((sample) => sample.value)).toEqual([2]);
+  });
+});

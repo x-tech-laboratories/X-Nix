@@ -1,15 +1,16 @@
 // The System tab of a host's page: the deployment it runs, with its drift, findings, pin, jobs, events and generations.
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { BarChart } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
-import { age } from "@x-tech-laboratories/x-libs/web/format";
+import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useState } from "react";
-import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type Job } from "../api.ts";
+import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type GenerationSize, type Job } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { DiffView, drift_state, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
 
@@ -54,9 +55,30 @@ export function GenerationsSection({ deployment, refresh }: { deployment: Deploy
   return (
     <Section title="Generations" tools={<button onClick={() => generations.reload()}>Read again</button>}>
       <Stack>
-        <Loaded resource={generations}>{(found) => <GenerationsTable deployment={deployment} generations={found} done={done} />}</Loaded>
+        <Loaded resource={generations}>{(found) => <>
+          <GenerationSizes deployment={deployment} generations={found} />
+          <GenerationsTable deployment={deployment} generations={found} done={done} />
+        </>}</Loaded>
       </Stack>
     </Section>
+  );
+}
+
+// Each generation's closure size, oldest first, the running one in the accent; read after the list, as sizing takes longer.
+function GenerationSizes({ deployment, generations }: { deployment: Deployment; generations: Generation[] }) {
+  const sizes = use_resource(async () => {
+    const answer = await api<{ sizes: GenerationSize[] }>(`/api/deployments/${encodeURIComponent(deployment.id)}/generations/sizes`);
+    return answer.sizes;
+  }, [deployment.id, generations.length]);
+  const current = generations.find((generation) => generation.current)?.generation ?? null;
+  return (
+    <Loaded resource={sizes} lines={3}>
+      {(found) => (
+        <BarChart title="Closure size by generation" format={bytes} bars={[...found].reverse().map((size) => ({
+          label: `Generation ${size.generation}`, value: size.closure_size_bytes, color: size.generation === current ? "var(--accent)" : "var(--series-3)",
+        }))} />
+      )}
+    </Loaded>
   );
 }
 

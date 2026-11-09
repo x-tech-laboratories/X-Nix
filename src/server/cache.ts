@@ -187,6 +187,7 @@ export class Cache {
     if (reading === null) return;
     const previous = this.server_reading();
     this.store.save_cache_server_reading(this.id, reading);
+    if (reading.size_bytes !== null) this.store.add_sample(this.id, "cache_size_bytes", reading.checked_epoch, reading.size_bytes);
     if (previous === null || previous.status === reading.status) return;
     const level = level_of_status[reading.status];
     const reason = reading.messages.find((message) => message.level === level && level !== "info");
