@@ -149,8 +149,13 @@ describe("agent hub", () => {
 
     start_test_agent();
     await connected();
-    await sleep(1200);
-    expect((await pool.get("odin").poll("odin-sleep", 0)).new_output).toMatch(/\ndone\n$/);
+    // A slow machine may take a while to finish the run, so it is asked again until it has.
+    let output = "";
+    for (let tries = 0; tries < 50 && !/\ndone\n$/.test(output); tries++) {
+      await sleep(200);
+      output = (await pool.get("odin").poll("odin-sleep", 0)).new_output;
+    }
+    expect(output).toMatch(/\ndone\n$/);
   });
 
   it("starts the agent process from its environment", async () => {
