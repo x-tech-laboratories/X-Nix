@@ -430,7 +430,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
-  await register_auth(app, options.accounts);
+  await register_auth(app, options.accounts, options.store.sql);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
   register_change_feed(app, store, options.hub);

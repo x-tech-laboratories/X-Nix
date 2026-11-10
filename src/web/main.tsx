@@ -1,16 +1,18 @@
-// The page: the login, the shell around every view (header, sidebar, theme), the server's change feed and the router between views.
+// The page: the sign-in, the shell around every view (header, sidebar, theme), the server's change feed and the router between views.
 
 import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
 import { follow_changes } from "@x-tech-laboratories/x-libs/web/events";
-import { LoginForm, use_session } from "@x-tech-laboratories/x-libs/web/react/login";
+import { AccountView, UsersView } from "@x-tech-laboratories/x-libs/web/react/accounts";
 import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
+import { SignInForm, use_account } from "@x-tech-laboratories/x-libs/web/react/sign_in";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
+import type { Me } from "@x-tech-laboratories/x-libs/web/accounts";
 import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
 import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { api, changes } from "./api.ts";
+import { accounts, changes } from "./api.ts";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
 import { closure_title, ClosureView } from "./views/closure.tsx";
@@ -30,7 +32,10 @@ const sections: ShellSection[] = [
   { id: "hosts", label: "Hosts", href: "#/hosts" },
   { id: "jobs", label: "Jobs", href: "#/jobs" },
   { id: "provision", label: "Provision", href: "#/provision" },
+  { id: "users", label: "Users", href: "#/users" },
 ];
+
+const role_text = { viewer: "Reads everything; changes nothing.", admin: "Also builds, deploys, reboots and manages users." };
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 
@@ -46,7 +51,7 @@ function host_page(name: string, asked: HostTab | null): Page {
   return { title: asked === null ? name : `${tab_labels[asked]} · ${name}`, view: <HostView name={name} asked={asked} /> };
 }
 
-function page_for({ parts, query }: Route): Page {
+function page_for({ parts, query }: Route, me: Me): Page {
   const [section, id, page] = parts;
   const hosts = { title: "Hosts", view: <HostsView /> };
   if (section === "hosts" && id && page === "closure") {
@@ -69,6 +74,8 @@ function page_for({ parts, query }: Route): Page {
   if (section === "cache") return { title: "Cache", view: <CachesView /> };
   if ((section === "store" || section === "boot") && id) return host_page(id, section);
   if (section === "store" || section === "boot") return hosts;
+  if (section === "account") return { title: "Your account", view: <AccountView client={accounts} role_text={role_text} /> };
+  if (section === "users") return { title: "Users", view: <UsersView client={accounts} me={me} role_text={role_text} /> };
   if (section === "provision") return { title: "Provision", view: <ProvisionView /> };
   return { title: "Overview", view: <OverviewView /> };
 }
@@ -76,44 +83,39 @@ function page_for({ parts, query }: Route): Page {
 // ── App ──────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [session, set_session] = use_session(async () => (await api<{ name?: string }>("/api/me")).name ?? "");
+  const { account, refresh, sign_out } = use_account(accounts);
   const route = use_route();
 
-  const logged_in = session.state === "open";
+  const me = account.state === "signed_in" ? account.me : null;
+  const logged_in = me !== null;
 
-  // The server's change feed needs a session, so it opens at login and closes at logout.
+  // The server's change feed needs a session, so it opens on signing in and closes on signing out.
   useEffect(() => {
     if (!logged_in) return;
     const feed = follow_changes("/api/events", { watch: changes });
     return () => feed.close();
   }, [logged_in]);
 
-  const shown = logged_in ? page_for(route) : null;
+  const shown = me ? page_for(route, me) : null;
   const view_key = `${route.parts.join("/")}?${route.query}`;
 
   useEffect(() => {
     if (shown) document.title = `${shown.title} · X-Nix`;
   }, [shown?.title, logged_in]);
 
-  const log_out = async () => {
-    await api("/api/logout", "POST").catch(() => {});
-    set_session({ state: "login" });
-  };
-
   return (
     <Shell
       key={logged_in ? "open" : "closed"}
       brand="X-Nix"
-      sections={sections}
+      sections={sections.filter((section) => section.id !== "users" || me?.role === "admin")}
       active={parent_sections[route.parts[0] ?? ""] ?? route.parts[0] ?? ""}
       theme={theme}
-      user={logged_in ? session.user : null}
-      on_logout={() => void log_out()}
+      user={me?.name ?? null}
+      user_href="#/account"
+      on_logout={() => void sign_out()}
       view_key={view_key}
     >
-      {session.state === "login" && (
-        <LoginForm title="X-Nix" icon="/icon.svg" log_in={(name, password) => api("/api/login", "POST", { name, password })} on_login={(user) => set_session({ state: "open", user })} />
-      )}
+      {account.state === "signed_out" && <SignInForm client={accounts} title="X-Nix" icon="/icon.svg" on_signed_in={refresh} />}
       {/* A new address draws its view afresh, as each view loads what it shows when it starts. */}
       {shown && <Fragment key={view_key}>{shown.view}</Fragment>}
     </Shell>

@@ -1,6 +1,7 @@
 // Calls the server's JSON API and names the shapes it answers with.
 
 import { create_api } from "@x-tech-laboratories/x-libs/web/api";
+import { create_accounts_client } from "@x-tech-laboratories/x-libs/web/accounts";
 import { LoginNeeded } from "@x-tech-laboratories/x-libs/web/states";
 import { create_watch } from "@x-tech-laboratories/x-libs/web/watch";
 
@@ -539,6 +540,9 @@ export interface ActionOutcome {
 // ── Requests ─────────────────────────────────────────────────────────────────
 
 export const api = create_api({ open_paths: ["/api/login"] });
+
+// Signing in and out, and the account pages.
+export const accounts = create_accounts_client();
 
 // Bumped whenever the server says something changed, so every open view loads again.
 export const changes = create_watch();

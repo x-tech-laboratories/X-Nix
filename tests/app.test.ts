@@ -137,7 +137,7 @@ describe("logging in", () => {
   });
 
   it("refuses a wrong password, and every try from an address after five in five minutes, right or wrong", async () => {
-    // Logging in to start the app is the first of the five.
+    // Signing in to start the app is the first of the five.
     const { server } = await start_app();
     const attempt = (guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password: guess } });
 
@@ -148,7 +148,7 @@ describe("logging in", () => {
     expect(refused.json()).toMatchObject({ error: "Too many tries; wait a few minutes." });
   });
 
-  it("logs each user in with their own password and tells the page who they are", async () => {
+  it("signs each user in with their own password and tells the page who they are", async () => {
     const { server } = await start_app();
     const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
 
@@ -156,12 +156,22 @@ describe("logging in", () => {
     const cookie = String(login.headers["set-cookie"]).split(";")[0];
 
     expect(login.statusCode).toBe(204);
-    expect((await server.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json()).toEqual({ logged_in: true, name: "operator" });
+    expect((await server.inject({ method: "GET", url: "/api/me", headers: { cookie } })).json()).toMatchObject({ name: "operator", role: "admin" });
     expect((await attempt("operator", password)).statusCode).toBe(401);
     expect((await attempt("nobody", password)).statusCode).toBe(401);
   });
 
-  it("ends the session on logout", async () => {
+  it("lets a viewer added on the Users page read but change nothing", async () => {
+    const { server, inject } = await start_app();
+    expect((await inject("POST", "/api/users", { name: "vera", role: "viewer", access: null, password: "a long viewer password" })).statusCode).toBe(201);
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "vera", password: "a long viewer password" } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    expect((await server.inject({ method: "GET", url: "/api/deployments", headers })).statusCode).toBe(200);
+    expect((await server.inject({ method: "POST", url: "/api/deployments/host-deploy/actions/reboot", headers })).statusCode).toBe(403);
+  });
+
+  it("ends the session on signing out", async () => {
     const { inject } = await start_app();
 
     await inject("POST", "/api/logout");

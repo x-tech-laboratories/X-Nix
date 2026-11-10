@@ -207,6 +207,11 @@ export class Store {
   private readonly listeners = new Set<() => void>();
   private readonly job_listeners = new Set<(owner_id: string) => void>();
 
+  // The connection, for the accounts X-Libs keeps in the same database.
+  get sql(): DatabaseSync {
+    return this.database;
+  }
+
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.database = new DatabaseSync(path);

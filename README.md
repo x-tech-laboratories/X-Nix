@@ -22,7 +22,7 @@ npm run dev:web       # the page, reaching the API through Vite's proxy
 | ------------------- | ------------- | ---------------------------------------- |
 | `HOST`              | `127.0.0.1`   | The address the server listens on.       |
 | `PORT`              | `7720`        | The port the server listens on.          |
-| `X_NIX_PASSWORD_HASH_FILE` | required | The users who may log in, one `name:hash` line each, from `npm run hash-password`. |
+| `X_NIX_PASSWORD_HASH_FILE` | required | The admins who may sign in, one `name:hash` line each, from `npm run hash-password`. |
 | `X_NIX_CONFIG`      | none          | The config file naming the flakes, deployments and caches. |
 | `X_NIX_STATE_DIR`   | `state`       | Where the database and job output live.  |
 | `X_NIX_SERVER_NAME` | the hostname  | What the page calls the server's machine. |
@@ -93,8 +93,14 @@ services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-acce
 
 Each line of the `X_NIX_PASSWORD_HASH_FILE` file is a user: `name:scrypt$...`. `npm run hash-password -- <name> [file]`
 adds the user or changes their password, asking for it at a terminal or reading it from stdin; removing a user is
-deleting their line. A line holding only a hash logs in as `admin`. The file is read at start, so a change takes a
-restart, which also logs everyone out.
+deleting their line. A line holding only a hash signs in as `admin`. The file is read at start, so a change takes a
+restart. Its users are admins, whose passwords only the file changes.
+
+Signing in, the Account and Users pages are the X-Libs accounts every X-app shares. An admin adds more users on the
+Users page as a `viewer`, who reads everything and changes nothing, or an `admin`, who also builds, deploys, reboots and
+manages users. Unless "Keep me signed in" is ticked, a session ends when the browser closes; ticked, it lasts until it
+is signed out from the Account page. Sessions are kept in the database, so a restart keeps everyone signed in. The
+Account page also turns on a second factor and makes tokens for scripts.
 
 ## Deployments
 
@@ -306,7 +312,7 @@ sync (an evaluation running or due). The config file's `fleet` object sets:
 
 ## Push webhook
 
-With `X_NIX_WEBHOOK_SECRET_FILE` set, `POST /api/webhook` takes push deliveries without a login and
+With `X_NIX_WEBHOOK_SECRET_FILE` set, `POST /api/webhook` takes push deliveries without signing in and
 evaluates every deployment whose flake follows the pushed repository and branch at once, instead of
 waiting for `eval_interval`, and reads every such flake again. Every flake with a watched input
 following the pushed branch updates at once, so a webhook on an input's own repository skips even the
@@ -433,7 +439,7 @@ target: a deployment's Build, a cache target's Build, and each target of a Build
 result, how long it took, its store path, a link to its job and so its whole log, and the products
 its store path lists in Hydra's `nix-support/hydra-build-products`, read once when the build ends. A
 product that is a regular file inside its build's store path, such as an installer ISO, downloads
-through the logged-in page: the host that built it checks again that the file still lies inside that
+through the signed-in page: the host that built it checks again that the file still lies inside that
 store path, then sends it in pieces through its agent. A product collected since reads as gone.
 Builds that ended before this history existed are only in the job history.
 
