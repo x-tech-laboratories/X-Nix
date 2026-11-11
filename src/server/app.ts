@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
+import { register_backup_routes, type BackupRoutesOptions } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
 import { register_error_replies, send_error } from "@x-tech-laboratories/x-libs/server/replies";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
@@ -50,6 +51,8 @@ export interface app_options {
   agents?: AgentPool;
   // Runs actions on many deployments at once; one with the default settings when not given.
   fleet?: Fleet;
+  // The state database's backups, served to the Backups page; its routes are missing without them.
+  backups?: BackupRoutesOptions;
   // Takes pushes on /api/webhook; the route answers 404 without it.
   webhook?: Webhook;
 }
@@ -434,6 +437,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
   register_change_feed(app, store, options.hub);
+  const { backups } = options;
+  if (backups !== undefined) await app.register(async (api) => register_backup_routes(api, backups), { prefix: "/api" });
 
   const find = (id: string, reply: FastifyReply): Deployment | null => {
     const deployment = poller.deployments.get(id) ?? null;
