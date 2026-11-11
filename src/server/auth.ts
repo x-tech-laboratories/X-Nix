@@ -37,5 +37,5 @@ export function needed(method: string, path: string): Need {
 
 export async function register_auth(app: FastifyInstance, declared: Accounts, database: DatabaseSync): Promise<void> {
   const accounts = new AccountStore({ database, app_name: "X-Nix", roles, declared, token_prefix: "xn" });
-  await register_accounts(app, { accounts, cookie_name: "x_nix_session", open_paths: open_routes, needed });
+  await register_accounts(app, { accounts, cookie_name: "x_nix_session", open_paths: open_routes, needed, read_only_paths: ["/api/mcp"] });
 }

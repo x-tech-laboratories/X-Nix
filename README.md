@@ -108,7 +108,7 @@ Account page also turns on a second factor and makes tokens for scripts.
 deployments, caches, fleet runs, jobs, samples and builds, and the same actions the page has. Each tool runs its
 route as the caller, so a viewer's token reads and only an admin's acts. Installing onto a machine wipes its disks and
 stays on the page, as do file downloads. A client sends a token from the Account page as a bearer header; a read-only
-token cannot reach it, as every MCP request is a POST.
+token runs only the tools that read.
 
 ```sh
 claude mcp add --transport http x-nix https://x-nix.example/api/mcp --header "Authorization: Bearer <token>"
