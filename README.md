@@ -102,6 +102,18 @@ manages users. Unless "Keep me signed in" is ticked, a session ends when the bro
 is signed out from the Account page. Sessions are kept in the database, so a restart keeps everyone signed in. The
 Account page also turns on a second factor and makes tokens for scripts.
 
+## MCP
+
+`/api/mcp` offers the API to AI clients as MCP tools over streamable HTTP: listing and reading hosts, flakes,
+deployments, caches, fleet runs, jobs, samples and builds, and the same actions the page has. Each tool runs its
+route as the caller, so a viewer's token reads and only an admin's acts. Installing onto a machine wipes its disks and
+stays on the page, as do file downloads. A client sends a token from the Account page as a bearer header; a read-only
+token runs only the tools that read.
+
+```sh
+claude mcp add --transport http x-nix https://x-nix.example/api/mcp --header "Authorization: Bearer <token>"
+```
+
 ## Deployments
 
 The config file lists `deployments`, each a NixOS host and the flake that describes it; see

@@ -24,8 +24,9 @@
     "@fastify/session": "^11.1.6",
     "@fastify/static": "^10.1.7",
     "@fastify/websocket": "^11.3.5",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@x-tech-laboratories/halon": "^0.11.0",
-    "@x-tech-laboratories/x-libs": "^0.31.0",
+    "@x-tech-laboratories/x-libs": "^0.33.0",
     "fastify": "^5.12.7",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

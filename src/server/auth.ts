@@ -27,14 +27,15 @@ export function load_accounts(file_path?: string): Accounts {
   return load_accounts_from(accounts_variable, file_path);
 }
 
-// Reading is open to every user; anything else needs an admin.
-export function needed(method: string): Need {
-  return method === "GET" ? "any" : { role: "admin" };
+// Reading is open to every user; anything else needs an admin. MCP is open to every user too, as each tool's route
+// is checked again on its own.
+export function needed(method: string, path: string): Need {
+  return method === "GET" || path === "/api/mcp" ? "any" : { role: "admin" };
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────
 
 export async function register_auth(app: FastifyInstance, declared: Accounts, database: DatabaseSync): Promise<void> {
   const accounts = new AccountStore({ database, app_name: "X-Nix", roles, declared, token_prefix: "xn" });
-  await register_accounts(app, { accounts, cookie_name: "x_nix_session", open_paths: open_routes, needed });
+  await register_accounts(app, { accounts, cookie_name: "x_nix_session", open_paths: open_routes, needed, read_only_paths: ["/api/mcp"] });
 }

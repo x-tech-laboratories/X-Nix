@@ -29,6 +29,7 @@ import { collect_command } from "./nixos/garbage.ts";
 import { agent_snippet, media_formats, parse_install_request, type MediaFormat } from "./nixos/provision.ts";
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import { metric_names, sample_retention_in_seconds, type BuildRecord, type EventRow, type Job, type JobKind, type Metric, type Sample, type Store } from "./store.ts";
+import { register_mcp } from "./mcp.ts";
 import { register_webhook_route, type Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -821,6 +822,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
       .header("content-disposition", `attachment; filename="${file_name}"`)
       .send(product_stream(agent, located.path, located.size));
   });
+
+  await register_mcp(app, version);
 
   // ── Page ─────────────────────────────────────────────────────────────────
 
