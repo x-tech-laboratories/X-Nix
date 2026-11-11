@@ -5,6 +5,8 @@ import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
 import { follow_changes } from "@x-tech-laboratories/x-libs/web/events";
 import { AccountView, UsersView } from "@x-tech-laboratories/x-libs/web/react/accounts";
+import { BackupSettings } from "@x-tech-laboratories/x-libs/web/react/backup_settings";
+import { PageHeading } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
 import { SignInForm, use_account } from "@x-tech-laboratories/x-libs/web/react/sign_in";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
@@ -12,7 +14,7 @@ import type { Me } from "@x-tech-laboratories/x-libs/web/accounts";
 import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
 import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { accounts, changes } from "./api.ts";
+import { accounts, backups, changes } from "./api.ts";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
 import { closure_title, ClosureView } from "./views/closure.tsx";
@@ -33,6 +35,7 @@ const sections: ShellSection[] = [
   { id: "jobs", label: "Jobs", href: "#/jobs" },
   { id: "provision", label: "Provision", href: "#/provision" },
   { id: "users", label: "Users", href: "#/users" },
+  { id: "backups", label: "Backups", href: "#/backups" },
 ];
 
 const role_text = { viewer: "Reads everything; changes nothing.", admin: "Also builds, deploys, reboots and manages users." };
@@ -77,6 +80,13 @@ function page_for({ parts, query }: Route, me: Me): Page {
   if (section === "account") return { title: "Your account", view: <AccountView client={accounts} role_text={role_text} /> };
   if (section === "users") return { title: "Users", view: <UsersView client={accounts} me={me} role_text={role_text} /> };
   if (section === "provision") return { title: "Provision", view: <ProvisionView /> };
+  // A restore restarts the server, so the page loads again once it answers.
+  if (section === "backups") {
+    return {
+      title: "Backups",
+      view: <><PageHeading title="Backups" subtitle="Copies of the state database: accounts, jobs and readings." /><BackupSettings device={backups} data_name="accounts, jobs and readings" on_restored={() => setTimeout(() => window.location.reload(), 3000)} /></>,
+    };
+  }
   return { title: "Overview", view: <OverviewView /> };
 }
 
@@ -107,7 +117,7 @@ function App() {
     <Shell
       key={logged_in ? "open" : "closed"}
       brand="X-Nix"
-      sections={sections.filter((section) => section.id !== "users" || me?.role === "admin")}
+      sections={sections.filter((section) => (section.id !== "users" && section.id !== "backups") || me?.role === "admin")}
       active={parent_sections[route.parts[0] ?? ""] ?? route.parts[0] ?? ""}
       theme={theme}
       user={me?.name ?? null}

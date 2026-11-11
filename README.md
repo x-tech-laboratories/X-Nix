@@ -114,6 +114,16 @@ token runs only the tools that read.
 claude mcp add --transport http x-nix https://x-nix.example/api/mcp --header "Authorization: Bearer <token>"
 ```
 
+## Backups
+
+The state database, which holds the users added on the Users page, their sessions and tokens, and every job, event and
+reading, is backed up once a day into `<X_NIX_STATE_DIR>/backups`, keeping the last 14 daily copies; an admin changes
+that, backs up by hand, restores or deletes a backup on the Backups page. A restore first backs up the current data,
+then stops the server, which systemd starts again with the backup in place of the database.
+
+X-Nix keeps no history of its items, which the Application Standard asks of apps whose users edit items: what it stores
+is jobs, events and readings, which are a log, and its flakes, hosts and deployments come from the config file.
+
 ## Deployments
 
 The config file lists `deployments`, each a NixOS host and the flake that describes it; see
