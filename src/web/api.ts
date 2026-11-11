@@ -2,6 +2,7 @@
 
 import { create_api } from "@x-tech-laboratories/x-libs/web/api";
 import { create_accounts_client } from "@x-tech-laboratories/x-libs/web/accounts";
+import { backup_client } from "@x-tech-laboratories/x-libs/web/backups";
 import { LoginNeeded } from "@x-tech-laboratories/x-libs/web/states";
 import { create_watch } from "@x-tech-laboratories/x-libs/web/watch";
 
@@ -540,6 +541,9 @@ export interface ActionOutcome {
 // ── Requests ─────────────────────────────────────────────────────────────────
 
 export const api = create_api({ open_paths: ["/api/login"] });
+
+// The state database's backups, for the Backups page.
+export const backups = backup_client(api);
 
 // Signing in and out, and the account pages.
 export const accounts = create_accounts_client();

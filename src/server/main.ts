@@ -4,9 +4,12 @@ import { rm } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 
+import { backup_naming, keep_backing_up } from "@x-tech-laboratories/x-libs/backups";
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { json_backup_schedule } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { read_server_config } from "@x-tech-laboratories/x-libs/server/config";
 import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
+import { sqlite_backups, take_staged_restore } from "@x-tech-laboratories/x-libs/server/sqlite_backups";
 
 import { operation_runner } from "../agent/tasks.ts";
 import { AgentPool } from "./agents/agent.ts";
@@ -51,7 +54,20 @@ const webhook_debounce = parse_duration(settings.values.webhook_debounce || "10s
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const config: Config = config_path ? load_config(config_path, server_name) : parse_config({}, server_name);
-const store = new Store(join(state_directory, "x-nix.sqlite"));
+const database_path = join(state_directory, "x-nix.sqlite");
+// A restore picked on the Backups page waits beside the database and is taken in here, before the database opens.
+if (take_staged_restore(database_path)) console.info("Restored the database from the backup picked on the Backups page");
+const store = new Store(database_path);
+// The state database holds the accounts, so it is backed up daily; a restore stops the server so systemd starts it again.
+const backups = sqlite_backups({
+  folder: () => join(state_directory, "backups"), naming: backup_naming("x-nix", ".sqlite"), database: () => store.sql, database_path: () => database_path,
+  after_staging: () => {
+    console.info("Restarting to restore a backup");
+    setTimeout(() => process.exit(75), 500);
+  },
+});
+const backup_schedule = json_backup_schedule(join(state_directory, "backup-schedule.json"));
+const automatic_backups = keep_backing_up(backups, backup_schedule.get);
 // No feature keeps option lists under the state folder, so any left there go.
 await rm(join(state_directory, "options"), { recursive: true, force: true });
 // The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
@@ -96,7 +112,10 @@ const webhook = webhook_secret_file ? new Webhook({
   evaluate: (deployment) => void poller.refresh(deployment), flakes: poller.flakes, read: (flake) => void poller.refresh(flake),
   update: (flake, inputs) => void flake.update(`push to ${inputs}`).then((outcome) => outcome.ok && poller.soon(flake)),
 }) : undefined;
-const app = await build_app({ serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook });
+const app = await build_app({
+  serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook,
+  backups: { backups, schedule: backup_schedule, on_schedule_change: () => void automatic_backups.check() },
+});
 
 app.addHook("onClose", async () => {
   poller.stop();
