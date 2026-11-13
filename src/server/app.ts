@@ -133,6 +133,8 @@ export interface GcView {
   warning: number | null;
   threshold: number | null;
   command: string;
+  // When X-Nix collects each day, as "HH:MM", or null when the timer does.
+  collect_at: string | null;
 }
 
 export interface HostView {
@@ -364,7 +366,7 @@ function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: s
     interval: settings.interval,
     gc: gc === null ? null : {
       unit: gc.unit, timer: gc.timer, store: gc.store, max_age: gc.max_age, warning: gc.warning, threshold: gc.threshold,
-      command: collect_command(gc, settings.require_sudo),
+      command: collect_command(gc, settings.require_sudo), collect_at: clock(gc.collect_at),
     },
     boot: settings.boot,
     reading: host.reading(),

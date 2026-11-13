@@ -1,7 +1,8 @@
 // One host: the machine itself, apart from what any deployment runs on it.
 //
 // Every `interval` its agent reads the Nix store and its garbage collection, unless `gc` is false, and the boot loader's
-// entries, unless `boot` is false. Collect Garbage runs the same collection the timer does as a long run, and Reboot and
+// entries, unless `boot` is false. Collect Garbage runs the same collection the timer does as a long run, which `gc.collect_at`
+// also starts each day in place of the timer, and Reboot and
 // Set next boot run at once rather than as long runs, waking a host that sleeps first. Its jobs, events and samples are kept under `host:<name>`, so
 // a host may share its name with a deployment.
 
@@ -11,7 +12,7 @@ import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { level_of_status, type HostSettings, type Status } from "./config.ts";
-import type { Message } from "./deployment.ts";
+import { latest_slot, type Message } from "./deployment.ts";
 import { boot_probe_operation, next_boot_operation, parse_boot, type Boot } from "./nixos/boot.ts";
 import { reboot_operation } from "./nixos/commands.ts";
 import {
@@ -43,6 +44,8 @@ export interface HostReading {
 export interface HostState {
   // The last garbage collection seen, kept after the journal has rotated past it.
   last_collection: Collection | null;
+  // The last daily collection slot handled.
+  scheduled_collection?: number;
 }
 
 export interface HostActionOutcome {
@@ -123,13 +126,35 @@ export class Host {
 
   // ── Cycle ────────────────────────────────────────────────────────────────
 
-  // Follows a running collection, or reads the store and the boot entries.
+  // Follows a running collection, or starts a daily collection that is due, or reads the store and the boot entries.
   cycle(): Promise<void> {
     return this.serial(async () => {
       const job = this.running_job();
       if (job !== null) return this.poll_job(job);
+      const slot = this.collection_due();
+      if (slot !== null) return this.collect_scheduled(slot);
       return this.read();
     });
+  }
+
+  // The latest daily collection slot when it is newer than the one last handled; a schedule seen for the first time starts at its next slot.
+  collection_due(): number | null {
+    const at = this.settings.gc?.collect_at ?? null;
+    if (at === null) return null;
+    const slot = latest_slot(at, this.now());
+    const state = this.state();
+    if (state.scheduled_collection === undefined) {
+      this.store.save_evaluation(this.id, { ...state, scheduled_collection: slot });
+      return null;
+    }
+    return slot > state.scheduled_collection ? slot : null;
+  }
+
+  private async collect_scheduled(slot: number): Promise<void> {
+    const outcome = await this.collect("schedule");
+    // A host that never answered started nothing, so a later cycle tries again once it is back.
+    if (outcome.unreachable) return;
+    this.store.save_evaluation(this.id, { ...this.state(), scheduled_collection: slot });
   }
 
   private serial<Answer>(work: () => Promise<Answer>): Promise<Answer> {
@@ -189,11 +214,13 @@ export class Host {
     return this.serial(async () => {
       const refusal = this.action_refusal(action);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
-      return action === "reboot" ? this.reboot(trigger) : this.collect(trigger);
+      if (action === "reboot") return this.reboot(trigger);
+      const { unreachable: _, ...outcome } = await this.collect(trigger);
+      return outcome;
     });
   }
 
-  private async collect(trigger: string): Promise<HostActionOutcome> {
+  private async collect(trigger: string): Promise<HostActionOutcome & { unreachable: boolean }> {
     const operation = collect_operation(this.settings.gc!, this.settings.require_sudo);
     const command = JSON.stringify(operation);
     const run_id = `${this.settings.id}-collect-${this.now()}-${randomBytes(3).toString("hex")}`;
@@ -202,11 +229,13 @@ export class Host {
       ({ waking } = await start_run(this.agents, this.name, run_id, operation));
     } catch (error) {
       const message = error instanceof AgentError ? error.message : String(error);
+      // A scheduled collection on a host that is away waits for it rather than failing every cycle.
+      if (trigger === "schedule" && error instanceof AgentError && error.unreachable) return { ok: false, message, job_id: null, unreachable: true };
       const job_id = this.store.create_job({ deployment_id: this.id, kind: "collect", command, agent: this.name, run_id: null, trigger, started_epoch: this.now() });
       this.store.append_output(job_id, `${message}\n`);
       this.store.finish_job(job_id, "failed", null, "The job could not be started", this.now());
       this.store.add_event(this.id, this.now(), "error", `Could not start the collection: ${message}`);
-      return { ok: false, message: `Could not start the collection: ${message}`, job_id };
+      return { ok: false, message: `Could not start the collection: ${message}`, job_id, unreachable: false };
     }
     const job_id = this.store.create_job({ deployment_id: this.id, kind: "collect", command, agent: this.name, run_id, trigger, started_epoch: this.now() });
     if (waking !== null) {
@@ -214,8 +243,9 @@ export class Host {
         this.store.add_event(this.id, this.now(), "error", `Could not start the collection: ${error}`);
       });
     }
-    this.store.add_event(this.id, this.now(), "info", "Collection started");
-    return { ok: true, message: "Collection started", job_id };
+    const message = trigger === "schedule" ? "Scheduled collection started" : "Collection started";
+    this.store.add_event(this.id, this.now(), "info", message);
+    return { ok: true, message, job_id, unreachable: false };
   }
 
   // A reboot runs as a command rather than a job that would die with the host.

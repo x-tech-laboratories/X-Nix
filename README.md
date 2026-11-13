@@ -325,23 +325,26 @@ deployment's Reboot reboots its host.
 Every cycle also reads the host's Nix store: how full it is, its path and GC root counts, every
 profile's generations, the collection unit and timer, and the last collection's summary from the
 journal. The last collection is kept after the journal rotates past it, and Collect Garbage runs the
-timer's collection as a job that counts as the last collection once it ends. The store's status is
-the host's, set by these keys of `gc`:
+timer's collection as a job that counts as the last collection once it ends. With `collect_at`, X-Nix
+starts that same job each day in place of the timer: a host that is away then collects once it is
+back, the timer is expected to be off, and one still on raises a warning, since two schedules would
+collect side by side. The store's status is the host's, set by these keys of `gc`:
 
 | Setting              | Default                     | Meaning                                                      |
 | -------------------- | --------------------------- | ------------------------------------------------------------ |
 | `unit`               | `nix-gc.service`            | The collection unit.                                         |
-| `timer`              | `nix-gc.timer`              | The timer that starts it.                                    |
+| `timer`              | `nix-gc.timer`              | The timer that starts it, unless `collect_at` is set.        |
 | `store`              | `/nix/store`                | The store whose filesystem is measured.                      |
 | `max_age`            | `2w`                        | How long since the last collection before it is stale.       |
 | `stale_status`       | `failed`                    | The status a stale collection raises.                        |
-| `timer_status`       | `warning`                   | The status a missing or inactive timer raises.               |
+| `timer_status`       | `warning`                   | The status a missing or inactive timer raises without `collect_at`. |
 | `warning`            | `80`                        | Warn once the store's filesystem is this full, in percent; `null` turns it off. |
 | `threshold`          | `90`                        | Fail once it is this full; `null` turns it off.              |
 | `max_generations`    | none                        | Warn about a profile keeping more generations than this.     |
 | `max_generation_age` | none                        | Warn once the oldest generation kept is older than this.     |
 | `gc_bin`             | `nix-collect-garbage`       | The collection program.                                      |
 | `gc_args`            | `--delete-older-than 7d`    | Its arguments, which should match the timer's.               |
+| `collect_at`         | none                        | The time of day, such as `03:30`, X-Nix collects every day in place of the timer. |
 
 ### Boot
 

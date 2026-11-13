@@ -48,6 +48,8 @@ export interface GcSettings {
   max_generation_age: number | null;
   gc_bin: string;
   gc_args: string[];
+  // When X-Nix runs Collect Garbage each day, instead of the timer; null leaves collecting to the timer.
+  collect_at: TimeOfDay | null;
 }
 
 // One machine X-Nix reaches through its agent: how it is woken, its Nix store and its boot entries.
@@ -618,6 +620,7 @@ function gc_settings(entry: unknown, owner: string): GcSettings | null {
     max_generation_age: read.optional_duration("max_generation_age"),
     gc_bin: read.text("gc_bin") ?? "nix-collect-garbage",
     gc_args: read.list("gc_args", ["--delete-older-than", "7d"]),
+    collect_at: read.time_of_day("collect_at"),
   };
 }
 

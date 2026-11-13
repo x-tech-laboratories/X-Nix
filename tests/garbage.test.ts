@@ -428,6 +428,60 @@ describe("collect garbage", () => {
   });
 });
 
+// ── Daily collection ─────────────────────────────────────────────────────────
+
+describe("daily collection", () => {
+  // Moves the last slot handled a day back, so the latest one is due.
+  function day_passes(harness: Harness): void {
+    const state = harness.host.state();
+    harness.store.save_evaluation(harness.host.id, { ...state, scheduled_collection: state.scheduled_collection! - day });
+  }
+
+  it("never starts as soon as it is set, then runs Collect Garbage in place of the read once its slot has passed", async () => {
+    const harness = watched({ collect_at: "03:30" });
+    await read(harness);
+    expect(harness.host.running_job()).toBeNull();
+
+    day_passes(harness);
+    await harness.host.cycle();
+    const job = harness.host.running_job()!;
+    expect([job.kind, job.trigger, argv_of(job.command)]).toEqual(["collect", "schedule", [["sudo", "-n", "nix-collect-garbage", "--delete-older-than", "7d"]]]);
+    expect(harness.host.collection_due()).toBeNull();
+
+    harness.agent.end(harness.agent.last_run("nix-collect-garbage")!, "7529 store paths deleted, 3.3 GiB freed\n", 0);
+    await read(harness, gc_probe({ timer_load: "not-found", timer_state: "inactive" }));
+    expect(last_of(harness)).toMatchObject({ epoch: clock.now, deleted: 7529 });
+    expect(harness.store.jobs()).toHaveLength(1);
+  });
+
+  it("waits for a host that is away, rather than failing, and collects once it is back", async () => {
+    const harness = watched({ collect_at: "03:30" });
+    await read(harness);
+    day_passes(harness);
+    harness.agent.start_error = new AgentError("No agent named 'host' is connected", true);
+    await harness.host.cycle();
+    expect(harness.store.jobs()).toHaveLength(0);
+
+    harness.agent.start_error = null;
+    await harness.host.cycle();
+    expect(harness.host.running_job()).toMatchObject({ trigger: "schedule" });
+  });
+
+  it("expects the timer off, warns when it is still on, and says when it next collects", async () => {
+    const harness = watched({ collect_at: "03:30" });
+    await read(harness, gc_probe({ timer_load: "not-found", timer_state: "inactive" }));
+    expect(store_of(harness).status).toBe("online");
+    const next = store_of(harness).next_epoch!;
+    expect(next).toBeGreaterThan(clock.now);
+    expect(next - clock.now).toBeLessThanOrEqual(day + 3600);
+    expect(new Date(next * 1000).getHours() * 60 + new Date(next * 1000).getMinutes()).toBe(3 * 60 + 30);
+
+    await read(harness, gc_probe({ timer_state: "active" }));
+    expect(store_of(harness).status).toBe("warning");
+    expect(messages(harness, "warning").some((text) => text.includes("beside X-Nix's daily collection"))).toBe(true);
+  });
+});
+
 // ── Sizes ────────────────────────────────────────────────────────────────────
 
 describe("sizes", () => {

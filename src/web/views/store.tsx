@@ -42,7 +42,7 @@ function StoreTiles({ host }: { host: Host }) {
   const used_tone: Tone = store?.used_percent == null ? "none"
     : gc.threshold !== null && store.used_percent >= gc.threshold ? "bad"
       : gc.warning !== null && store.used_percent >= gc.warning ? "warn" : "none";
-  const next_tone: Tone = store !== null && !store.timer_active ? "warn" : "none";
+  const next_tone: Tone = store !== null && !scheduled(host) ? "warn" : "none";
   return (
     <Tiles>
       <Tile label="Last collection" value={last_collection_text(host)} class_name={tile_class(last_collection_tone(host))} />
@@ -103,7 +103,9 @@ function Details({ host }: { host: Host }) {
     ["Store", <code>{gc.store}</code>],
     ["Size", store?.size_bytes == null ? "—" : `${bytes(store.used_bytes ?? 0)} used of ${bytes(store.size_bytes)}, ${bytes(store.avail_bytes ?? 0)} free`],
     ["Unit", <code>{gc.unit}</code>],
-    ["Timer", <span><code>{gc.timer}</code>{store === null ? "" : store.timer_active ? " (active)" : store.timer_loaded ? " (inactive)" : " (not installed)"}</span>],
+    gc.collect_at !== null
+      ? ["Schedule", `Daily at ${gc.collect_at}, by X-Nix`]
+      : ["Timer", <span><code>{gc.timer}</code>{store === null ? "" : store.timer_active ? " (active)" : store.timer_loaded ? " (inactive)" : " (not installed)"}</span>],
     ["Collect Garbage runs", <code>{gc.command}</code>],
     ["Oldest generation", <Age epoch={store?.oldest_generation_epoch} />],
     ["Last read", <Age epoch={store?.checked_epoch} />],
@@ -132,8 +134,13 @@ function next_text(host: Host): string {
   const store = host.reading?.store ?? null;
   if (store === null) return "—";
   if (store.collecting) return "Collecting now";
-  if (!store.timer_active) return "Not scheduled";
+  if (!scheduled(host)) return "Not scheduled";
   return store.next_epoch === null ? "—" : until(store.next_epoch);
+}
+
+// Whether something collects on a schedule: X-Nix each day, or else the timer.
+function scheduled(host: Host): boolean {
+  return host.gc?.collect_at != null || host.reading?.store?.timer_active === true;
 }
 
 // The store's fill in the color of where it stands against its warning and collection levels.

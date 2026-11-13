@@ -261,7 +261,7 @@ export interface Host {
   wake: { mac: string; broadcast: string; via: string | null; timeout: number } | null;
   keep_awake: boolean;
   interval: number;
-  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string } | null;
+  gc: { unit: string; timer: string; store: string; max_age: number; warning: number | null; threshold: number | null; command: string; collect_at: string | null } | null;
   boot: boolean;
   reading: HostReading | null;
   state: { last_collection: Collection | null };

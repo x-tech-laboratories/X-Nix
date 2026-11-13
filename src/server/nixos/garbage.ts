@@ -4,14 +4,15 @@
 // and timer, and the last collection's own summary line from the journal, so a collection that stopped running, failed,
 // or was never scheduled reads as a failure rather than as a slowly filling disk. The last collection is kept between
 // cycles, so a journal that has since rotated past it does not erase what was already seen, and a manual collection
-// counts as the last one just as a timer run would.
+// counts as the last one just as a timer run would. With `collect_at`, X-Nix collects each day itself, so the timer is
+// expected to be off rather than on.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { format_age, format_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import { level_of_status, worse, type GcSettings, type Status } from "../config.ts";
-import type { Message } from "../deployment.ts";
+import { latest_slot, type Message } from "../deployment.ts";
 import { read_facts, type GcFields, type Profile } from "../../shared/facts.ts";
 import { show_argv, type Argv, type Operation } from "../../shared/operations.ts";
 
@@ -205,8 +206,14 @@ export function assess_store(gc: GcSettings, fields: GcFields, last: Collection 
 
   const timer_active = fields.timer_state === "active";
   const timer_loaded = fields.timer_load === "loaded";
-  if (!timer_active) raise(gc.timer_status, `${gc.timer} is ${timer_loaded ? "inactive" : "not installed"}; nothing collects on a schedule here`);
-  const next_epoch = systemd_epoch(fields.timer_next);
+  let next_epoch: number | null;
+  if (gc.collect_at !== null) {
+    if (timer_active) raise("warning", `${gc.timer} also collects on a schedule beside X-Nix's daily collection; turn it off`);
+    next_epoch = next_slot(latest_slot(gc.collect_at, now));
+  } else {
+    if (!timer_active) raise(gc.timer_status, `${gc.timer} is ${timer_loaded ? "inactive" : "not installed"}; nothing collects on a schedule here`);
+    next_epoch = systemd_epoch(fields.timer_next);
+  }
   if (next_epoch !== null) note(`Next collection in ${format_duration(Math.max(next_epoch - now, 0))}`);
 
   return {
@@ -227,6 +234,13 @@ export function unread_store(gc: GcSettings): StoreReading {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// The day after a daily slot, at the same wall-clock time across a change of daylight saving.
+function next_slot(slot: number): number {
+  const next = new Date(slot * 1000);
+  next.setDate(next.getDate() + 1);
+  return Math.floor(next.getTime() / 1000);
+}
 
 function level_for(value: number, warning: number | null, threshold: number | null): Status {
   if (threshold !== null && value >= threshold) return "failed";
