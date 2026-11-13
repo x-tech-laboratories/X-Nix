@@ -189,7 +189,6 @@ export interface DeploymentView {
   schedule: { build: string | null };
   auto_switch: boolean;
   // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
-  switch_from_cache: boolean;
   direct_on: DirectOn;
   // How the store is watched, or null when it is not.
   reading: Reading | null;
@@ -291,7 +290,6 @@ function deployment_view(deployment: Deployment): DeploymentView {
     build_agents: settings.build_agents,
     schedule: { build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
-    switch_from_cache: settings.switch_from_cache,
     direct_on: settings.direct_on,
     host_name: deployment.host?.name ?? null,
     cache_id: settings.cache_id,
@@ -303,7 +301,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     actions: action_ids.map((id) => ({
       id,
       label: action_labels[id],
-      refusal: deployment.action_refusal(id, true),
+      refusal: deployment.action_refusal(id),
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
     safety: {
@@ -564,7 +562,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (deployment === null) return reply;
     const action = request.params.action as ActionId;
     if (!action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
-    const outcome = await deployment.act(action, "manual", true);
+    const outcome = await deployment.act(action);
     if (outcome.ok) poller.soon(deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });

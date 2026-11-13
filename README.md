@@ -132,41 +132,26 @@ The config file lists `deployments`, each a NixOS host and the flake that descri
 and compares the two store paths. Build, switch, garbage collection and evaluation run as long runs
 that survive a restart of X-Nix; each lands in the job history with its output.
 
-With `switch_from_cache`, an automatic switch never evaluates or builds on the host: it takes the store path of the latest
-successful evaluation, which may run on `eval_agent`, and fetches it with `nix build`, so the host's Nix daemon
-substitutes it. `cache_url` must therefore be one of the host's substituters; the rest of the closure may come from any
-other, as Attic leaves out what an upstream cache such as cache.nixos.org already serves. A `switch` or
-`boot` then sets it as the system profile's next generation, and every mode runs its own `switch-to-configuration`
-with that mode, so `test` and `dry-activate` leave the profile alone. It runs plain or guarded like any switch,
-activating on the switch agent's own host, so it takes no `target_host`. The closure is built and pushed by a cache's
-Build or Build all (or anything else that pushes, such as `attic watch-store`), and signed by a key the host trusts;
-`build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
+No action waits on a cache, which only speeds things up. Build, and a switch, boot, test or dry activation started by a
+person, the API (as the page and the MCP tools do), a fleet run or the drift, build where `direct_on` says: `ranked` (the
+default) takes the first connected host of the deployment's `cache`, else of its build agents; `server` takes the X-Nix
+server; `host` takes the host that switches. Build runs there; with a `cache` it runs that cache's build of the system,
+at the deployment's pin when it has one, which pushes what it built.
 
-An automatic switch, started by the drift, first runs what it depends on.
-Its job shows each step, with the output of the build it waits on as it prints, and fails without touching the host when one fails:
+A switch built on the switching host, or one with `target_host`, runs `nixos-rebuild` at once. Built anywhere else, its
+job builds there first, with the build's output as it prints, and fails without touching the host when the build
+fails. Once the system reaches `cache_url`, which a cache's build pushes it to (without a cache, something else must,
+such as `attic watch-store`, within 15 minutes), the switch fetches it with `nix build`, so the host's Nix daemon
+substitutes it, and activates it. A host too small to evaluate or build so never does. `cache_url` must therefore be one
+of the host's substituters, and the system signed by a key the host trusts; the rest of the closure may come from any
+other substituter, as Attic leaves out what an upstream cache such as cache.nixos.org already serves. A `switch` or
+`boot` sets it as the system profile's next generation, and every mode runs its own `switch-to-configuration` with that
+mode, so `test` leaves the profile alone. It runs plain or guarded like any switch, on the switch agent's own host;
+`build_host`, `rebuild_bin` and `rebuild_args` do not apply to it. Without a `cache_url` to carry the system such a
+switch is refused.
 
-- With `switch_from_cache` and no successful evaluation, it evaluates the flake first, unless the deployment's `cache`
-  evaluates for it, whose build then names the system.
-- With `switch_from_cache` and the cache without the system, the cache tracking the host's configuration at that
-  `cache_url` builds and pushes it, after the cache's running check if there is one. With no such cache it builds on the
-  build agents; when they are another host, it waits up to 15 minutes for the system to reach the cache, as
-  `attic watch-store` pushes it. A build that brings a newer system than the evaluation switches to that one.
-- A plain switch whose `cache` lacks the system has that cache build and push it first. Without `cache`, one whose
-  build agent is another host builds there first when there is a `cache_url` the host can substitute from. Otherwise
-  `nixos-rebuild` builds the system itself, on the host or its `build_host`.
-
-An automatic switch runs these steps once per target closure, so drift seen before the nightly build switches as soon
-as the system is built.
-
-Every other action, asked for through the API as the page and the MCP tools do, or by a fleet run, runs directly and
-never waits on a cache's queue, which only speeds things up. It builds where `direct_on` says: `ranked` (the default)
-takes the first host of the deployment's `cache` that is connected, else of its build agents; `server` takes the X-Nix
-server; `host` takes the host that switches. Build runs there; with a `cache` and no pin it runs that cache's build of
-the system, which pushes what it built. A switch, boot, test or dry activation built on the switching host runs
-`nixos-rebuild` at once, even with `switch_from_cache`. Built anywhere else, it builds there first, then fetches what the
-build pushed to `cache_url` and activates it, as a switch from the cache does, so a host too small to evaluate never
-does; without a `cache_url` to carry the system it is refused. With `target_host`, `nixos-rebuild` runs at once. An
-automatic switch still waiting on its steps ends to let a direct action run, while any cache build it started carries on.
+A new switch ends one still building first and takes over its build; a Build asked for meanwhile answers with that
+build. An automatic switch runs once per target closure.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
@@ -198,10 +183,9 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `build_args`        | `--keep-going --print-build-logs` | Arguments for Build.                                                 |
 | `build_root_dir`    | none                              | Keep each build as one garbage-collector root here.                  |
 | `cache`             | none                              | The id of the cache that builds this host's system (see Caches); it gives the `cache_url`, and takes the place of `build_at`, `build_agent` and `build_root_dir`. |
-| `cache_url`         | none                              | Without `cache`, the cache a build skips what it holds of, and a switch from the cache fetches from. |
+| `cache_url`         | none                              | Without `cache`, the cache a build skips what it holds of, and a switch built on another host fetches from. |
 | `switch_agent`      | the host                          | The host that runs switch.                                           |
-| `direct_on`         | `ranked`                          | Where an action asked for through the API or by a fleet run builds: `ranked` (the cache's hosts, else the build agents), `server` or `host` (see above). |
-| `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
+| `direct_on`         | `ranked`                          | Where Build and a switch build: `ranked` (the cache's hosts, else the build agents), `server` or `host` (see above). |
 | `target_host`       | none                              | `--target-host` for a plain switch; not with `pre_switch_checks`, health checks or `magic_rollback`, which run on the switch agent's own host. |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
@@ -211,7 +195,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Once the activation has waited a minute for the Nix store database, as a newer Nix does to upgrade it, stop what holds it open, such as a language server's daemon connections; their work ends, so it is off by default. Not with `target_host`. |
-| `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; a switch from the cache fetches its closure first, and a guarded `nixos-rebuild` with a `configuration` and no `build_host` or `target_host` builds the system first, both outside this time. |
+| `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; a switch built on another host fetches its closure first, and a guarded `nixos-rebuild` with a `configuration` and no `build_host` or `target_host` builds the system first, both outside this time. |
 | `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
@@ -256,7 +240,7 @@ the health URLs and, once they answer, confirms by touching a file in the watchd
 health checks are set). Without `magic_rollback` an unconfirmed switch is kept. Each refusal and
 rollback lands in the job and the events with its reason. On the server's own host the confirmation
 means the X-Nix server is still running after the switch, or came back up if the switch restarted it;
-on a host switched by its own agent, as with `switch_from_cache`, it means X-Nix still reaches that
+on a host switched by its own agent, it means X-Nix still reaches that
 agent. While a guarded switch runs, X-Nix polls it every `health_period`, so keep `confirm_timeout`
 well above it.
 
@@ -398,8 +382,8 @@ evaluation, and an address sending ten unsigned deliveries is turned away for fi
 ## Caches
 
 A deployment naming a cache by its id in `cache` is built by it: the deployment's Build builds its
-configuration in the cache, as the cache's own job, unless the deployment is pinned off the branch
-head the cache builds, and a switch from the cache fetches from the cache's `cache_url`. Such a
+configuration with the cache's settings on the cache's hosts, as the deployment's own job and at its pin, and a switch
+built there fetches from the cache's `cache_url`. Such a
 deployment is also evaluated by the cache: it takes its target, the flake's revision and when the
 flake last changed from the cache's last check of its configuration instead of evaluating on its own,
 so the fleet is evaluated once per check. Check now, a push and a fleet run's sync ask the cache to
@@ -619,7 +603,7 @@ The service runs as the `x-nix` user, and the agent as `x-nix-agent`, each in th
 group so it can read the last collection from the journal. Both modules ship NOPASSWD sudo rules for
 that user covering every command X-Nix runs under `sudo -n` (see `nix/sudo-rules.nix`), so a host
 needs nothing beyond enabling the module: nixos-rebuild in each mode with `--flake` (pull mode's
-`git+` switch included), a switch from the cache (`nix-env -p /nix/var/nix/profiles/system --set
+`git+` switch included), a switch that fetches what another host built (`nix-env -p /nix/var/nix/profiles/system --set
 /nix/store/*` and `/nix/store/*-nixos-system-*/bin/switch-to-configuration` in each mode), rollback
 and the watchdog (`nix-env ... --switch-generation *` and the system profile's
 `switch-to-configuration switch`), a flake's Update on a local checkout (`nix ... flake update --flake

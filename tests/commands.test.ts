@@ -138,7 +138,7 @@ describe("the switch", () => {
 });
 
 describe("the switch from the cache", () => {
-  const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
+  const from_cache = { cache_url: "https://cache.example/fleet" };
 
   // The dry run exits 0 whatever it finds, as nix does, so only its output can fail the check.
   const holds = (plan: string, cache_has_top = true) => {
@@ -187,10 +187,6 @@ describe("the switch from the cache", () => {
     expect(() => cache_holds_operation(settings(from_cache), "/nix/store/x; rm -rf /")).toThrow("not a store path");
   });
 
-  it("needs a cache_url, and activates on the switch agent's own host rather than a target_host", () => {
-    expect(() => settings({ switch_from_cache: true })).toThrow(ConfigError);
-    expect(() => settings({ ...from_cache, target_host: "root@odin" })).toThrow(/target_host/);
-  });
 });
 
 // ── Build ────────────────────────────────────────────────────────────────────

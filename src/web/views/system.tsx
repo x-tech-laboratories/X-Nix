@@ -169,14 +169,12 @@ function Details({ deployment }: { deployment: Deployment }) {
     ["Last read", <Age epoch={reading?.checked_epoch} />],
   );
   if (deployment.agents.eval !== deployment.host) rows.push(["Evaluates on", deployment.agents.eval ?? "this server"]);
-  if (deployment.build_agents.length > 1) rows.push(["Builds on", deployment.build_agents.join(", then ")]);
-  else if (deployment.agents.build !== deployment.host) rows.push(["Builds on", deployment.agents.build ?? "this server"]);
+  rows.push(["Builds on", `${deployment.agents.build ?? "this server"} now; ${direct_on_text[deployment.direct_on]}`]);
   if (deployment.agents.switch !== deployment.host) rows.push(["Switches from", deployment.agents.switch ?? "this server"]);
   const build_at = deployment.schedule.build;
   if (build_at !== null) rows.push(["Daily build", <span>at {build_at}, last slot <Age epoch={evaluation.scheduled.build} /></span>]);
-  if (deployment.auto_switch) rows.push(["Automatic switch", deployment.switch_from_cache ? "on, fetching the flake closure from the cache" : "on"]);
+  if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
   if (deployment.cache_id !== null) rows.push(["Built by", <a href={link(["cache", deployment.cache_id])}>the {deployment.cache_id} cache</a>]);
-  rows.push(["Actions build on", direct_on_text[deployment.direct_on]]);
   rows.push(["Switch safety", safety_text(deployment)]);
   if (reading?.current) rows.push(["Closure browser", <a href={closure_link(deployment)}>Browse the running closure</a>]);
   if (evaluation.eval_error) rows.push(["Evaluation error", <pre className="output">{evaluation.eval_error}</pre>]);
@@ -185,7 +183,7 @@ function Details({ deployment }: { deployment: Deployment }) {
 }
 
 // What guards a switch, in one line.
-// Where a build or switch asked for here builds, as direct_on says.
+// Where a build or switch builds, as direct_on says.
 const direct_on_text: Record<Deployment["direct_on"], string> = {
   ranked: "the first connected host of its cache, else of its build agents",
   server: "this server",

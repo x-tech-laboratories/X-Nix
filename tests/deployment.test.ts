@@ -356,30 +356,6 @@ describe("actions", () => {
     expect([job.state, job.output]).toEqual(["failed", "sudo: a password is required"]);
   });
 
-  it("builds a plain switch on another build agent first only when a cache brings the result back", async () => {
-    const make = (values: Record<string, unknown>) => {
-      const agents = new AgentPool("host", new FakeAgent());
-      const builder = new FakeAgent();
-      agents.add("builder", builder);
-      const store = new Store(":memory:");
-      const deployment = new Deployment(deployment_settings({ id: "host-deploy", build_agent: "builder", ...values }), { store, agents, now: () => clock.now });
-      return { deployment, store, builder, own: agents.get(null) as FakeAgent };
-    };
-
-    const cached = make({ cache_url: "https://cache.example/fleet" });
-    const outcome = await cached.deployment.act("switch");
-    expect(outcome.message).toBe("Building on builder first; the switch starts once it is built");
-    expect(cached.own.last_run("nixos-rebuild")).toBeUndefined();
-    cached.builder.end(cached.builder.last_run('"kind":"build"')!, `${target_closure}\n`, 0);
-    await cached.deployment.cycle();
-    expect(cached.own.last_run("nixos-rebuild")?.run_id).toBe(cached.store.job(outcome.job_id!)!.run_id);
-
-    const uncached = make({});
-    await uncached.deployment.act("switch");
-    expect(uncached.own.last_run("nixos-rebuild")).toBeDefined();
-    expect(uncached.builder.runs).toHaveLength(0);
-  });
-
   it("runs the build on the build agent, else the switch agent", () => {
     expect(make_deployment({ switch_agent: "builder" }).deployment.agent_for("build")).toBe("builder");
     expect(make_deployment({ build_agent: "builder" }).deployment.agent_for("build")).toBe("builder");
@@ -463,98 +439,121 @@ describe("job polling", () => {
   });
 });
 
-// ── Switch from cache ────────────────────────────────────────────────────────
+// ── Building elsewhere ───────────────────────────────────────────────────────
 
-describe("switch from cache", () => {
-  const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
+describe("building elsewhere", () => {
+  // A deployment whose cache builds on another host, as Odin builds for the fleet.
+  function with_builder(values: Record<string, unknown> = {}) {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", host: "builder", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
+      store, agents: new AgentPool("host", agent), now: () => clock.now,
+    });
+    const harness = make_deployment({ configuration: "host", cache: "fleet", ...values }, { store, agent, caches: [cache] });
+    const builder = new FakeAgent();
+    harness.agents.add("builder", builder);
+    return { ...harness, cache, builder };
+  }
 
-  it("evaluates first when no evaluation names the system, then switches to what it names", async () => {
-    const harness = make_deployment(from_cache);
-    expect(harness.deployment.action_refusal("switch")).toBeNull();
+  // Starts an action that builds on the builder first, and ends that build with the system it made.
+  async function built(harness: ReturnType<typeof with_builder>, action: "switch" | "boot" | "test" = "switch") {
+    const outcome = await harness.deployment.act(action);
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+    return outcome;
+  }
+
+  it("builds a switch on the cache's first host, which pushes it, then fetches and activates it under the same job", async () => {
+    const harness = with_builder();
 
     const outcome = await harness.deployment.act("switch");
 
-    expect(outcome).toMatchObject({ ok: true, message: "Evaluating the flake first; the switch starts once it names the system" });
-    expect(harness.store.job(outcome.job_id!)).toMatchObject({ kind: "switch", state: "running", progress: "Evaluating the flake" });
-    const evaluation = harness.agent.last_run('"kind":"evaluate"')!;
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+    expect(outcome).toMatchObject({ ok: true, message: "Building on builder first; the switch starts once it is built" });
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ kind: "switch", state: "running", progress: "Building on builder" });
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
+    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
+    expect(harness.cache.running_job()).toBeNull();
 
-    harness.agent.end(evaluation, eval_output(result(0, `${target_closure}\n`), metadata()), 0);
+    harness.builder.end(build, `${target_closure}\n`, 0);
     await harness.deployment.cycle();
 
     const switching = harness.agent.last_run("switch-to-configuration")!;
     expect(switching.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
     expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
-    expect(harness.deployment.cached_target()).toBe(target_closure);
+    expect(shown_command(switching.command)).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
+    expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
+    expect(harness.store.job(outcome.job_id!)!.output).toContain("The cache holds the system; switching");
+    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
   });
 
-  it("fails the switch without starting it when the evaluation it ran fails", async () => {
-    const harness = make_deployment(from_cache);
-    const outcome = await harness.deployment.act("switch");
+  it("activates boot and test from what the build pushed too", async () => {
+    const harness = with_builder();
 
-    harness.agent.end(harness.agent.last_run('"kind":"evaluate"')!, eval_output(result(1, "", "error: infinite recursion"), metadata()), 1);
-    await harness.deployment.cycle();
+    await built(harness, "boot");
+    const boot = harness.deployment.running_job()!;
+    harness.agent.end(harness.agent.last_run("switch-to-configuration")!, "", 0);
+    await cycle(harness);
+    await built(harness, "test");
 
-    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The evaluation failed: error: infinite recursion" });
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
+    expect(shown_command(boot.command)).toContain(`--set ${target_closure}\nsudo -n ${target_closure}/bin/switch-to-configuration boot`);
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain(`${target_closure}/bin/switch-to-configuration test`);
+    expect(shown_command(harness.deployment.running_job()!.command)).not.toContain("nixos-rebuild");
   });
 
-  it("activates the evaluated store path instead of rebuilding", async () => {
-    const harness = make_deployment(from_cache);
-    await collect(harness);
+  it("guards a fetched switch on the host's own agent, which confirms it, and runs post_switch as root", async () => {
+    const harness = with_builder({ pre_switch_checks: ["true"], magic_rollback: true, post_switch: "systemctl restart greetd" });
 
-    expect((await harness.deployment.act("switch")).ok).toBe(true);
+    await built(harness);
+    const run = harness.agent.last_run('"pre_switch_checks":["true"]')!;
+    harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
+    await cycle(harness);
+
+    const operation = innermost(run.operation) as SwitchOperation;
+    expect(operation.watch?.magic_rollback).toBe(true);
+    expect(operation.activation_name).toBe("The switch from the cache");
+    expect(run.command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
+    expect(run.command).toContain("sudo -n /bin/sh -c 'systemctl restart greetd'");
+    expect(harness.agent.operations.some((sent) => sent.kind === "confirm_switch" && sent.token === operation.watch?.token)).toBe(true);
+  });
+
+  it("keeps the host awake through the whole fetched switch with inhibit_sleep", async () => {
+    const harness = with_builder({ inhibit_sleep: true });
+
+    await built(harness);
 
     const command = shown_command(harness.deployment.running_job()!.command);
-    expect(command).toContain(`build --no-link ${target_closure}`);
-    expect(command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
-    expect(command).not.toContain("nixos-rebuild");
+    expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
+    expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
   });
 
-  it("is used by the automatic switch too", async () => {
-    const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
-    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
-    rewind_drift(harness, 1801);
-    await collect(harness);
+  it("shows the output of the build it waits on as the build prints it, and fails without starting when the build fails", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch");
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
 
-    await cycle(harness);
+    harness.builder.write(build, "building hello\nhalf");
+    await harness.deployment.cycle();
+    expect(harness.store.job(outcome.job_id!)!.output).toMatch(/first, job #\d+\nbuilding hello\n$/);
 
-    expect(shown_command(harness.deployment.running_job()?.command ?? "")).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
-  });
+    harness.builder.end(build, " done\nerror: build failed", 1);
+    await harness.deployment.cycle();
+    await harness.deployment.cycle();
 
-  it("builds on the switching host first when the cache lacks the system, then switches to what it built", async () => {
-    const harness = make_deployment({ ...from_cache, auto_switch: true, auto_switch_after: "30m" });
-    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
-    rewind_drift(harness, 1801);
-    await collect(harness);
-    harness.agent.answers.push(['"kind":"cache_holds"', result(1)]);
-
-    await cycle(harness);
-
-    const job = harness.store.jobs({ kind: "switch" })[0];
-    expect(job).toMatchObject({ trigger: "automatic", state: "running", progress: "Building on host" });
-    expect(harness.deployment.running_job()?.kind).toBe("build");
+    const output = harness.store.job(outcome.job_id!)!.output;
+    expect(output.match(/building hello/g)).toHaveLength(1);
+    expect(output).toContain("building hello\nhalf done\nerror: build failed\nThe build on builder failed");
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The build on builder failed: Exited with status 1" });
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-
-    harness.agent.end(harness.agent.last_run('"kind":"build"')!, `${newer_closure}\n`, 0);
-    await cycle(harness);
-
-    const switching = harness.agent.last_run("switch-to-configuration")!;
-    expect(switching.run_id).toBe(job.run_id);
-    expect(shown_command(switching.command)).toContain(`nix-env -p /nix/var/nix/profiles/system --set ${newer_closure}`);
-    expect(harness.store.job(job.id)!.output).toContain(`so this switch takes ${newer_closure}, which the build made`);
+    expect(harness.deployment.running_job()).toBeNull();
   });
 
-  it("waits for a system built on another host to reach the cache, and gives up in time", async () => {
+  it("waits for a system built on another build agent to reach the cache, and gives up in time", async () => {
     const agents = new AgentPool("host", new FakeAgent());
     const builder = new FakeAgent();
     agents.add("builder", builder);
     const own = agents.get(null) as FakeAgent;
     const store = new Store(":memory:");
-    const deployment = new Deployment(deployment_settings({ id: "host-deploy", ...from_cache, build_agent: "builder" }), { store, agents, now: () => clock.now });
-    await deployment.cycle();
-    own.end(own.last_run('"kind":"evaluate"')!, eval_output(result(0, `${target_closure}\n`), metadata()), 0);
-    await deployment.cycle();
+    const deployment = new Deployment(deployment_settings({ id: "host-deploy", cache_url: "https://cache.example/fleet", build_agent: "builder" }), { store, agents, now: () => clock.now });
     const lacking: [string, ReturnType<typeof result>] = ['"kind":"cache_holds"', result(1)];
     own.answers.push(lacking);
     builder.answers.push(lacking);
@@ -584,87 +583,107 @@ describe("switch from cache", () => {
     expect(store.job(late.job_id!)!.error).toContain("was built but never reached the cache");
   });
 
-  it("shows the output of the build it waits on as the build prints it", async () => {
-    const harness = make_deployment(from_cache);
-    await collect(harness);
-    harness.agent.answers.push(['"kind":"cache_holds"', result(1)]);
-    const outcome = await harness.deployment.act("switch");
-    const build = harness.agent.last_run('"kind":"build"')!;
+  it("runs Build on the cache's first host, as the cache's build that pushes it, at the pin when there is one", async () => {
+    const harness = with_builder();
 
-    harness.agent.write(build, "building hello\nhalf");
-    await harness.deployment.cycle();
-    const running = harness.store.job(outcome.job_id!)!.output;
-    expect(running).toMatch(/first, job #\d+\nbuilding hello\n$/);
+    expect((await harness.deployment.act("build")).ok).toBe(true);
 
-    harness.agent.end(build, " done\nerror: build failed", 1);
-    await harness.deployment.cycle();
-    await harness.deployment.cycle();
-    const output = harness.store.job(outcome.job_id!)!.output;
-    expect(output.match(/building hello/g)).toHaveLength(1);
-    expect(output).toContain("building hello\nhalf done\nerror: build failed\nThe build on host failed");
+    expect(harness.deployment.running_job()).toMatchObject({ kind: "build", agent: "builder" });
+    expect(innermost(harness.builder.last_run('"kind":"cache_build"')!.operation)).toMatchObject({ cache: { flake: "/etc/nixos" } });
+    expect(harness.cache.running_job()).toBeNull();
+
+    const pinned = with_builder({ flake: "github:example/nixos-config", pin: "v1" });
+    expect((await pinned.deployment.act("build")).ok).toBe(true);
+    const build = innermost(pinned.builder.last_run('"kind":"cache_build"')!.operation);
+    expect(build).toMatchObject({ cache: { flake: "github:example/nixos-config?ref=v1", push_command: null } });
   });
 
-  it("fails the switch without starting it when the build it ran fails", async () => {
-    const harness = make_deployment(from_cache);
-    await collect(harness);
-    harness.agent.answers.push(['"kind":"cache_holds"', result(1)]);
+  it("builds on the host itself or on the server, as direct_on says", async () => {
+    const on_host = with_builder({ direct_on: "host" });
+    expect((await on_host.deployment.act("switch")).message).toBe("Switch started");
+    expect(on_host.agent.last_run("nixos-rebuild switch")).toBeDefined();
+    expect(on_host.builder.runs).toHaveLength(0);
+
+    const on_server = with_builder({ direct_on: "server" });
+    expect((await on_server.deployment.act("build")).ok).toBe(true);
+    expect(on_server.deployment.running_job()?.agent).toBeNull();
+    expect(on_server.builder.runs).toHaveLength(0);
+
+    expect(() => with_builder({ direct_on: "elsewhere" })).toThrow("`direct_on` of deployment 'host-deploy' must be one of host, server, ranked");
+  });
+
+  it("runs nixos-rebuild at once when it builds on the switching host, as with no build agent elsewhere", async () => {
+    const harness = make_deployment({ cache_url: "https://cache.example/fleet" });
+
     const outcome = await harness.deployment.act("switch");
 
-    harness.agent.end(harness.agent.last_run('"kind":"build"')!, "error: build failed\n", 1);
-    await harness.deployment.cycle();
+    expect(outcome).toMatchObject({ ok: true, message: "Switch started" });
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain("nixos-rebuild switch");
+    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+  });
 
-    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The build on host failed: Exited with status 1" });
+  it("refuses a switch built on another host when no cache_url brings the system back", () => {
+    const harness = make_deployment({ build_agent: "builder" });
+    harness.agents.add("builder", new FakeAgent());
+
+    expect(harness.deployment.action_refusal("switch")).toBe("direct_on builds on builder, which needs a cache_url to bring the system to host");
+    expect(harness.deployment.action_refusal("build")).toBeNull();
+  });
+
+  it("ends a switch still building first when another switch starts, which takes over its build", async () => {
+    const harness = with_builder();
+    const waiting = await harness.deployment.act("switch");
+    const first_build = harness.deployment.evaluation().switch_wait!.step_job_id!;
+    expect(harness.deployment.action_refusal("test")).toBeNull();
+    expect(harness.deployment.action_refusal("reboot")).toBe("A job is already running for this deployment");
+
+    const outcome = await harness.deployment.act("test");
+
+    expect(outcome).toMatchObject({ ok: true, message: "Building on builder first; the test switch starts once it is built" });
+    expect(harness.store.job(waiting.job_id!)).toMatchObject({ state: "failed", error: `A test switch took its place before it started, taking over its build #${first_build}` });
+    expect(harness.deployment.evaluation().switch_wait).toMatchObject({ job_id: outcome.job_id, step_job_id: first_build });
+    expect(harness.builder.runs.filter((run) => run.command.includes('"kind":"cache_build"'))).toHaveLength(1);
+    expect(await harness.deployment.act("build")).toMatchObject({ ok: true, message: `Build already running, job #${first_build}`, job_id: first_build });
+
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
+  });
+
+  it("builds elsewhere first for an automatic switch too, once per target", async () => {
+    const harness = with_builder({ cache: undefined, cache_url: "https://cache.example/fleet/", auto_switch: true, auto_switch_after: "30m" });
+    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    await collect(harness);
+
+    await cycle(harness);
+
+    const job = harness.store.jobs({ kind: "switch" })[0];
+    expect(job).toMatchObject({ trigger: "automatic", state: "running", progress: "Building on builder" });
+    expect(harness.deployment.evaluation().auto_switch_target).toBe(target_closure);
     expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-    expect(harness.deployment.running_job()).toBeNull();
+
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(job.run_id);
   });
 
-  it("activates boot and test from the cache too", async () => {
-    const harness = make_deployment(from_cache);
-    await collect(harness);
+  it("ends a switch an older X-Nix left waiting on the cache's queue", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch");
+    const evaluation = harness.deployment.evaluation();
+    // Its step's job ran in the cache, so the switch's own job is the deployment's running one.
+    harness.store.finish_job(evaluation.switch_wait!.step_job_id!, "succeeded", 0, null, clock.now);
+    evaluation.switch_wait = { ...evaluation.switch_wait!, step: "cache-build" as never, step_job_id: null };
+    harness.store.save_evaluation(harness.deployment.id, evaluation);
 
-    await harness.deployment.act("boot");
-    const boot = harness.deployment.running_job()!;
-    harness.agent.end(harness.agent.last_run("switch-to-configuration")!, "", 0);
-    await cycle(harness);
-    await harness.deployment.act("test");
+    await harness.deployment.cycle();
 
-    expect(shown_command(boot.command)).toContain(`--set ${target_closure}\nsudo -n ${target_closure}/bin/switch-to-configuration boot`);
-    expect(shown_command(harness.deployment.running_job()!.command)).toContain(`${target_closure}/bin/switch-to-configuration test`);
-    expect(shown_command(harness.deployment.running_job()!.command)).not.toContain("nixos-rebuild");
-  });
-
-  it("guards a switch from the cache on the host's own agent, which confirms it, and runs post_switch as root", async () => {
-    const harness = make_deployment({ ...from_cache, host: "host", pre_switch_checks: ["true"], magic_rollback: true, post_switch: "systemctl restart greetd" });
-    await collect(harness);
-
-    await harness.deployment.act("switch");
-    const run = harness.agent.last_run('"pre_switch_checks":["true"]')!;
-    harness.agent.write(run, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
-    await cycle(harness);
-
-    const operation = innermost(run.operation) as SwitchOperation;
-    expect(operation.watch?.magic_rollback).toBe(true);
-    expect(operation.activation_name).toBe("The switch from the cache");
-    expect(run.command).toContain(`build --no-link ${target_closure}`);
-    expect(run.command).toContain(`sudo -n ${target_closure}/bin/switch-to-configuration switch`);
-    expect(run.command).toContain("sudo -n /bin/sh -c 'systemctl restart greetd'");
-    expect(run.command).not.toContain("nixos-rebuild");
-    expect(harness.agent.operations.some((sent) => sent.kind === "confirm_switch" && sent.token === operation.watch?.token)).toBe(true);
-  });
-
-  it("keeps the host awake through the whole switch with inhibit_sleep", async () => {
-    const harness = make_deployment({ ...from_cache, inhibit_sleep: true });
-    await collect(harness);
-
-    await harness.deployment.act("switch");
-
-    const command = shown_command(harness.deployment.running_job()!.command);
-    expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
-    expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "X-Nix no longer waits on the cache this way (cache-build); switch again" });
   });
 
   it("rolls back to an earlier generation on the host's own agent", async () => {
-    const harness = make_deployment({ ...from_cache, inhibit_sleep: true });
+    const harness = make_deployment({ cache_url: "https://cache.example/fleet", inhibit_sleep: true });
     harness.agent.answers.push(['"kind":"generations"', generations_result([
       { generation: 1, path: "/nix/store/a-system", version: "26.05" },
       { generation: 2, path: "/nix/store/b-system", version: "26.11", current: true, profile: true },
@@ -677,328 +696,12 @@ describe("switch from cache", () => {
     expect(shown_command(job.command)).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1\nsudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
     expect(shown_command(job.command)).toContain("systemd-inhibit");
   });
-
-  // A cache on the server tracking the host's configuration, sharing the deployment's store and agent.
-  function with_cache(values: Record<string, unknown> = {}) {
-    const store = new Store(":memory:");
-    const agent = new FakeAgent();
-    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
-      store, agents: new AgentPool("host", agent), now: () => clock.now,
-    });
-    const harness = make_deployment({ ...from_cache, configuration: "host", ...values }, { store, agent, caches: [cache] });
-    return { ...harness, cache };
-  }
-
-  const lacking: [string, ReturnType<typeof result>] = ['"kind":"cache_holds"', result(1)];
-
-  it("builds in the cache it names rather than on its own, unless pinned off the head the cache builds", async () => {
-    const harness = with_cache({ cache: "fleet", cache_url: undefined });
-
-    const outcome = await harness.deployment.act("build");
-
-    expect(outcome.ok).toBe(true);
-    expect(harness.cache.running_job()).toMatchObject({ kind: "build-target", trigger: "deployment host-deploy", deployment_id: "fleet" });
-    expect(harness.deployment.running_job()).toBeNull();
-    expect(harness.deployment.settings.cache_url).toBe("https://cache.example/fleet/");
-
-    const pinned = with_cache({ cache: "fleet", cache_url: undefined, pin: "v1" });
-    expect((await pinned.deployment.act("build")).ok).toBe(true);
-    expect(pinned.deployment.running_job()?.kind).toBe("build");
-  });
-
-  it("builds on its own agents for a direct build, even while the cache it names is busy", async () => {
-    const harness = with_cache({ cache: "fleet", cache_url: undefined });
-    await harness.cache.act("build", "host");
-    expect(harness.deployment.action_refusal("build")).not.toBeNull();
-    expect(harness.deployment.action_refusal("build", true)).toBeNull();
-
-    const outcome = await harness.deployment.act("build", "manual", true);
-
-    expect(outcome).toMatchObject({ ok: true, message: "Build started" });
-    expect(harness.deployment.running_job()?.kind).toBe("build");
-  });
-
-  it("runs nixos-rebuild at once for a direct switch, without evaluating or waiting on the cache", async () => {
-    const harness = with_cache({ cache: "fleet", cache_url: undefined });
-    await harness.cache.act("build", "host");
-
-    const outcome = await harness.deployment.act("switch", "manual", true);
-
-    expect(outcome).toMatchObject({ ok: true, message: "Switch started" });
-    const command = shown_command(harness.deployment.running_job()!.command);
-    expect(command).toContain("nixos-rebuild switch");
-    expect(command).not.toContain("switch-to-configuration");
-    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
-    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
-  });
-
-  // A deployment whose cache builds on another host, as Odin builds for the fleet.
-  function with_builder(values: Record<string, unknown> = {}) {
-    const store = new Store(":memory:");
-    const agent = new FakeAgent();
-    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", host: "builder", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
-      store, agents: new AgentPool("host", agent), now: () => clock.now,
-    });
-    const harness = make_deployment({ configuration: "host", cache: "fleet", ...values }, { store, agent, caches: [cache] });
-    const builder = new FakeAgent();
-    harness.agents.add("builder", builder);
-    return { ...harness, cache, builder };
-  }
-
-  it("builds a direct switch on the cache's first host, which pushes it, then fetches and activates it", async () => {
-    const harness = with_builder({ switch_from_cache: true });
-
-    const outcome = await harness.deployment.act("switch", "manual", true);
-
-    expect(outcome).toMatchObject({ ok: true, message: "Building on builder first; the switch starts once it is built" });
-    const build = harness.builder.last_run('"kind":"cache_build"')!;
-    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
-    expect(harness.cache.running_job()).toBeNull();
-
-    harness.builder.end(build, `${target_closure}\n`, 0);
-    await harness.deployment.cycle();
-
-    const switching = harness.agent.last_run("switch-to-configuration")!;
-    expect(switching.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
-    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
-    expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
-  });
-
-  it("fetches what a direct switch built elsewhere even without switch_from_cache", async () => {
-    const harness = with_builder();
-    const outcome = await harness.deployment.act("switch", "manual", true);
-    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
-    await harness.deployment.cycle();
-
-    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
-    expect(harness.agent.last_run("nixos-rebuild")).toBeUndefined();
-  });
-
-  it("runs a direct build on the cache's first host, as the cache's build that pushes it", async () => {
-    const harness = with_builder();
-
-    expect((await harness.deployment.act("build", "manual", true)).ok).toBe(true);
-
-    expect(harness.deployment.running_job()).toMatchObject({ kind: "build", agent: "builder" });
-    expect(harness.builder.last_run('"kind":"cache_build"')).toBeDefined();
-    expect(harness.cache.running_job()).toBeNull();
-  });
-
-  it("builds a direct action on the host itself or on the server, as direct_on says", async () => {
-    const on_host = with_builder({ direct_on: "host" });
-    expect((await on_host.deployment.act("switch", "manual", true)).message).toBe("Switch started");
-    expect(on_host.agent.last_run("nixos-rebuild switch")).toBeDefined();
-    expect(on_host.builder.runs).toHaveLength(0);
-
-    const on_server = with_builder({ direct_on: "server" });
-    expect((await on_server.deployment.act("build", "manual", true)).ok).toBe(true);
-    expect(on_server.deployment.running_job()?.agent).toBeNull();
-    expect(on_server.builder.runs).toHaveLength(0);
-
-    expect(() => with_builder({ direct_on: "elsewhere" })).toThrow("`direct_on` of deployment 'host-deploy' must be one of host, server, ranked");
-  });
-
-  it("refuses a direct switch built on another host when no cache_url brings the system back", () => {
-    const harness = make_deployment({ build_agent: "builder" });
-    harness.agents.add("builder", new FakeAgent());
-
-    expect(harness.deployment.action_refusal("switch", true)).toBe("direct_on builds on builder, which needs a cache_url to bring the system to host");
-    expect(harness.deployment.action_refusal("switch")).toBeNull();
-  });
-
-  it("ends a switch waiting on the cache for a direct switch, leaving the cache build running", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    harness.agent.answers.push(lacking);
-    const waiting = await harness.deployment.act("switch", "automatic");
-    expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
-    expect(harness.deployment.action_refusal("switch", true)).toBeNull();
-    expect(harness.deployment.action_refusal("reboot", true)).toBe("A job is already running for this deployment");
-
-    const outcome = await harness.deployment.act("switch", "manual", true);
-
-    expect(outcome).toMatchObject({ ok: true, message: "Switch started" });
-    expect(harness.store.job(waiting.job_id!)).toMatchObject({ state: "failed", error: "A direct switch took its place before it started" });
-    expect(shown_command(harness.deployment.running_job()!.command)).toContain("nixos-rebuild switch");
-    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
-    expect(harness.cache.running_job()?.kind).toBe("build-target");
-  });
-
-  it("builds the system in the cache first when the cache lacks it, then switches from it under the same job", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    harness.agent.answers.push(lacking);
-
-    const outcome = await harness.deployment.act("switch");
-
-    expect(outcome).toMatchObject({ ok: true, message: "Building host in the Fleet cache first; the switch starts once it is pushed" });
-    const job = harness.store.job(outcome.job_id!)!;
-    expect(job).toMatchObject({ kind: "switch", state: "running", progress: "Building host in the Fleet cache" });
-    const build = harness.agent.last_run('"kind":"cache_build"')!;
-    expect(harness.cache.running_job()?.kind).toBe("build-target");
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-    expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
-
-    harness.agent.write(build, "building host\n");
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-    expect(harness.store.job(job.id)!.output).toMatch(/job #\d+\nbuilding host\n$/);
-
-    harness.agent.answers.splice(0);
-    harness.agent.end(build, "", 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    const switching = harness.agent.last_run("switch-to-configuration")!;
-    expect(switching.run_id).toBe(job.run_id);
-    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
-    expect(harness.store.job(job.id)!.output).toContain("The cache holds the system; switching");
-    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
-
-    harness.agent.end(switching, "", 0);
-    await harness.deployment.cycle();
-    expect(harness.store.job(job.id)!.state).toBe("succeeded");
-  });
-
-  it("builds the system in the cache first for an automatic switch too, once per target", async () => {
-    const harness = with_cache({ auto_switch: true, auto_switch_after: "30m" });
-    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
-    rewind_drift(harness, 1801);
-    await collect(harness);
-    harness.agent.answers.push(lacking);
-
-    await cycle(harness);
-
-    const job = harness.deployment.running_job()!;
-    expect(job).toMatchObject({ kind: "switch", trigger: "automatic", progress: "Building host in the Fleet cache" });
-    expect(harness.cache.running_job()?.kind).toBe("build-target");
-    expect(harness.deployment.evaluation().auto_switch_target).toBe(target_closure);
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-
-    harness.agent.answers.splice(0);
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(job.run_id);
-  });
-
-  it("fails the switch without starting it when the build in the cache fails", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    harness.agent.answers.push(lacking);
-    const outcome = await harness.deployment.act("switch");
-
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 1);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The build of host in the Fleet cache failed: Exited with status 1" });
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-    expect(harness.deployment.running_job()).toBeNull();
-  });
-
-  it("fails the switch when the cache built a different system than the one evaluated", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    harness.agent.answers.push(lacking);
-    const outcome = await harness.deployment.act("switch");
-
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.store.job(outcome.job_id!)!.error).toContain(`the cache still lacks ${target_closure}; evaluate again and switch`);
-    expect(harness.agent.last_run("switch-to-configuration")).toBeUndefined();
-  });
-
-  it("takes the system the cache built when the flake moved past the evaluation", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    harness.agent.answers.push([`"store_path":"${target_closure}"`, result(1)]);
-    const outcome = await harness.deployment.act("switch");
-
-    const reported = [["target", newer_closure], ["built", "1"], ["own", "1"]].map(([key, value]) => `@@x-nix-cache\thost\t${key}\t${value}`).join("\n");
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, `${reported}\n`, 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    const switching = harness.agent.last_run("switch-to-configuration")!;
-    expect(switching.command).toContain(`build --no-link ${newer_closure}`);
-    expect(switching.command).not.toContain(target_closure);
-    expect(shown_command(harness.store.job(outcome.job_id!)!.command)).toBe(switching.command);
-    expect(harness.store.job(outcome.job_id!)!.output).toContain(`so this switch takes ${newer_closure}, which the cache built`);
-    expect(harness.deployment.due_for_evaluation()).toBe(true);
-  });
-
-  it("waits for the cache's running check before starting its build", async () => {
-    const harness = with_cache();
-    await collect(harness);
-    await harness.cache.cycle();
-    const check = harness.agent.last_run('"kind":"cache_check"')!;
-    harness.agent.answers.push(lacking);
-
-    const outcome = await harness.deployment.act("switch");
-
-    expect(harness.store.job(outcome.job_id!)!.progress).toBe("Waiting for the Fleet cache to finish its check");
-    expect(harness.agent.last_run('"kind":"cache_build"')).toBeUndefined();
-
-    harness.agent.end(check, "", 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.cache.running_job()?.kind).toBe("build-target");
-    expect(harness.store.job(outcome.job_id!)!.progress).toBe("Building host in the Fleet cache");
-  });
-
-  it("switches at once when the cache holds the system, and builds on its own when no cache tracks the host", async () => {
-    const holding = with_cache();
-    await collect(holding);
-    await holding.deployment.act("switch");
-    expect(holding.agent.last_run("switch-to-configuration")).toBeDefined();
-
-    const untracked = with_cache({ configuration: "other" });
-    await collect(untracked);
-    untracked.agent.answers.push(lacking);
-    await untracked.deployment.act("switch");
-    expect(untracked.agent.last_run("switch-to-configuration")).toBeUndefined();
-    expect(untracked.deployment.running_job()?.kind).toBe("build");
-  });
-
-  it("builds a plain switch in the cache it names first, then runs nixos-rebuild", async () => {
-    const harness = with_cache({ cache: "fleet", cache_url: undefined, switch_from_cache: false });
-
-    const outcome = await harness.deployment.act("switch");
-
-    expect(outcome.message).toBe("Building host in the Fleet cache first; the switch starts once it is pushed");
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, "", 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.agent.last_run("nixos-rebuild switch")?.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
-  });
-
-  it("has the cache that evaluates for it build the system when no evaluation names it yet", async () => {
-    const harness = with_cache({ cache: "fleet", cache_url: undefined });
-
-    const outcome = await harness.deployment.act("switch");
-
-    expect(outcome.message).toBe("Building host in the Fleet cache first; the switch starts once it is pushed");
-    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
-    const reported = [["target", target_closure], ["built", "1"], ["own", "1"]].map(([key, value]) => `@@x-nix-cache\thost\t${key}\t${value}`).join("\n");
-    harness.agent.end(harness.agent.last_run('"kind":"cache_build"')!, `${reported}\n`, 0);
-    await harness.cache.cycle();
-    await harness.deployment.cycle();
-
-    expect(harness.agent.last_run("switch-to-configuration")?.command).toContain(`build --no-link ${target_closure}`);
-  });
 });
 
 // ── Small host fed by the server ─────────────────────────────────────────────
 
 describe("a small host evaluated and built elsewhere", () => {
-  it("evaluates and builds on the server, then its own agent switches from the cache by itself", async () => {
+  it("evaluates and builds on the server, then its own agent switches by fetching what the server built", async () => {
     const server = new FakeAgent();
     const pi = new FakeAgent();
     const agents = new AgentPool("server", server);
@@ -1006,7 +709,7 @@ describe("a small host evaluated and built elsewhere", () => {
     const store = new Store(":memory:");
     const settings = deployment_settings({
       id: "pi", host: "pi", flake: "github:example/nixos-config", configuration: "pi", eval_agent: "server", build_agent: "server",
-      build_root_dir: "/var/lib/x-nix/build-roots", cache_url: "https://attic.example/fleet", switch_from_cache: true, auto_switch: true,
+      build_root_dir: "/var/lib/x-nix/build-roots", cache_url: "https://attic.example/fleet", auto_switch: true,
       auto_switch_after: "30m", magic_rollback: true, post_switch: "systemctl restart greetd",
     }, 0, undefined, () => host_settings({ id: "pi", keep_awake: true }));
     const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
@@ -1017,19 +720,16 @@ describe("a small host evaluated and built elsewhere", () => {
     await deployment.cycle();
     expect(innermost(evaluation.operation)).toMatchObject({ kind: "evaluate", attribute: "pi", flake: "github:example/nixos-config", refresh: true });
     expect(pi.runs).toHaveLength(0);
-    expect(deployment.cached_target()).toBe(target_closure);
-
-    await deployment.act("build");
-    const build = server.last_run('"kind":"build"')!;
-    expect(build.operation).toMatchObject({ kind: "build", root_link: "/var/lib/x-nix/build-roots/pi", cache_url: "https://attic.example/fleet" });
-    server.end(build, `${target_closure}\n`, 0);
-    await deployment.cycle();
-    expect(pi.runs).toHaveLength(0);
 
     const drifting = deployment.evaluation();
     drifting.drift_since_epoch = clock.now - 1801;
     store.save_evaluation(deployment.id, drifting);
     await deployment.cycle();
+    await deployment.cycle();
+    const build = server.last_run('"kind":"build"')!;
+    expect(build.operation).toMatchObject({ kind: "build", root_link: "/var/lib/x-nix/build-roots/pi", cache_url: "https://attic.example/fleet" });
+    expect(pi.runs).toHaveLength(0);
+    server.end(build, `${target_closure}\n`, 0);
     await deployment.cycle();
 
     const switching = pi.last_run("switch-to-configuration")!;
@@ -1234,13 +934,6 @@ describe("daily jobs", () => {
 
   it("reject a time that is not a time of day", () => {
     expect(() => make_deployment({ build_at: "half past two" })).toThrow(/build_at/);
-  });
-
-  it("take a switch from the cache with the guarded switch's checks, but not with a target_host", () => {
-    const from_cache = { switch_from_cache: true, cache_url: "https://cache.example/fleet" };
-
-    expect(() => make_deployment({ ...from_cache, magic_rollback: true, pre_switch_checks: ["true"], health_commands: ["true"] })).not.toThrow();
-    expect(() => make_deployment({ ...from_cache, target_host: "root@host" })).toThrow(/target_host/);
   });
 
   it("take the latest slot, never one in the future", () => {

@@ -266,7 +266,7 @@ export class Fleet {
     const deployment = this.deployments.get(host.deployment_id);
     if (deployment === undefined) return this.finish_host(host, "failed", "No longer in the config", now);
     host.started_epoch = now;
-    const outcome = await deployment.act(run.action, `fleet #${run.id}`, true);
+    const outcome = await deployment.act(run.action, `fleet #${run.id}`);
     host.job_id = outcome.job_id;
     if (!outcome.ok) return this.finish_host(host, "failed", outcome.message, this.now());
     // A reboot is a command that has already ended, not a job to follow.

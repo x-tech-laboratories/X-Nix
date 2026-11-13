@@ -73,7 +73,6 @@
       "flake": "fleet",
       "configuration": "pi",
       "eval_agent": "server",
-      "switch_from_cache": true,
       "auto_switch": true,
       "magic_rollback": true,
       "post_switch": "systemctl restart display-manager.service",

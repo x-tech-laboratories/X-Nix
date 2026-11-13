@@ -1,8 +1,8 @@
 // Safer switches: checks before a switch, health checks after it, and a watchdog on the activated host that rolls it
 // back, plus the system profile's generations and a rollback to any of them.
 //
-// A switch activates either with nixos-rebuild or, with switch_from_cache, by fetching the evaluated store path from the
-// cache and running its switch-to-configuration, as one `switch` operation the switch agent performs (see
+// A switch activates either with nixos-rebuild or, when another host built the system, by fetching the store path it
+// pushed from the cache and running its switch-to-configuration, as one `switch` operation the switch agent performs (see
 // agent/operations/switch.ts). A guarded switch activates on the switch agent's own host, so it takes no target_host. It
 // runs the pre-switch checks and refuses on the first that fails, before anything changes. When the mode activates the
 // new system and magic_rollback or a health check is set, it starts a watchdog in a session of its own, so it outlives
