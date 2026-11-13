@@ -146,6 +146,18 @@ describe("live build progress", () => {
     expect(progress.activities).toEqual({});
   });
 
+  it("counts a failed derivation once, not again for nix's Cannot build or for those whose dependency failed", () => {
+    const progress = empty_progress();
+    const app = "/nix/store/ffffffffffffffffffffffffffffffff-app-1.0.drv";
+    read_build_log(progress, [
+      nix_line({ action: "msg", level: 0, msg: `error: builder for '${drv}' failed with exit code 1` }),
+      nix_line({ action: "msg", level: 0, msg: `error: Cannot build '${drv}'.\n       Reason: builder failed with exit code 1.` }),
+      nix_line({ action: "msg", level: 0, msg: `error: Cannot build '${app}'.\n       Reason: 1 dependency failed.` }),
+    ].join("\n"), true);
+
+    expect(progress.builds_failed).toBe(1);
+  });
+
   describe("the plan", () => {
     const zlib = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-zlib-1.3";
     const app = "/nix/store/ffffffffffffffffffffffffffffffff-app-1.0.drv";

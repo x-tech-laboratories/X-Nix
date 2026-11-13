@@ -98,7 +98,8 @@ function read_line(progress: BuildProgress, line: string, now: number): string |
       const message = strip_colours(entry.msg ?? "");
       read_plan(progress, message);
       if ((entry.level ?? 0) > shown_level) return null;
-      if (/builder for '.+?' failed|Cannot build '.+?'/.test(message)) progress.builds_failed += 1;
+      // Only a builder that ran and failed counts: nix also says Cannot build for it, and for each derivation whose dependency failed.
+      if (/builder for '.+?' failed/.test(message)) progress.builds_failed += 1;
       return message;
     }
     case "start": {
