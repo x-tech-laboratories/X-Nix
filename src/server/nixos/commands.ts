@@ -151,6 +151,15 @@ export function rebuild_steps(settings: DeploymentSettings, mode: SwitchMode): S
   return [{ argv: [...settings.switch_wrapper, ...sudo(settings), settings.rebuild_bin, mode, "--flake", flake_reference, ...args] }];
 }
 
+// Builds the system nixos-rebuild then activates, so a guarded switch's watchdog times the activation alone; none when
+// nixos-rebuild builds elsewhere, on build_host or for target_host, or names no configuration to build.
+export function rebuild_build_steps(settings: DeploymentSettings): Step[] {
+  if (settings.configuration === null || settings.build_host !== null || settings.target_host !== null) return [];
+  const installable = `${settings.flake}#nixosConfigurations.${JSON.stringify(settings.configuration)}.config.system.build.toplevel`;
+  const refresh = refreshes(settings.flake) ? ["--refresh"] : [];
+  return [{ argv: [...settings.switch_wrapper, ...nix(settings), "build", "--no-link", ...settings.build_args, ...refresh, installable] }];
+}
+
 // Fetches the evaluated closure and activates it in the mode asked, so the host neither evaluates nor builds. The daemon
 // fetches the closure from the host's substituters, the cache among them, taking from upstream what the cache left out;
 // it substitutes for anyone, so only activation needs sudo.

@@ -62,6 +62,18 @@ describe("switch settings", () => {
 // ── Operations ───────────────────────────────────────────────────────────────
 
 describe("switch operations", () => {
+  it("builds the system before the watchdog starts for a guarded nixos-rebuild, so the build never uses up the activation's time", () => {
+    const guarded = switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin" }), "switch", "ab12"));
+
+    expect(guarded.fetch_steps).toEqual([{
+      argv: ["nix", "--extra-experimental-features", "nix-command flakes", "build", "--no-link", "--keep-going", "--print-build-logs",
+        '/etc/nixos#nixosConfigurations."Odin".config.system.build.toplevel'],
+    }]);
+    expect(switch_of(switch_job_operation(settings({ configuration: "Odin" }), "switch", "ab12")).fetch_steps).toEqual([]);
+    expect(switch_of(switch_job_operation(settings({ magic_rollback: true }), "switch", "ab12")).fetch_steps).toEqual([]);
+    expect(switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin", build_host: "root@thor" }), "switch", "ab12")).fetch_steps).toEqual([]);
+  });
+
   it("runs nixos-rebuild alone in each mode when nothing guards it", () => {
     const plain = switch_of(switch_job_operation(settings(), "boot", "ab12"));
 

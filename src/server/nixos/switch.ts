@@ -24,7 +24,7 @@ import {
   innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
   type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
-import { cache_fetch_steps, cache_switch_steps, post_switch_argv, rebuild_steps, sudo, system_profile, type SwitchMode } from "./commands.ts";
+import { cache_fetch_steps, cache_switch_steps, post_switch_argv, rebuild_build_steps, rebuild_steps, sudo, system_profile, type SwitchMode } from "./commands.ts";
 
 export type { Generation } from "../../shared/facts.ts";
 export { switch_mark } from "../../shared/operations.ts";
@@ -77,15 +77,18 @@ export function watch_token(command: string): string | null {
 export function switch_job_operation(settings: DeploymentSettings, mode: SwitchMode, token: string, store_path: string | null = null): Operation {
   const steps = store_path === null ? rebuild_steps(settings, mode) : cache_switch_steps(settings, store_path, mode);
   const guarded = mode !== "dry-activate";
+  const watch = guarded && watches(settings, mode) ? switch_watch(settings, mode, token) : null;
+  // A watched nixos-rebuild builds first, before the watchdog starts, so the build never uses up the activation's time.
+  const build_first = watch === null ? [] : rebuild_build_steps(settings);
   const operation: SwitchOperation = {
     kind: "switch",
     mode,
     activation_name: store_path === null ? `nixos-rebuild ${mode}` : `The ${mode} from the cache`,
-    fetch_steps: store_path === null ? [] : cache_fetch_steps(settings, store_path),
+    fetch_steps: store_path === null ? build_first : cache_fetch_steps(settings, store_path),
     steps,
     post_switch: post_switch_argv(settings),
     pre_switch_checks: guarded ? settings.pre_switch_checks : [],
-    watch: guarded && watches(settings, mode) ? switch_watch(settings, mode, token) : null,
+    watch,
     // Only the switch agent's own host can be looked at, so a switch to target_host goes without.
     ...(settings.close_nix_lock_holders && settings.target_host === null ? { close_nix_lock_holders: { sudo: settings.require_sudo } } : {}),
   };

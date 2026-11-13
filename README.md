@@ -211,7 +211,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Once the activation has waited a minute for the Nix store database, as a newer Nix does to upgrade it, stop what holds it open, such as a language server's daemon connections; their work ends, so it is off by default. Not with `target_host`. |
-| `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; a switch from the cache fetches its closure first, outside this time. |
+| `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; a switch from the cache fetches its closure first, and a guarded `nixos-rebuild` with a `configuration` and no `build_host` or `target_host` builds the system first, both outside this time. |
 | `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |

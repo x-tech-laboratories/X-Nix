@@ -120,7 +120,7 @@ describe("a switch on the agent", () => {
     const status = await switch_system(context, plain_switch({ fetch_steps: [{ argv: ["nix", "build"] }], watch: watched }));
 
     expect(status).toBe(1);
-    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "The fetch from the cache failed with status 1" });
+    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "Building or fetching the system failed with status 1" });
     expect(ran).toEqual([["nix", "build"]]);
     expect(existsSync(watch_folder(watched.token))).toBe(false);
   });

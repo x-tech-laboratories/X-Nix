@@ -54,13 +54,13 @@ export async function switch_system(context: Context, operation: SwitchOperation
     say("Every pre-switch check passed");
   }
 
-  // Fetched before the watchdog starts, so a slow download never uses up the time the activation has.
+  // Fetched or built before the watchdog starts, so a slow download or build never uses up the time the activation has.
   const fetch_steps = operation.fetch_steps ?? [];
   if (fetch_steps.length > 0) {
     mark("phase fetch");
     const fetched = await run_steps(context, fetch_steps);
     if (fetched !== 0) {
-      mark(`outcome unchanged The fetch from the cache failed with status ${fetched}`);
+      mark(`outcome unchanged Building or fetching the system failed with status ${fetched}`);
       return fetched;
     }
   }
