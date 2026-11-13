@@ -193,6 +193,7 @@ function safety_text(deployment: Deployment): string {
   if (health > 0) parts.push(`${health} health check${health === 1 ? "" : "s"} every ${safety.health_period}s for up to ${safety.health_timeout}s`);
   if (safety.magic_rollback) parts.push(`rolled back unless confirmed within ${safety.confirm_timeout}s of an activation that takes up to ${safety.activation_timeout}s`);
   if (safety.inhibit_sleep) parts.push("the host is kept awake while it switches");
+  if (safety.close_nix_lock_holders) parts.push("what holds the Nix store database open is stopped once the activation waits a minute for it");
   return parts.length === 0 ? "none; the switch runs alone" : parts.join("; ");
 }
 
