@@ -13,6 +13,7 @@ import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
 import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { accounts, changes } from "./api.ts";
+import { Sidebar } from "./sidebar.tsx";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
 import { closure_title, ClosureView } from "./views/closure.tsx";
@@ -42,6 +43,15 @@ const role_text = { viewer: "Reads everything; changes nothing.", admin: "Also b
 
 // Old addresses whose pages now live under another sidebar section, which they light up.
 const parent_sections: Record<string, string> = { builds: "jobs", deployments: "hosts", fleet: "hosts", store: "hosts", boot: "hosts" };
+
+// Sections whose second address part names an item the sidebar lists under them.
+const item_sections = new Set(["flakes", "cache", "hosts", "store", "boot"]);
+
+// The sidebar row to light up: the section, and the flake, cache or host the route names, if any.
+function sidebar_place({ parts }: Route): { section: string; item: string | null } {
+  const [first = "", id] = parts;
+  return { section: parent_sections[first] ?? first, item: id !== undefined && item_sections.has(first) ? id : null };
+}
 
 interface Page {
   title: string;
@@ -99,6 +109,8 @@ function App() {
   }, [logged_in]);
 
   const shown = me ? page_for(route, me) : null;
+  const shown_sections = sections.filter((section) => section.id !== "users" || me?.role === "admin");
+  const place = sidebar_place(route);
   const view_key = `${route.parts.join("/")}?${route.query}`;
 
   useEffect(() => {
@@ -109,8 +121,7 @@ function App() {
     <Shell
       key={logged_in ? "open" : "closed"}
       brand="X-Nix"
-      sections={sections.filter((section) => section.id !== "users" || me?.role === "admin")}
-      active={parent_sections[route.parts[0] ?? ""] ?? route.parts[0] ?? ""}
+      sidebar={me && <Sidebar sections={shown_sections} section={place.section} item={place.item} />}
       theme={theme}
       user={me?.name ?? null}
       user_href="#/account"
