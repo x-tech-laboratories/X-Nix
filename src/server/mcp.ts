@@ -1,7 +1,8 @@
 // X-Nix's routes as MCP tools at /api/mcp, so an AI client can read the fleet and act on it as the signed-in caller.
 //
 // Each tool runs its route inside the app with the caller's own sign-in, so a viewer's token can read and only an
-// admin's can act. File downloads are left to the page, and the account routes, which X-Libs keeps from tokens.
+// admin's can act. Installing onto a machine wipes its disks, so that is left to the page; so are file downloads and
+// the account routes, which X-Libs keeps from tokens.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -130,24 +131,6 @@ export const routes: Record<string, RouteToolSpec> = {
   },
 
   get_provisioning: { route: "GET /api/provisioning", description: "Shows the installs, the install media built and the agent keys made for installed hosts.", params: [] },
-  install_host: {
-    route: "POST /api/provisioning/install",
-    description:
-      "Installs NixOS onto a machine over SSH with nixos-anywhere, WIPING ITS DISKS; confirm must repeat the address. " +
-      "agent names the host that runs it, and stop_after_partitioning stops once the disks are laid out.",
-    params: [
-      { name: "host", schema: { ...text, description: "The new host's name" } },
-      { name: "address", schema: { ...text, description: "The target's SSH hostname or IP address" } },
-      { name: "confirm", schema: { ...text, description: "The address again, to confirm the disks are wiped" } },
-      { name: "flake", schema: text },
-      { name: "configuration", schema: { ...text, description: "The nixosConfigurations attribute to install" } },
-      { name: "user", schema: text, optional: true },
-      { name: "port", schema: { type: "integer", minimum: 1, maximum: 65535 }, optional: true },
-      { name: "agent", schema: text, optional: true },
-      { name: "stop_after_partitioning", schema: { type: "boolean" }, optional: true },
-      { name: "generate_hardware_config", schema: { type: "boolean" }, optional: true },
-    ],
-  },
   build_media: {
     route: "POST /api/provisioning/media",
     description: "Builds install media for a deployment's flake and configuration, or for a flake and configuration named.",
