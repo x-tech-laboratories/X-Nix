@@ -706,6 +706,50 @@ describe("switch from cache", () => {
     expect(pinned.deployment.running_job()?.kind).toBe("build");
   });
 
+  it("builds on its own agents for a direct build, even while the cache it names is busy", async () => {
+    const harness = with_cache({ cache: "fleet", cache_url: undefined });
+    await harness.cache.act("build", "host");
+    expect(harness.deployment.action_refusal("build")).not.toBeNull();
+    expect(harness.deployment.action_refusal("build", true)).toBeNull();
+
+    const outcome = await harness.deployment.act("build", "manual", true);
+
+    expect(outcome).toMatchObject({ ok: true, message: "Build started" });
+    expect(harness.deployment.running_job()?.kind).toBe("build");
+  });
+
+  it("runs nixos-rebuild at once for a direct switch, without evaluating or waiting on the cache", async () => {
+    const harness = with_cache({ cache: "fleet", cache_url: undefined });
+    await harness.cache.act("build", "host");
+
+    const outcome = await harness.deployment.act("switch", "manual", true);
+
+    expect(outcome).toMatchObject({ ok: true, message: "Switch started" });
+    const command = shown_command(harness.deployment.running_job()!.command);
+    expect(command).toContain("nixos-rebuild switch");
+    expect(command).not.toContain("switch-to-configuration");
+    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
+    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+  });
+
+  it("ends a switch waiting on the cache for a direct switch, leaving the cache build running", async () => {
+    const harness = with_cache();
+    await collect(harness);
+    harness.agent.answers.push(lacking);
+    const waiting = await harness.deployment.act("switch", "automatic");
+    expect(harness.deployment.action_refusal("switch")).toBe("A job is already running for this deployment");
+    expect(harness.deployment.action_refusal("switch", true)).toBeNull();
+    expect(harness.deployment.action_refusal("reboot", true)).toBe("A job is already running for this deployment");
+
+    const outcome = await harness.deployment.act("switch", "manual", true);
+
+    expect(outcome).toMatchObject({ ok: true, message: "Switch started" });
+    expect(harness.store.job(waiting.job_id!)).toMatchObject({ state: "failed", error: "A direct switch took its place before it started" });
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain("nixos-rebuild switch");
+    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+    expect(harness.cache.running_job()?.kind).toBe("build-target");
+  });
+
   it("builds the system in the cache first when the cache lacks it, then switches from it under the same job", async () => {
     const harness = with_cache();
     await collect(harness);

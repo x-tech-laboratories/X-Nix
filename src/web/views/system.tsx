@@ -176,7 +176,7 @@ function Details({ deployment }: { deployment: Deployment }) {
   if (build_at !== null) rows.push(["Daily build", <span>at {build_at}, last slot <Age epoch={evaluation.scheduled.build} /></span>]);
   if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
   if (deployment.cache_id !== null) rows.push(["Built by", <a href={link(["cache", deployment.cache_id])}>the {deployment.cache_id} cache</a>]);
-  if (deployment.switch_from_cache) rows.push(["Switch", "fetches the flake closure from the cache and activates it"]);
+  if (deployment.switch_from_cache) rows.push(["Switch", "an automatic switch fetches the flake closure from the cache and activates it; any other runs nixos-rebuild"]);
   rows.push(["Switch safety", safety_text(deployment)]);
   if (reading?.current) rows.push(["Closure browser", <a href={closure_link(deployment)}>Browse the running closure</a>]);
   if (evaluation.eval_error) rows.push(["Evaluation error", <pre className="output">{evaluation.eval_error}</pre>]);

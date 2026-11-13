@@ -297,8 +297,8 @@ function deployment_view(deployment: Deployment): DeploymentView {
     running_job: deployment.running_job(),
     actions: action_ids.map((id) => ({
       id,
-      label: id === "switch" && settings.switch_from_cache ? "Switch from cache" : action_labels[id],
-      refusal: deployment.action_refusal(id),
+      label: action_labels[id],
+      refusal: deployment.action_refusal(id, true),
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
     safety: {
@@ -558,7 +558,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (deployment === null) return reply;
     const action = request.params.action as ActionId;
     if (!action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
-    const outcome = await deployment.act(action);
+    const outcome = await deployment.act(action, "manual", true);
     if (outcome.ok) poller.soon(deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });

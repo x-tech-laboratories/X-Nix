@@ -132,7 +132,7 @@ The config file lists `deployments`, each a NixOS host and the flake that descri
 and compares the two store paths. Build, switch, garbage collection and evaluation run as long runs
 that survive a restart of X-Nix; each lands in the job history with its output.
 
-With `switch_from_cache`, a switch never evaluates or builds on the host: it takes the store path of the latest
+With `switch_from_cache`, an automatic switch never evaluates or builds on the host: it takes the store path of the latest
 successful evaluation, which may run on `eval_agent`, and fetches it with `nix build`, so the host's Nix daemon
 substitutes it. `cache_url` must therefore be one of the host's substituters; the rest of the closure may come from any
 other, as Attic leaves out what an upstream cache such as cache.nixos.org already serves. A `switch` or
@@ -142,7 +142,7 @@ activating on the switch agent's own host, so it takes no `target_host`. The clo
 Build or Build all (or anything else that pushes, such as `attic watch-store`), and signed by a key the host trusts;
 `build_host`, `rebuild_bin` and `rebuild_args` do not apply to it.
 
-A switch, boot, test or dry activation, started by hand, by a fleet run or by the drift, first runs what it depends on.
+An automatic switch, started by the drift, first runs what it depends on.
 Its job shows each step, with the output of the build it waits on as it prints, and fails without touching the host when one fails:
 
 - With `switch_from_cache` and no successful evaluation, it evaluates the flake first, unless the deployment's `cache`
@@ -157,6 +157,11 @@ Its job shows each step, with the output of the build it waits on as it prints, 
 
 An automatic switch runs these steps once per target closure, so drift seen before the nightly build switches as soon
 as the system is built.
+
+Every other action, asked for through the API as the page and the MCP tools do, or by a fleet run, runs directly and
+never waits on a cache, which only speeds things up: Build runs on the build agents even when the deployment names a
+`cache`, and a switch, boot, test or dry activation runs `nixos-rebuild` at once, even with `switch_from_cache`. An
+automatic switch still waiting on its steps ends to let it run, while any cache build it started carries on.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
