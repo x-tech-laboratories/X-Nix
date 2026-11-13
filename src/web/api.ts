@@ -225,6 +225,7 @@ export interface Deployment {
   schedule: { build: string | null };
   auto_switch: boolean;
   switch_from_cache: boolean;
+  direct_on: "host" | "server" | "ranked";
   reading: Reading | null;
   evaluation: Evaluation;
   evaluating: boolean;

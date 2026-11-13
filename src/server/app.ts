@@ -17,7 +17,7 @@ import { register_auth, type Accounts } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
-import { fleet_settings, type DeploymentSettings, type TimeOfDay } from "./config.ts";
+import { fleet_settings, type DeploymentSettings, type DirectOn, type TimeOfDay } from "./config.ts";
 import { action_ids, type ActionId, type Deployment, type Evaluation, type Reading } from "./deployment.ts";
 import type { Flake, FlakeReading, UpdateOutcome } from "./flake.ts";
 import { host_action_ids, type Host, type HostActionId, type HostReading, type HostState } from "./host.ts";
@@ -188,6 +188,7 @@ export interface DeploymentView {
   auto_switch: boolean;
   // Whether a switch activates the evaluated closure from the cache rather than rebuilding.
   switch_from_cache: boolean;
+  direct_on: DirectOn;
   // How the store is watched, or null when it is not.
   reading: Reading | null;
   evaluation: Evaluation;
@@ -289,6 +290,7 @@ function deployment_view(deployment: Deployment): DeploymentView {
     schedule: { build: clock(settings.build_at) },
     auto_switch: settings.auto_switch,
     switch_from_cache: settings.switch_from_cache,
+    direct_on: settings.direct_on,
     host_name: deployment.host?.name ?? null,
     cache_id: settings.cache_id,
     evaluated_by: deployment.evaluating_cache()?.cache.id ?? null,

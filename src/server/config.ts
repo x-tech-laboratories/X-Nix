@@ -19,6 +19,11 @@ export type Status = "online" | "info" | "unavailable" | "warning" | "failed";
 const status_severity: Record<Status, number> = { online: 0, info: 1, unavailable: 2, warning: 3, failed: 4 };
 
 // The level a message or event raising each status is logged at.
+// Where a direct action builds: on the host it switches, on the server, or on the first of the ranked hosts that is there.
+export type DirectOn = "host" | "server" | "ranked";
+
+export const direct_on_values: DirectOn[] = ["host", "server", "ranked"];
+
 export const level_of_status: Record<Status, "info" | "warning" | "error"> = { online: "info", info: "info", unavailable: "warning", warning: "warning", failed: "error" };
 
 // A time of day as hours and minutes, local to the server.
@@ -125,6 +130,8 @@ export interface DeploymentSettings {
   // The declared cache that builds the deployment's system, or null when it builds on its own.
   cache_id: string | null;
   switch_agent: string | null;
+  // Where a direct action builds; elsewhere than the switching host, it pushes what it built to cache_url for the host to fetch.
+  direct_on: DirectOn;
   // Switch by fetching the evaluated closure from cache_url and activating it, rather than rebuilding on the host.
   switch_from_cache: boolean;
   // Hold off idle and sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
@@ -521,6 +528,8 @@ export function deployment_settings(
   if (cache !== null && builds_alone !== undefined) throw new ConfigError(`\`${builds_alone}\` of ${read.owner} belongs to its cache '${cache_id}', which builds its system`);
   const cache_url = cache?.cache_url ?? read.text("cache_url");
   const switch_from_cache = read.flag("switch_from_cache", false);
+  const direct_on = read.text("direct_on") ?? "ranked";
+  if (!direct_on_values.includes(direct_on as DirectOn)) throw new ConfigError(`\`direct_on\` of ${read.owner} must be one of ${direct_on_values.join(", ")}`);
   if (switch_from_cache && cache_url === null) throw new ConfigError(`Deployment '${id}' sets switch_from_cache, which needs a \`cache_url\` to fetch from`);
   const { flake, flake_id } = resolve_flake(read.text("flake") ?? "/etc/nixos", flakes);
   const tags = read.list("tags", []);
@@ -556,6 +565,7 @@ export function deployment_settings(
     cache_url,
     cache_id,
     switch_agent,
+    direct_on: direct_on as DirectOn,
     switch_from_cache,
     inhibit_sleep: host.keep_awake,
     target_host: read.text("target_host"),

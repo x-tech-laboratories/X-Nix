@@ -34,7 +34,7 @@ import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { built_store_path, record_builds } from "./builds.ts";
 import type { Cache } from "./cache.ts";
 import type { Host } from "./host.ts";
-import { parse_report } from "./nixos/attic.ts";
+import { build_operation as cache_build_operation, parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
 import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import {
@@ -51,7 +51,7 @@ import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/fl
 import { parse_probe, probe_operation, reboot_required, type ProbeFields } from "./nixos/probe.ts";
 import { overdue_text } from "./overdue.ts";
 import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
-import type { EventLevel, Job, JobKind, Store } from "./store.ts";
+import type { EventLevel, Job, JobKind, JobWithOutput, Store } from "./store.ts";
 import { operation_of, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -105,6 +105,8 @@ export interface SwitchWait {
   since_epoch: number;
   // How much of the step's job output the switch's job already shows; absent for none.
   copied?: number;
+  // Whether a direct action asked for the switch, which builds where direct_on says and fetches what that build pushed.
+  direct?: boolean;
 }
 
 export interface Message {
@@ -267,6 +269,9 @@ export class Deployment {
       const building = this.builds_in_cache();
       if (building === null) return `The ${this.settings.cache_id} cache does not track ${this.attribute() ?? "this host's configuration"}`;
       return building.cache.action_refusal("build", building.name);
+    }
+    if (direct && is_switch_kind(action) && this.direct_step() !== null && this.settings.cache_url === null) {
+      return `direct_on builds on ${this.host_name(this.direct_agent())}, which needs a cache_url to bring the system to ${this.host_name(this.agent_for("switch"))}`;
     }
     const running = this.running_job();
     // A direct action takes the place of a switch still waiting on what it depends on, such as the cache.
@@ -589,8 +594,8 @@ export class Deployment {
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
     const operation = this.operation_for("switch");
-    // The switch runs what it depends on first, as one a person starts does.
-    const waiting = await this.wait_for_dependencies("switch", operation, "automatic");
+    // The switch runs what it depends on first, as no direct one does.
+    const waiting = await this.wait_for_dependencies("switch", operation, "automatic", false);
     if (waiting !== null) {
       const evaluation = this.evaluation();
       evaluation.auto_switch_target = target;
@@ -662,11 +667,11 @@ export class Deployment {
       const building = action === "build" && !direct ? this.builds_in_cache() : null;
       if (building !== null) return building.cache.act("build", building.name, trigger === "manual" ? `deployment ${this.id}` : trigger);
       const operation = this.operation_for(action, direct);
-      if (is_switch_kind(action) && !direct) {
-        const waiting = await this.wait_for_dependencies(action, operation, trigger);
+      if (is_switch_kind(action)) {
+        const waiting = await this.wait_for_dependencies(action, operation, trigger, direct);
         if (waiting !== null) return waiting;
       }
-      const launched = await this.launch(action, operation, trigger, true);
+      const launched = await this.launch(action, operation, trigger, true, undefined, direct && action === "build" ? this.direct_agent() : this.agent_for(action));
       if (launched.job_id === null) {
         const job_id = this.record_failed_launch(action, operation, trigger, launched.error);
         return { ok: false, message: `Could not start the ${job_noun(action)}: ${launched.error}`, job_id };
@@ -709,16 +714,44 @@ export class Deployment {
     return building !== null ? "cache-build" : "build";
   }
 
+  // The hosts a direct action builds on, most preferred first: the switching host, the server, or the hosts of the cache
+  // that builds this deployment's system, else its build agents.
+  private direct_agents(): (string | null)[] {
+    if (this.settings.direct_on === "host") return [this.agent_for("switch")];
+    if (this.settings.direct_on === "server") return [null];
+    return this.building_cache()?.cache.settings.hosts ?? this.build_agents();
+  }
+
+  private direct_agent(): string | null {
+    return this.agents.pick(this.direct_agents());
+  }
+
+  // What a direct switch builds first: nothing when it builds on the switching host, or with target_host, where nixos-rebuild builds it.
+  private direct_step(): SwitchStep | null {
+    return this.settings.target_host !== null || this.same_host(this.direct_agent(), this.agent_for("switch")) ? null : "build";
+  }
+
+  // What a direct build runs: its cache's build, which pushes what it built, unless a pin holds it off the head the cache builds.
+  private direct_build_operation(): Operation {
+    const building = this.pin() === null ? this.building_cache() : null;
+    return building === null ? build_operation(this.effective_settings(), this.attribute()) : cache_build_operation(building.cache.settings, building.name);
+  }
+
+  // The store path a build job made, read from a cache's build report or from what nix printed.
+  private built_by(job: JobWithOutput): string | null {
+    return parse_report(job.output).targets.get(this.attribute() ?? "")?.target ?? built_store_path(job.output);
+  }
+
   // Starts a switch as a job that runs what it depends on first, or answers null when the switch can start at once.
-  private async wait_for_dependencies(kind: SwitchMode, operation: Operation, trigger: string): Promise<ActionOutcome | null> {
-    const target = this.cached_target();
-    const step = await this.next_step(target);
+  private async wait_for_dependencies(kind: SwitchMode, operation: Operation, trigger: string, direct: boolean): Promise<ActionOutcome | null> {
+    const target = direct ? null : this.cached_target();
+    const step = direct ? this.direct_step() : await this.next_step(target);
     if (step === null) return null;
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     const job_id = this.store.create_job({
       deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.agent_for(kind), run_id, trigger, started_epoch: this.now(),
     });
-    this.save_wait({ job_id, step, step_job_id: null, target, since_epoch: this.now() });
+    this.save_wait({ job_id, step, step_job_id: null, target, since_epoch: this.now(), ...(direct ? { direct } : {}) });
     const words = this.step_words(this.evaluation().switch_wait!);
     await this.advance_wait(this.store.job(job_id)!, this.evaluation().switch_wait!);
     const job = this.store.job(job_id)!;
@@ -732,7 +765,7 @@ export class Deployment {
   // What a switch does first in this step, and what it waits for, as its event and answer say.
   private step_words(waiting: SwitchWait): { first: string; then: string } {
     if (waiting.step === "evaluate") return { first: "evaluating the flake", then: "it names the system" };
-    if (waiting.step === "build") return { first: `building on ${this.host_name(this.agent_for("build"))}`, then: "it is built" };
+    if (waiting.step === "build") return { first: `building on ${this.host_name(waiting.direct ? this.direct_agent() : this.agent_for("build"))}`, then: "it is built" };
     if (waiting.step === "push") return { first: "waiting for the system to reach the cache", then: "it is there" };
     const building = this.building_cache()!;
     return { first: `building ${building.name} in the ${building.cache.settings.name} cache`, then: "it is pushed" };
@@ -783,7 +816,9 @@ export class Deployment {
   // Builds on the build agents, then switches, after the system reaches the cache when the build ran on another host.
   private async advance_build(job: Job, waiting: SwitchWait): Promise<void> {
     if (waiting.step_job_id === null) {
-      const launched = await this.launch("build", build_operation(this.effective_settings(), this.attribute()), job.trigger, false);
+      const launched = waiting.direct
+        ? await this.launch("build", this.direct_build_operation(), job.trigger, false, undefined, this.direct_agent())
+        : await this.launch("build", build_operation(this.effective_settings(), this.attribute()), job.trigger, false);
       if (launched.job_id === null) return this.end_wait(job, `Could not start the build: ${launched.error}`);
       this.save_wait({ ...waiting, step_job_id: launched.job_id });
       const where = this.host_name(this.store.job(launched.job_id)!.agent);
@@ -796,8 +831,8 @@ export class Deployment {
     const where = this.host_name(build.agent);
     if (build.state === "running") return this.store.set_progress(job.id, `Building on ${where}${build.progress ? `: ${build.progress}` : ""}`);
     if (build.state === "failed") return this.end_wait(job, `The build on ${where} failed: ${build.error}`);
-    if (!this.settings.switch_from_cache) return this.start_switch(job, null);
-    const built = built_store_path(build.output) ?? waiting.target;
+    if (!this.settings.switch_from_cache && waiting.direct !== true) return this.start_switch(job, null);
+    const built = this.built_by(build) ?? waiting.target;
     if (built === null) return this.end_wait(job, `The build on ${where} finished without naming the system it built`);
     // The build evaluates the flake afresh, so it may bring a newer system than the evaluation named.
     if (waiting.target !== null && built !== waiting.target) {
@@ -805,7 +840,7 @@ export class Deployment {
       this.store.append_output(job.id, `The flake moved since ${waiting.target} was evaluated, so this ${job_noun(job.kind)} takes ${built}, which the build made\n`);
     }
     if (this.same_host(build.agent, job.agent)) return this.start_switch(job, built);
-    this.save_wait({ job_id: job.id, step: "push", step_job_id: null, target: built, since_epoch: this.now() });
+    this.save_wait({ job_id: job.id, step: "push", step_job_id: null, target: built, since_epoch: this.now(), ...(waiting.direct ? { direct: true } : {}) });
     return this.advance_push(job, this.evaluation().switch_wait!);
   }
 
@@ -872,8 +907,10 @@ export class Deployment {
 
   // Starts the waiting switch's own run, activating the store path it waited for when it switches from the cache.
   private async start_switch(job: Job, target: string | null): Promise<void> {
+    // A direct switch that built elsewhere fetches what it built, as a switch from the cache does.
+    const fetches = this.settings.switch_from_cache || this.evaluation().switch_wait?.direct === true;
     this.save_wait(null);
-    if (this.settings.switch_from_cache) {
+    if (fetches) {
       if (target === null) return this.end_wait(job, "No evaluation or build named the system to switch to");
       const token = watch_token(job.command) ?? randomBytes(8).toString("hex");
       this.store.set_command(job.id, JSON.stringify(switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, target)));
@@ -944,7 +981,7 @@ export class Deployment {
   }
 
   private operation_for(kind: JobAction, direct = false): Operation {
-    if (kind === "build") return build_operation(this.effective_settings(), this.attribute());
+    if (kind === "build") return direct ? this.direct_build_operation() : build_operation(this.effective_settings(), this.attribute());
     const store_path = this.settings.switch_from_cache && !direct ? this.cached_target() : null;
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
     return switch_job_operation(this.effective_settings(), kind, randomBytes(8).toString("hex"), store_path);
@@ -972,9 +1009,8 @@ export class Deployment {
   }
 
   private async launch(
-    kind: JobKind, operation: Operation, trigger: string, announce: boolean, wake = kind !== "eval",
+    kind: JobKind, operation: Operation, trigger: string, announce: boolean, wake = kind !== "eval", agent = this.agent_for(kind),
   ): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
-    const agent = this.agent_for(kind);
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
@@ -1045,7 +1081,7 @@ export class Deployment {
     this.force_eval = true;
     if (job.kind === "build") {
       const target = this.attribute() ?? this.id;
-      await record_builds(this.store, this.agents, finished, [{ target, store_path: built_store_path(finished.output), succeeded: finished.state === "succeeded" }], this.now());
+      await record_builds(this.store, this.agents, finished, [{ target, store_path: this.built_by(finished), succeeded: finished.state === "succeeded" }], this.now());
     }
     const noun = capitalise(job_noun(job.kind));
     let event: { level: EventLevel; text: string } = finished.state === "succeeded"

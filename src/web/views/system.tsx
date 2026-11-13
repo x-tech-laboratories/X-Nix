@@ -174,9 +174,9 @@ function Details({ deployment }: { deployment: Deployment }) {
   if (deployment.agents.switch !== deployment.host) rows.push(["Switches from", deployment.agents.switch ?? "this server"]);
   const build_at = deployment.schedule.build;
   if (build_at !== null) rows.push(["Daily build", <span>at {build_at}, last slot <Age epoch={evaluation.scheduled.build} /></span>]);
-  if (deployment.auto_switch) rows.push(["Automatic switch", "on"]);
+  if (deployment.auto_switch) rows.push(["Automatic switch", deployment.switch_from_cache ? "on, fetching the flake closure from the cache" : "on"]);
   if (deployment.cache_id !== null) rows.push(["Built by", <a href={link(["cache", deployment.cache_id])}>the {deployment.cache_id} cache</a>]);
-  if (deployment.switch_from_cache) rows.push(["Switch", "an automatic switch fetches the flake closure from the cache and activates it; any other runs nixos-rebuild"]);
+  rows.push(["Actions build on", direct_on_text[deployment.direct_on]]);
   rows.push(["Switch safety", safety_text(deployment)]);
   if (reading?.current) rows.push(["Closure browser", <a href={closure_link(deployment)}>Browse the running closure</a>]);
   if (evaluation.eval_error) rows.push(["Evaluation error", <pre className="output">{evaluation.eval_error}</pre>]);
@@ -185,6 +185,13 @@ function Details({ deployment }: { deployment: Deployment }) {
 }
 
 // What guards a switch, in one line.
+// Where a build or switch asked for here builds, as direct_on says.
+const direct_on_text: Record<Deployment["direct_on"], string> = {
+  ranked: "the first connected host of its cache, else of its build agents",
+  server: "this server",
+  host: "the host itself",
+};
+
 function safety_text(deployment: Deployment): string {
   const safety = deployment.safety;
   const parts: string[] = [];

@@ -732,6 +732,80 @@ describe("switch from cache", () => {
     expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
   });
 
+  // A deployment whose cache builds on another host, as Odin builds for the fleet.
+  function with_builder(values: Record<string, unknown> = {}) {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", host: "builder", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
+      store, agents: new AgentPool("host", agent), now: () => clock.now,
+    });
+    const harness = make_deployment({ configuration: "host", cache: "fleet", ...values }, { store, agent, caches: [cache] });
+    const builder = new FakeAgent();
+    harness.agents.add("builder", builder);
+    return { ...harness, cache, builder };
+  }
+
+  it("builds a direct switch on the cache's first host, which pushes it, then fetches and activates it", async () => {
+    const harness = with_builder({ switch_from_cache: true });
+
+    const outcome = await harness.deployment.act("switch", "manual", true);
+
+    expect(outcome).toMatchObject({ ok: true, message: "Building on builder first; the switch starts once it is built" });
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
+    expect(harness.agent.last_run('"kind":"evaluate"')).toBeUndefined();
+    expect(harness.cache.running_job()).toBeNull();
+
+    harness.builder.end(build, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+
+    const switching = harness.agent.last_run("switch-to-configuration")!;
+    expect(switching.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
+    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
+    expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
+  });
+
+  it("fetches what a direct switch built elsewhere even without switch_from_cache", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch", "manual", true);
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+
+    expect(harness.agent.last_run("switch-to-configuration")?.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
+    expect(harness.agent.last_run("nixos-rebuild")).toBeUndefined();
+  });
+
+  it("runs a direct build on the cache's first host, as the cache's build that pushes it", async () => {
+    const harness = with_builder();
+
+    expect((await harness.deployment.act("build", "manual", true)).ok).toBe(true);
+
+    expect(harness.deployment.running_job()).toMatchObject({ kind: "build", agent: "builder" });
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeDefined();
+    expect(harness.cache.running_job()).toBeNull();
+  });
+
+  it("builds a direct action on the host itself or on the server, as direct_on says", async () => {
+    const on_host = with_builder({ direct_on: "host" });
+    expect((await on_host.deployment.act("switch", "manual", true)).message).toBe("Switch started");
+    expect(on_host.agent.last_run("nixos-rebuild switch")).toBeDefined();
+    expect(on_host.builder.runs).toHaveLength(0);
+
+    const on_server = with_builder({ direct_on: "server" });
+    expect((await on_server.deployment.act("build", "manual", true)).ok).toBe(true);
+    expect(on_server.deployment.running_job()?.agent).toBeNull();
+    expect(on_server.builder.runs).toHaveLength(0);
+
+    expect(() => with_builder({ direct_on: "elsewhere" })).toThrow("`direct_on` of deployment 'host-deploy' must be one of host, server, ranked");
+  });
+
+  it("refuses a direct switch built on another host when no cache_url brings the system back", () => {
+    const harness = make_deployment({ build_agent: "builder" });
+    harness.agents.add("builder", new FakeAgent());
+
+    expect(harness.deployment.action_refusal("switch", true)).toBe("direct_on builds on builder, which needs a cache_url to bring the system to host");
+    expect(harness.deployment.action_refusal("switch")).toBeNull();
+  });
+
   it("ends a switch waiting on the cache for a direct switch, leaving the cache build running", async () => {
     const harness = with_cache();
     await collect(harness);

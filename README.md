@@ -159,9 +159,14 @@ An automatic switch runs these steps once per target closure, so drift seen befo
 as the system is built.
 
 Every other action, asked for through the API as the page and the MCP tools do, or by a fleet run, runs directly and
-never waits on a cache, which only speeds things up: Build runs on the build agents even when the deployment names a
-`cache`, and a switch, boot, test or dry activation runs `nixos-rebuild` at once, even with `switch_from_cache`. An
-automatic switch still waiting on its steps ends to let it run, while any cache build it started carries on.
+never waits on a cache's queue, which only speeds things up. It builds where `direct_on` says: `ranked` (the default)
+takes the first host of the deployment's `cache` that is connected, else of its build agents; `server` takes the X-Nix
+server; `host` takes the host that switches. Build runs there; with a `cache` and no pin it runs that cache's build of
+the system, which pushes what it built. A switch, boot, test or dry activation built on the switching host runs
+`nixos-rebuild` at once, even with `switch_from_cache`. Built anywhere else, it builds there first, then fetches what the
+build pushed to `cache_url` and activates it, as a switch from the cache does, so a host too small to evaluate never
+does; without a `cache_url` to carry the system it is refused. With `target_host`, `nixos-rebuild` runs at once. An
+automatic switch still waiting on its steps ends to let a direct action run, while any cache build it started carries on.
 
 Hosts are named by agent: the server's own host is served by the server itself, and any other host
 by its agent (see Agents). A deployment, `eval_agent`, `build_agent` or `switch_agent` naming a host
@@ -195,6 +200,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `cache`             | none                              | The id of the cache that builds this host's system (see Caches); it gives the `cache_url`, and takes the place of `build_at`, `build_agent` and `build_root_dir`. |
 | `cache_url`         | none                              | Without `cache`, the cache a build skips what it holds of, and a switch from the cache fetches from. |
 | `switch_agent`      | the host                          | The host that runs switch.                                           |
+| `direct_on`         | `ranked`                          | Where an action asked for through the API or by a fleet run builds: `ranked` (the cache's hosts, else the build agents), `server` or `host` (see above). |
 | `switch_from_cache` | `false`                           | Switch by fetching the evaluated closure through the host's substituters, `cache_url` among them, and activating it, for a host too small to evaluate or build; not with `target_host`. |
 | `target_host`       | none                              | `--target-host` for a plain switch; not with `pre_switch_checks`, health checks or `magic_rollback`, which run on the switch agent's own host. |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
