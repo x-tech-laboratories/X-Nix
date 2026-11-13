@@ -62,6 +62,15 @@ export interface PieceOperation {
   length: number;
 }
 
+// Which of a build's planned paths each planned derivation needs directly, read from the derivation files; prints a
+// record from each derivation to the planned paths it needs.
+export interface DerivationsOperation {
+  kind: "derivations";
+  derivations: string[];
+  // Every derivation the build plans to build and every path it plans to fetch.
+  planned: string[];
+}
+
 // Whether a cache holds a store path and the host can fetch its whole closure.
 export interface CacheHoldsOperation {
   kind: "cache_holds";
@@ -310,14 +319,14 @@ export interface MediaOperation extends NixSettings {
 
 export type Operation =
   | ProbeOperation | StoreProbeOperation | BootProbeOperation | GenerationsOperation | ProductsOperation | LocateOperation | PieceOperation
-  | CacheHoldsOperation | ClosureDiffOperation | RemoteHeadsOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
+  | DerivationsOperation | CacheHoldsOperation | ClosureDiffOperation | RemoteHeadsOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
   | NixConfigOperation | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
   | CacheCheckOperation | CacheBuildOperation | CachePushOperation | CacheBuildAllOperation | InstallOperation | MediaOperation;
 
 export type OperationKind = Operation["kind"];
 
 export const operation_kinds: OperationKind[] = [
-  "probe", "store_probe", "boot_probe", "generations", "products", "locate", "piece", "cache_holds", "closure_diff", "remote_heads", "programs", "wake",
+  "probe", "store_probe", "boot_probe", "generations", "products", "locate", "piece", "derivations", "cache_holds", "closure_diff", "remote_heads", "programs", "wake",
   "kept_awake", "timed", "nix_config", "evaluate", "build", "switch", "github_update", "confirm_switch", "signal_rollback", "cache_check", "cache_build",
   "cache_push", "cache_build_all", "install", "media",
 ];

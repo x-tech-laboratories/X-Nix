@@ -1104,6 +1104,24 @@ describe("live build progress", () => {
     expect(job.progress).toBe("Built 0, building 1; downloaded 0");
     expect(JSON.parse(job.live!).activities["5"].name).toBe("hello-2.12");
   });
+
+  it("reads from the build's host which planned paths each planned derivation needs", async () => {
+    const harness = make_deployment();
+    const [hello, app] = ["/nix/store/dddddddddddddddddddddddddddddddd-hello-2.12.drv", "/nix/store/ffffffffffffffffffffffffffffffff-app-1.0.drv"];
+    await harness.deployment.act("build");
+    const run = harness.agent.last_run("internal-json")!;
+    harness.agent.answers.push(['"kind":"derivations"', result(0, JSON.stringify({ [app]: [hello] }))]);
+    const message = (msg: string) => `@nix ${JSON.stringify({ action: "msg", level: 3, msg })}\n`;
+    harness.agent.write(run, message("these 2 derivations will be built:") + message(`  ${hello}`) + message(`  ${app}`));
+
+    await cycle(harness);
+
+    const asked = harness.agent.operations.find((operation) => operation.kind === "derivations");
+    expect(asked).toEqual({ kind: "derivations", derivations: [hello, app], planned: [hello, app] });
+    const planned = JSON.parse(harness.store.job(harness.deployment.running_job()!.id)!.live!).planned;
+    expect(planned[app].needs).toEqual([hello]);
+    expect(planned[hello].needs).toEqual([]);
+  });
 });
 
 // ── Sleeping host ────────────────────────────────────────────────────────────

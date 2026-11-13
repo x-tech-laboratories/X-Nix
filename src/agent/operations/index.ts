@@ -10,6 +10,7 @@ import { run_steps, step_argv, type Context } from "../programs.ts";
 import { boot_probe } from "./boot.ts";
 import { cache_build, cache_build_all, cache_check, cache_push } from "./cache.ts";
 import { build, cache_holds, closure_diff, evaluate, github_update } from "./deploy.ts";
+import { derivations } from "./derivations.ts";
 import { install, media } from "./provision.ts";
 import { generations, locate, piece, probe, products, remote_heads, store_probe } from "./reads.ts";
 import { confirm_switch, signal_rollback, switch_system } from "./switch.ts";
@@ -25,6 +26,7 @@ export async function perform(context: Context, operation: Operation): Promise<n
     case "products": return products(context, operation);
     case "locate": return locate(context, operation);
     case "piece": return piece(context, operation);
+    case "derivations": return derivations(context, operation);
     case "cache_holds": return cache_holds(context, operation);
     case "closure_diff": return closure_diff(context, operation);
     case "remote_heads": return remote_heads(context, operation);

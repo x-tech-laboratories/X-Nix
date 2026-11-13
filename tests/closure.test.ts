@@ -4,7 +4,7 @@ import type { RunProgram } from "../src/agent/programs.ts";
 import { run_operation } from "../src/agent/run.ts";
 
 import { deployment_settings } from "../src/server/config.ts";
-import { empty_progress, read_build_log, summarise } from "../src/server/nixos/build_log.ts";
+import { empty_progress, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
 import { diff_operation, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
 import { build_operation } from "../src/server/nixos/commands.ts";
 import { current_closure, target_closure } from "./fake_agent.ts";
@@ -144,5 +144,76 @@ describe("live build progress", () => {
 
     expect(progress.builds_failed).toBe(1);
     expect(progress.activities).toEqual({});
+  });
+
+  describe("the plan", () => {
+    const zlib = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-zlib-1.3";
+    const app = "/nix/store/ffffffffffffffffffffffffffffffff-app-1.0.drv";
+    const listed = [
+      nix_line({ action: "msg", level: 3, msg: "these 2 derivations will be built:" }),
+      nix_line({ action: "msg", level: 3, msg: `  ${drv}` }),
+      nix_line({ action: "msg", level: 3, msg: `  \u001b[1m${app}\u001b[0m` }),
+      nix_line({ action: "msg", level: 3, msg: "this path will be fetched (0.10 MiB download, 0.50 MiB unpacked):" }),
+      nix_line({ action: "msg", level: 3, msg: `  ${zlib}` }),
+      nix_line({ action: "msg", level: 3, msg: "copying path" }),
+      "",
+    ].join("\n");
+
+    it("keeps what nix lists to build and fetch, and follows each from waiting to done", () => {
+      const progress = empty_progress();
+      read_build_log(progress, listed, false, 100);
+      expect(Object.keys(progress.planned)).toEqual([drv, app, zlib]);
+      expect(progress.planned[app]).toMatchObject({ kind: "build", name: "app-1.0", state: "waiting", needs: null });
+      expect(progress.planned[zlib]).toMatchObject({ kind: "fetch", name: "zlib-1.3", needs: [] });
+
+      read_build_log(progress, [
+        nix_line({ action: "start", id: 3, type: 108, fields: [zlib, "https://cache.nixos.org"] }),
+        nix_line({ action: "start", id: 2, type: 105, fields: [drv] }),
+        nix_line({ action: "result", id: 2, type: 104, fields: ["buildPhase"] }),
+        "",
+      ].join("\n"), false, 110);
+      expect(progress.planned[zlib].state).toBe("fetching");
+      expect(progress.planned[drv]).toMatchObject({ state: "building", phase: "buildPhase", started_epoch: 110 });
+
+      read_build_log(progress, `${nix_line({ action: "stop", id: 2 })}\n${nix_line({ action: "stop", id: 3 })}\n`, false, 130);
+      expect(progress.planned[drv]).toMatchObject({ state: "built", phase: null, finished_epoch: 130 });
+      expect(progress.planned[zlib].state).toBe("fetched");
+    });
+
+    it("tells a failed builder from a derivation whose dependency failed, and stops what still ran at the end", () => {
+      const progress = empty_progress();
+      read_build_log(progress, listed, false);
+      read_build_log(progress, [
+        nix_line({ action: "start", id: 2, type: 105, fields: [drv] }),
+        nix_line({ action: "start", id: 3, type: 108, fields: [zlib] }),
+        nix_line({ action: "msg", level: 0, msg: `error: builder for '${drv}' failed with exit code 1` }),
+        nix_line({ action: "stop", id: 2 }),
+        nix_line({ action: "msg", level: 0, msg: `error: Cannot build '${app}'.\n       Reason: 1 dependency failed.` }),
+      ].join("\n"), true, 150);
+
+      expect(progress.planned[drv].state).toBe("failed");
+      expect(progress.planned[app].state).toBe("dependency-failed");
+      expect(progress.planned[zlib]).toMatchObject({ state: "stopped", finished_epoch: 150 });
+    });
+
+    it("plans a build nix never listed once it starts", () => {
+      const progress = empty_progress();
+      read_build_log(progress, `${nix_line({ action: "start", id: 2, type: 105, fields: [drv] })}\n`, false);
+      expect(progress.planned[drv]).toMatchObject({ kind: "build", state: "building" });
+    });
+
+    it("asks the host only for the derivations not yet read, and keeps its answer", () => {
+      const progress = empty_progress();
+      read_build_log(progress, listed, false);
+      const asked = needs_operation(progress)!;
+      expect(asked).toEqual({ kind: "derivations", derivations: [drv, app], planned: [drv, app, zlib] });
+
+      read_needs(progress, asked, { [app]: [drv, zlib] });
+
+      expect(progress.planned[app].needs).toEqual([drv, zlib]);
+      // One the host could not read needs nothing, so it is not asked for again.
+      expect(progress.planned[drv].needs).toEqual([]);
+      expect(needs_operation(progress)).toBeNull();
+    });
   });
 });

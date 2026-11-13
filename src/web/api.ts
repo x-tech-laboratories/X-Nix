@@ -5,6 +5,7 @@ import { create_accounts_client } from "@x-tech-laboratories/x-libs/web/accounts
 import { backup_client } from "@x-tech-laboratories/x-libs/web/backups";
 import { LoginNeeded } from "@x-tech-laboratories/x-libs/web/states";
 import { create_watch } from "@x-tech-laboratories/x-libs/web/watch";
+import type { PlannedPath } from "../shared/build_plan.ts";
 
 // The session has lapsed or never began, so the page asks for the password.
 export { LoginNeeded };
@@ -175,6 +176,8 @@ export interface BuildProgress {
   downloads_done: number;
   downloads_expected: number | null;
   activities: Record<string, { type: number; name: string; phase: string | null }>;
+  // What nix plans to build and fetch, by store path; absent from builds read before X-Nix kept it.
+  planned?: Record<string, PlannedPath>;
 }
 
 export interface Job {

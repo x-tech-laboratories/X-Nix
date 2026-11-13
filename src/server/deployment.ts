@@ -32,7 +32,7 @@ import type { Cache } from "./cache.ts";
 import type { Host } from "./host.ts";
 import { build_operation as cache_build_operation, parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
-import { empty_progress, read_build_log, summarise, type BuildProgress } from "./nixos/build_log.ts";
+import { empty_progress, needs_operation, read_build_log, read_needs, summarise, type BuildProgress } from "./nixos/build_log.ts";
 import {
   closure_operation, closure_size_operation, closure_sizes, diff_operation, is_store_path, parse_closure, parse_diff, type ClosureDiff, type ClosureTree,
 } from "./nixos/closure.ts";
@@ -48,6 +48,7 @@ import { parse_probe, probe_operation, reboot_required, type ProbeFields } from 
 import { overdue_text } from "./overdue.ts";
 import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
 import type { EventLevel, Job, JobKind, JobWithOutput, Store } from "./store.ts";
+import { read_facts } from "../shared/facts.ts";
 import { operation_of, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -162,6 +163,7 @@ const main_job_kinds: JobKind[] = ["update", "build", "switch", "boot", "test", 
 const probe_timeout_in_seconds = 60;
 const diff_timeout_in_seconds = 300;
 const closure_timeout_in_seconds = 120;
+const needs_timeout_in_seconds = 60;
 // How long confirming a switch or telling its watchdog to roll back may take.
 const signal_timeout_in_seconds = 60;
 const cache_check_timeout_in_seconds = 60;
@@ -931,10 +933,21 @@ export class Deployment {
     if (job.kind !== "build" || !job.command.includes("internal-json")) return null;
     return (current, chunk, ended) => {
       const progress = this.live_progress(current.id);
-      const text = read_build_log(progress, chunk, ended);
+      const text = read_build_log(progress, chunk, ended, this.now());
       this.store.set_live(current.id, progress);
       return text;
     };
+  }
+
+  // Reads which planned paths each newly planned derivation needs from the host building it, for the job's tree.
+  private async read_needs(job: Job): Promise<void> {
+    const asked = needs_operation(this.live_progress(job.id));
+    if (asked === null) return;
+    const result = await this.agents.get(job.agent).run(asked, { timeout_in_seconds: needs_timeout_in_seconds });
+    // The build went on while the host answered, so its latest progress takes the answer.
+    const progress = this.live_progress(job.id);
+    read_needs(progress, asked, result.exit_code === 0 ? read_facts<Record<string, string[]>>(result.stdout) : null);
+    this.store.set_live(job.id, progress);
   }
 
   private live_progress(job_id: number): BuildProgress {
@@ -952,7 +965,10 @@ export class Deployment {
       return;
     }
     // The job's progress names what is building rather than the last line printed.
-    if (this.translation(job) !== null) this.store.set_progress(job.id, summarise(this.live_progress(job.id)));
+    if (this.translation(job) !== null) {
+      await this.read_needs(job);
+      this.store.set_progress(job.id, summarise(this.live_progress(job.id)));
+    }
     // A switch waiting on this job shows its output as it comes.
     if (waiting?.step_job_id === job.id) this.copy_step_output(this.store.job(waiting.job_id)!, waiting, this.store.job(job.id)!);
     if (followed.outcome === "running") return this.tend_switch(job);

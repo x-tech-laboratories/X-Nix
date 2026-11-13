@@ -1,13 +1,16 @@
 // The Jobs pages: every update, build, switch, reboot, collection, cache build and push, and one job with its whole output.
 // The Builds tab beside the list is builds.tsx.
 
-import { Badge } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Badge, StateBadge, type Tone } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { FollowingOutput } from "@x-tech-laboratories/x-libs/web/react/following";
 import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { ProgressBar } from "@x-tech-laboratories/x-libs/web/react/progress";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
+import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { duration } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { plan_tree, type PlannedPath, type PlannedState, type PlanRow } from "../../shared/build_plan.ts";
 import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge } from "../ui.tsx";
@@ -72,7 +75,7 @@ export function JobView({ id }: { id: number }) {
                 ["Runs on", found.agent ?? "this server"],
               ]} />
               {found.error && <p className="tone-bad">{found.error}</p>}
-              {found.live && <Section title="Progress"><ProgressView progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} /></Section>}
+              {found.live && <LiveProgress progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} />}
               <Section title={operation === null ? "Command" : "Operation"}><pre className="output">{operation ?? found.command}</pre></Section>
               <Section title="Output">
                 {found.output ? <FollowingOutput text={found.output} active={found.state === "running"} toggle={found.state === "running"} class_name="run-output" /> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
@@ -89,6 +92,15 @@ export function JobView({ id }: { id: number }) {
 
 // Nix's activity type for building one derivation.
 const build_activity_type = 105;
+
+// What a build has built and downloaded, and, when nix listed its plan, every derivation in it as a tree.
+function LiveProgress({ progress, running }: { progress: BuildProgress; running: boolean }) {
+  const planned = progress.planned ?? {};
+  return <>
+    <Section title="Progress"><ProgressView progress={progress} running={running} /></Section>
+    {Object.keys(planned).length > 0 && <Section title="Derivations"><PlanTable planned={planned} running={running} /></Section>}
+  </>;
+}
 
 // What a build has built and downloaded, and what it is building and downloading now.
 function ProgressView({ progress, running }: { progress: BuildProgress; running: boolean }) {
@@ -117,6 +129,48 @@ function ProgressView({ progress, running }: { progress: BuildProgress; running:
       )}
     </Stack>
   );
+}
+
+// ── Derivations ──────────────────────────────────────────────────────────────
+
+const planned_labels: Record<PlannedState, [text: string, tone: Tone]> = {
+  waiting: ["waiting", "none"], building: ["building", "info"], built: ["built", "good"], failed: ["failed", "bad"],
+  "dependency-failed": ["dependency failed", "warn"], fetching: ["fetching", "info"], fetched: ["fetched", "good"], stopped: ["stopped", "warn"],
+};
+
+// Past this many planned paths, the tree opens only its top rows at first.
+const opened_plan_size = 200;
+
+// Every derivation the build plans to build, each under one that needs it, with the paths it fetches, and how each went.
+function PlanTable({ planned, running }: { planned: Record<string, PlannedPath>; running: boolean }) {
+  const rows = useMemo(() => plan_tree(planned), [planned]);
+  const [expanded, set_expanded] = useState<string[] | true>(() => (Object.keys(planned).length > opened_plan_size ? [] : true));
+  const now = Date.now() / 1000;
+  return (
+    <DataTable<PlanRow> caption="Derivations" rows={rows} row_key={(row) => row.path} get_children={(row) => row.children}
+      expanded={expanded} on_expanded_change={set_expanded} fill_last_column columns={[
+        { label: "Derivation", cell: (row) => (row.planned === null ? <strong>{row.name}</strong> : <code className="small path" title={row.path}>{row.name}</code>) },
+        { label: "Status", cell: (row) => <PlanStatus row={row} running={running} /> },
+        { label: "Took", cell: (row) => {
+          const started = row.planned?.started_epoch ?? null;
+          if (started === null) return "";
+          const finished = row.planned!.finished_epoch ?? (running ? now : null);
+          return finished === null ? "" : duration(Math.max(0, Math.round(finished - started)));
+        } },
+        { label: "Needed by", cell: (row) => (row.needed_by > 1 ? <span className="muted small" title="Shown once, under the first that needs it">{row.needed_by} derivations</span> : "") },
+      ]} />
+  );
+}
+
+function PlanStatus({ row, running }: { row: PlanRow; running: boolean }) {
+  if (row.planned === null) {
+    const done = row.children.filter((child) => child.planned?.state === "fetched").length;
+    return <span className="muted small">{done} of {row.children.length} fetched</span>;
+  }
+  const { state, phase, kind } = row.planned;
+  // A path still waiting once the build has ended was never reached.
+  if (state === "waiting" && !running) return <Badge>{kind === "build" ? "not built" : "not fetched"}</Badge>;
+  return <><StateBadge labels={planned_labels} state={state} />{phase &&<span className="muted small"> {phase}</span>}</>;
 }
 
 // A job's operation laid out to read, or null for a job from before operations, whose command is a line of its own.
