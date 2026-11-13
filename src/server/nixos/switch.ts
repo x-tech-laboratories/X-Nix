@@ -86,6 +86,8 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
     post_switch: post_switch_argv(settings),
     pre_switch_checks: guarded ? settings.pre_switch_checks : [],
     watch: guarded && watches(settings, mode) ? switch_watch(settings, mode, token) : null,
+    // Only the switch agent's own host can be looked at, so a switch to target_host goes without.
+    ...(settings.close_nix_lock_holders && settings.target_host === null ? { close_nix_lock_holders: { sudo: settings.require_sudo } } : {}),
   };
   return kept_awake(settings, operation);
 }

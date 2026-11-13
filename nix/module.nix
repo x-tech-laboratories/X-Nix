@@ -26,7 +26,7 @@ let
     flakes = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.flakes;
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-    inherit (cfg) provisioning fleet;
+    inherit (cfg) provisioning fleet notifications;
   };
 in
 {
@@ -163,6 +163,23 @@ in
         ];
       };
       description = "How fleet runs act on many deployments at once: `parallel`, `stages` and `sync_timeout`, as README.md lists.";
+    };
+
+    notifications = mkOption {
+      type = types.listOf json.type;
+      default = [ ];
+      example = [
+        {
+          type = "ntfy";
+          topic = "x-nix";
+          token_file = "/var/lib/x-nix/ntfy-token";
+        }
+      ];
+      description = ''
+        Where X-Nix sends notifications, such as of a job running well past its time: `ntfy`, `webhook`
+        or `apprise` channels with the settings README.md lists. A `*_file` secret must be readable by
+        the x-nix user; an apprise channel needs `pkgs.apprise` in `path`.
+      '';
     };
 
     webhookSecretFile = mkOption {

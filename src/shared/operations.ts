@@ -194,6 +194,8 @@ export interface SwitchOperation {
   post_switch: Argv | null;
   pre_switch_checks: string[];
   watch: SwitchWatch | null;
+  // Stops what holds the Nix store database open once the activation has waited a minute for it; absent when off.
+  close_nix_lock_holders?: { sudo: boolean };
 }
 
 // Clones a github: flake, updates its lock, and pushes a commit back.
@@ -393,6 +395,9 @@ export const eval_mark = "@@x-nix-eval";
 
 // Starts each line a guarded switch prints for the server rather than for a person.
 export const switch_mark = "@@x-nix-switch";
+
+// Starts each line a long run prints about itself once it has gone quiet: what it still runs and what it waits for.
+export const stall_mark = "@@x-nix-stall";
 
 // Starts every line a cache operation reports on, so a build's own output is never read as a report.
 export const report_mark = "@@x-nix-cache";

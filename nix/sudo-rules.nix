@@ -31,6 +31,11 @@ let
       "${system_bin}/nix-env -p ${system_profile} --switch-generation *"
       "${system_profile}/bin/switch-to-configuration switch"
     ]
+    # close_nix_lock_holders stops what holds the Nix store database open while an activation waits for it.
+    ++ [
+      "${system_bin}/kill -TERM *"
+      "${system_bin}/kill -KILL *"
+    ]
     # Reboot, and Collect Garbage with whatever gc_args the deployment sets.
     ++ [
       "${system_bin}/systemctl reboot"

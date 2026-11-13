@@ -1,6 +1,7 @@
 // A switch: its pre-switch checks, the fetch of a closure from the cache, its watchdog, the activation, post_switch and
-// its health checks, printing marker
-// lines that tell the server how it went; and the files X-Nix writes to confirm a switch or to have it rolled back.
+// its health checks, printing marker lines that tell the server how it went; and the files X-Nix writes to confirm a
+// switch or to have it rolled back. A guarded switch ends once its watchdog gives an outcome, even while the activation
+// hangs, and with close_nix_lock_holders it stops what keeps the activation from the Nix store database.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -11,10 +12,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
-  switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type SignalRollbackOperation, type SwitchOperation,
-  type SwitchWatch,
+  stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type SignalRollbackOperation,
+  type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import { person_command, run_steps, type Context } from "../programs.ts";
+import { descendants, lock_file_id, lock_holders, nix_database_lock, read_locks, read_processes, show_holders, type ProcessInfo } from "../waits.ts";
 import { system_profile, watch_files, write_whole } from "../watchdog.ts";
 import { link_target, real } from "./reads.ts";
 
@@ -27,6 +29,11 @@ const stale_folder_in_milliseconds = 86_400_000;
 
 // How often the switch looks for its watchdog's outcome.
 const outcome_interval_in_milliseconds = 2000;
+
+// How long a switch's program waits for the Nix store database before close_nix_lock_holders acts, and how long those
+// it stopped get to let go before they are killed.
+const nix_lock_patience_in_milliseconds = 60_000;
+const nix_lock_grace_in_milliseconds = 10_000;
 
 // ── Switch ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +79,15 @@ export async function switch_system(context: Context, operation: SwitchOperation
   }
 
   mark(`phase ${operation.mode}`);
-  const status = await run_steps(context, operation.steps);
+  const ended = await activation_or_outcome(context, operation, folder, now);
+  if ("outcome" in ended) {
+    context.out.write(read_log(folder!));
+    rmSync(folder!, { recursive: true, force: true });
+    say(`${operation.activation_name} is still running, but its watchdog has given its outcome, so this switch ends here`);
+    mark(`outcome ${ended.outcome}`);
+    return 1;
+  }
+  const { status } = ended;
   // post_switch runs whatever the activation returned, and its own status never changes the switch's.
   if (operation.post_switch !== null) await context.program(context, operation.post_switch, { echo: true });
   if (watch === null || folder === null) return status;
@@ -101,6 +116,53 @@ export async function switch_system(context: Context, operation: SwitchOperation
   mark(`outcome ${outcome || "unknown The watchdog never reported an outcome"}`);
   if (/^(confirmed|kept|unchanged)\b/.test(outcome)) return status;
   return status !== 0 ? status : 1;
+}
+
+// Waits for the activation, or for the watchdog's outcome should it come first, as when the activation hangs and the
+// watchdog has already tried to roll it back; meanwhile clears the Nix store database's lock when the switch asks.
+async function activation_or_outcome(
+  context: Context, operation: SwitchOperation, folder: string | null, now: () => number,
+): Promise<{ status: number } | { outcome: string }> {
+  const activation = run_steps(context, operation.steps).then((status) => ({ status }));
+  const clearing = operation.close_nix_lock_holders ? nix_lock_clearing(context, operation.close_nix_lock_holders.sudo, now) : null;
+  for (;;) {
+    const ended = await Promise.race([activation, sleep(outcome_interval_in_milliseconds).then(() => null)]);
+    if (ended !== null) return ended;
+    const outcome = folder === null ? "" : read_outcome(folder);
+    if (outcome !== "") return { outcome };
+    await clearing?.();
+  }
+}
+
+// Stops what holds the Nix store database open once one of the switch's own programs has waited a minute for it, as a
+// newer Nix does to upgrade it: TERM first, then KILL for any still holding it.
+function nix_lock_clearing(context: Context, sudo: boolean, now: () => number): () => Promise<void> {
+  const raise = sudo ? ["sudo", "-n"] : [];
+  let waiting_since: number | null = null;
+  return async () => {
+    const database = lock_file_id(nix_database_lock);
+    if (database === null) return;
+    const processes = read_processes();
+    const own = new Set(descendants(processes, process.pid).map((info) => info.pid));
+    const waits = read_locks().some((entry) => entry.waiting && entry.file === database && own.has(entry.pid));
+    if (!waits) {
+      waiting_since = null;
+      return;
+    }
+    waiting_since ??= now();
+    if (now() - waiting_since < nix_lock_patience_in_milliseconds) return;
+    waiting_since = null;
+
+    // The daemon itself only hands out connections, so it is left running; its workers each hold one client's.
+    const daemon = (info: ProcessInfo) => info.name === "nix-daemon" && processes.get(info.ppid)?.name !== "nix-daemon";
+    const holders = lock_holders(nix_database_lock, own).filter((info) => !daemon(info));
+    if (holders.length === 0) return;
+    context.out.write(`${stall_mark} close_nix_lock_holders: stopping what holds the Nix store database open: ${show_holders(holders)}\n`);
+    await context.program(context, [...raise, "kill", "-TERM", ...holders.map((info) => String(info.pid))], { echo: true });
+    await sleep(nix_lock_grace_in_milliseconds);
+    const left = lock_holders(nix_database_lock, own).filter((info) => holders.some((holder) => holder.pid === info.pid));
+    if (left.length > 0) await context.program(context, [...raise, "kill", "-KILL", ...left.map((info) => String(info.pid))], { echo: true });
+  };
 }
 
 // Runs the health commands every health_period until they all pass, answering the last failure once health_timeout passes.

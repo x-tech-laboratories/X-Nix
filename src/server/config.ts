@@ -9,6 +9,7 @@ import { AgentKeyError, parse_public_key } from "@x-tech-laboratories/x-libs/age
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { WakeSettings } from "./agents/wake.ts";
+import { read_channels, type Channel } from "./notifications.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -138,6 +139,8 @@ export interface DeploymentSettings {
   pre_switch_checks: string[];
   // Whether a switch X-Nix cannot confirm reaching the host after within confirm_timeout is rolled back.
   magic_rollback: boolean;
+  // Whether a switch whose activation waits a minute for the Nix store database stops what holds it open.
+  close_nix_lock_holders: boolean;
   activation_timeout: number;
   confirm_timeout: number;
   // Commands run on the host and URLs fetched from X-Nix after a switch, until they pass or health_timeout passes.
@@ -239,6 +242,8 @@ export interface Config {
   wake_on_lan: Map<string, WakeSettings>;
   keep_awake: Set<string>;
   fleet: FleetSettings;
+  // Where notifications go, such as of a job running well past its time.
+  notifications: Channel[];
 }
 
 export class ConfigError extends Error {
@@ -309,7 +314,16 @@ export function parse_config(raw: unknown, own_host = hostname()): Config {
     wake_on_lan: new Map(every_host.filter((host) => host.wake !== null).map((host) => [host.id, host.wake!])),
     keep_awake: new Set(every_host.filter((host) => host.keep_awake).map((host) => host.id)),
     fleet: fleet_settings(values.fleet),
+    notifications: notification_channels(values.notifications),
   };
+}
+
+function notification_channels(entries: unknown): Channel[] {
+  try {
+    return read_channels(entries);
+  } catch (error) {
+    throw new ConfigError((error as Error).message);
+  }
 }
 
 export function host_settings(entry: unknown, index = 0): HostSettings {
@@ -552,6 +566,7 @@ export function deployment_settings(
     post_switch: read.text("post_switch"),
     pre_switch_checks: read.list("pre_switch_checks", []),
     magic_rollback: read.flag("magic_rollback", false),
+    close_nix_lock_holders: read.flag("close_nix_lock_holders", false),
     activation_timeout: read.duration("activation_timeout", "4m"),
     confirm_timeout: read.duration("confirm_timeout", "30s"),
     health_commands: read.list("health_commands", []),

@@ -21,6 +21,8 @@ import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { Flake } from "./flake.ts";
 import { Host } from "./host.ts";
+import { Notifier } from "./notifications.ts";
+import { OverdueJobs } from "./overdue.ts";
 import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
@@ -107,6 +109,8 @@ const flakes = config.flakes.map((settings) => new Flake(settings, { store, agen
 const poller = new Poller(deployments, null, caches, [provisioner], flakes, [...hosts.values()]);
 poller.follow_new_jobs(store);
 const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });
+// A job running well past its time is noted in its owner's history and sent to the notification channels.
+const overdue_jobs = new OverdueJobs(store, new Notifier(config.notifications));
 const webhook = webhook_secret_file ? new Webhook({
   secret: load_webhook_secret(webhook_secret_file), debounce_in_seconds: webhook_debounce, deployments: poller.deployments, store,
   evaluate: (deployment) => void poller.refresh(deployment), flakes: poller.flakes, read: (flake) => void poller.refresh(flake),
@@ -120,6 +124,7 @@ const app = await build_app({
 app.addHook("onClose", async () => {
   poller.stop();
   fleet.stop_timer();
+  overdue_jobs.stop();
   store.close();
 });
 
@@ -130,3 +135,4 @@ app.log.info(`Watching ${hosts.size} hosts, ${flakes.length} flakes, ${deploymen
 await app.listen({ host, port });
 poller.start();
 fleet.start_timer();
+overdue_jobs.start();

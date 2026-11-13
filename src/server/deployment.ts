@@ -47,6 +47,7 @@ import {
 } from "./nixos/switch.ts";
 import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
 import { parse_probe, probe_operation, reboot_required, type ProbeFields } from "./nixos/probe.ts";
+import { overdue_text } from "./overdue.ts";
 import { follow, start_run, track_wake, type Followed, type Translate } from "./runs.ts";
 import type { EventLevel, Job, JobKind, Store } from "./store.ts";
 import { operation_of, type Operation } from "../shared/operations.ts";
@@ -435,6 +436,13 @@ export class Deployment {
 
     // A schedule seen for the first time starts at its next slot, never at once.
     for (const [kind, at] of this.schedule()) evaluation.scheduled[kind] ??= latest_slot(at, now);
+
+    for (const job of this.store.all_running_jobs(this.id)) {
+      const text = overdue_text(this.store, job, now);
+      if (text === null) continue;
+      raise("warning");
+      messages.push({ level: "warning", text });
+    }
 
     const reboot = reboot_required(fields.booted_parts, fields.current_parts);
     if (reboot === true) {

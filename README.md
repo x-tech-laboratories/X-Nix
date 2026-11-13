@@ -199,6 +199,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`, which keeps the switch's status. |
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
+| `close_nix_lock_holders` | `false`                      | Once the activation has waited a minute for the Nix store database, as a newer Nix does to upgrade it, stop what holds it open, such as a language server's daemon connections; their work ends, so it is off by default. Not with `target_host`. |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; a switch from the cache fetches its closure first, outside this time. |
 | `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
@@ -255,6 +256,35 @@ When the host sets `keep_awake`, a switch or rollback holds a `systemd-inhibit -
 inhibitor on the activated host from its first step, the download from the cache included, until
 the job ends however it ends: the inhibitor reads a pipe only the job's own runner holds open, so the
 job ending, failing or being stopped releases it, and nothing the switch leaves running keeps it.
+
+A guarded switch whose activation hangs ends once its watchdog gives an outcome, as a failure with
+the watchdog's reason, rather than waiting on the hung activation. The watchdog changes nothing while
+the switch lock is still held, since the previous system could not activate anyway, and names the
+process holding it.
+
+### Stalled and overdue jobs
+
+A job on an agent that prints nothing for five minutes notes, on `@@x-nix-stall` lines in its output,
+what it still runs and any file lock one of those programs waits for, with the processes holding
+it, and notes again each half hour it stays quiet. A switch that moves to a newer Nix is the usual
+case: the new Nix needs the store database to itself to upgrade it, and a long-lived Nix client,
+such as an editor's language server, keeps its daemon connection open and the activation waiting.
+`close_nix_lock_holders` has the switch stop those holders once it has waited a minute.
+
+A job that runs three times longer than the longest of its owner's last ten successful jobs of its
+kind, and at least half an hour (an hour with none to go by), puts a warning on its deployment
+naming what it waits for, adds an event to the history, and sends one notification to every channel
+under `notifications`:
+
+| Type      | Settings                                                                                       |
+|-----------|------------------------------------------------------------------------------------------------|
+| `ntfy`    | `topic` or `topic_file`, `url` (default `https://ntfy.sh`), `token` or `token_file`, or `username` with `password` or `password_file`, `priority` (1-5 or a name; by default by the notification's level), `tags`. |
+| `webhook` | `url` or `url_file`, `method`, `headers`, `bearer_token` or `bearer_token_file`, and a `payload` template whose `{title}`, `{body}` and `{level}` are filled in; JSON of those three by default. |
+| `apprise` | `urls`, or `urls_file` with one per line; needs the `apprise` program on the service's path.   |
+
+```json
+"notifications": [{ "type": "ntfy", "topic": "x-nix", "token_file": "/var/lib/x-nix/ntfy-token" }]
+```
 
 ## Hosts
 
@@ -539,7 +569,7 @@ job history of every deployment on that host with the trigger `agent pull`.
 
 `nix build` builds the `x-nix` program from the flake, and `nixosModules.default` runs it as
 `services.x-nix`, whose `hosts`, `flakes`, `deployments` and `caches` attribute sets take the settings above by id,
-whose `provisioning` takes the Provisioning settings, and whose `fleet` takes the fleet settings; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
+whose `provisioning` takes the Provisioning settings, whose `fleet` takes the fleet settings, and whose `notifications` takes the notification channels; `webhookSecretFile` and `webhookDebounce` set the push webhook, and `sudoRules` the
 sudo rules below. Both modules put nixos-anywhere and ssh on the PATH of the commands they run. `nix build .#agent`
 builds the agent, and `nixosModules.agent` runs it as `services.x-nix-agent` with `url`, `keyFile`, `host` and
 `sudoRules`, and pull mode under `pull` with `enable`, `remotes`, `after`, `interval`, `configuration`, `rebuildArgs`

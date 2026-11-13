@@ -1,7 +1,8 @@
 // The watchdog of one guarded switch, started in a session of its own so it outlives the switch's run, the agent and
 // any lost connection. It waits for the activation, then for a confirmation, and rolls back to the previous system
 // without one. Its folder holds what the switch left it: the previous system and profile link, its settings, and the
-// files X-Nix writes to confirm or to ask for a rollback; it ends by writing its outcome there.
+// files X-Nix writes to confirm or to ask for a rollback; it ends by writing its outcome there. A rollback while the
+// switch lock is held changes nothing and names its holder, since the previous system's activation could not run anyway.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -13,6 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { SwitchWatch } from "../shared/operations.ts";
 import { link_target, real } from "./operations/reads.ts";
 import { spawn_program, type Context } from "./programs.ts";
+import { lock_holders, show_holders, switch_lock, type ProcessInfo } from "./waits.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -36,7 +38,9 @@ export const watch_files = {
 // ── Watching ─────────────────────────────────────────────────────────────────
 
 // Watches the switch and answers its outcome: confirmed, kept, unchanged, rolled-back or rollback-failed, then why.
-export async function watch_switch(folder: string, context: Context, now: () => number = () => Date.now()): Promise<string> {
+export async function watch_switch(
+  folder: string, context: Context, now: () => number = () => Date.now(), switch_lock_holders: () => ProcessInfo[] = () => lock_holders(switch_lock),
+): Promise<string> {
   const watch = JSON.parse(readFileSync(join(folder, watch_files.settings), "utf8")) as SwitchWatch;
   const previous = read(folder, watch_files.previous_system);
   const previous_profile = read(folder, watch_files.previous_profile);
@@ -48,6 +52,8 @@ export async function watch_switch(folder: string, context: Context, now: () => 
 
   const roll_back = async (reason: string): Promise<string> => {
     if (!changed()) return `unchanged ${reason}`;
+    const blocking = switch_lock_holders();
+    if (blocking.length > 0) return `rollback-failed ${reason}; nothing was rolled back, as the switch lock is still held by ${show_holders(blocking)}`;
     context.out.write(`Rolling back to ${previous}: ${reason}\n`);
     if (profile_link() !== previous_profile) {
       const generation = previous_profile.replace(/^system-/, "").replace(/-link$/, "");

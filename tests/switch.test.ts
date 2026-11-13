@@ -37,6 +37,15 @@ describe("switch settings", () => {
     expect([operation.watch, operation.pre_switch_checks]).toEqual([null, []]);
   });
 
+  it("have a switch stop what holds the Nix store database open only when asked, and never for a target_host", () => {
+    const asked = switch_of(switch_job_operation(settings({ close_nix_lock_holders: true }), "switch", "ab12"));
+    const remote = switch_of(switch_job_operation(settings({ close_nix_lock_holders: true, target_host: "root@odin" }), "switch", "ab12"));
+
+    expect(switch_of(switch_job_operation(settings(), "switch", "ab12")).close_nix_lock_holders).toBeUndefined();
+    expect(asked.close_nix_lock_holders).toEqual({ sudo: true });
+    expect(remote.close_nix_lock_holders).toBeUndefined();
+  });
+
   it("accept only http and https health URLs", () => {
     expect(settings({ health_urls: ["https://odin.example/health"] }).health_urls).toEqual(["https://odin.example/health"]);
     expect(() => settings({ health_urls: ["odin:22"] })).toThrow(ConfigError);

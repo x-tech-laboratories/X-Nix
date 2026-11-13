@@ -139,6 +139,21 @@ describe("a switch on the agent", () => {
     expect(verdict.outcome?.reason).toContain("Health check 1 (curl -f localhost) failed with status 1: nginx is down");
     expect(existsSync(watch_folder(watched.token))).toBe(false);
   }, 20_000);
+
+  it("ends once its watchdog gives an outcome, while the activation still hangs", async () => {
+    const watched = watch({ token: token(), require_sudo: false, activation_timeout: 0 });
+    const { context, ran, output } = fake_context();
+    const hanging: RunProgram = (inner, argv, options) => (argv[0] === "nixos-rebuild" ? new Promise(() => {}) : context.program(inner, argv, options));
+
+    const status = await switch_system({ ...context, program: hanging }, plain_switch({ watch: watched, post_switch: ["true"] }));
+
+    expect(status).toBe(1);
+    expect(output()).toContain("nixos-rebuild switch is still running, but its watchdog has given its outcome, so this switch ends here");
+    // A test host's system never changed, so the watchdog has nothing to roll back.
+    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "The activation did not finish in time" });
+    expect(ran).not.toContainEqual(["true"]);
+    expect(existsSync(watch_folder(watched.token))).toBe(false);
+  }, 20_000);
 });
 
 // ── Watchdog ─────────────────────────────────────────────────────────────────
@@ -170,6 +185,16 @@ describe("the watchdog", () => {
 
     expect(outcome).toBe("rollback-failed asked; the previous system did not activate cleanly");
     expect(ran.at(-1)).toEqual(["/nix/store/00000000000000000000000000000000-previous/bin/switch-to-configuration", "test"]);
+  });
+
+  it("changes nothing while the switch lock is still held, and names its holder", async () => {
+    const { context, ran } = fake_context();
+    const holder = { pid: 2466309, ppid: 2466307, name: ".switch-to-conf", age_in_seconds: 240 };
+
+    const outcome = await watch_switch(watch_dir(watch(), { rollback: "asked\n" }), context, undefined, () => [holder]);
+
+    expect(outcome).toBe("rollback-failed asked; nothing was rolled back, as the switch lock is still held by .switch-to-conf (pid 2466309, running for 4 minutes)");
+    expect(ran).toEqual([]);
   });
 
   it("rolls back an activation that outlasts activation_timeout", async () => {

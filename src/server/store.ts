@@ -350,6 +350,21 @@ export class Store {
     return rows as unknown as Job[];
   }
 
+  // Every running job, oldest first, or only the owner's.
+  all_running_jobs(owner: string | null = null): Job[] {
+    const rows = owner === null
+      ? this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE state = 'running' ORDER BY id`).all()
+      : this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE state = 'running' AND deployment_id = ? ORDER BY id`).all(owner);
+    return rows as unknown as Job[];
+  }
+
+  // The longest any of the owner's last ten successful jobs of the kind took, in seconds, or null before the first.
+  longest_success(owner: string, kind: JobKind): number | null {
+    const row = this.database.prepare(`SELECT MAX(finished_epoch - started_epoch) AS longest FROM (SELECT started_epoch, finished_epoch FROM jobs
+      WHERE deployment_id = ? AND kind = ? AND state = 'succeeded' AND finished_epoch IS NOT NULL ORDER BY id DESC LIMIT 10)`).get(owner, kind) as { longest: number | null };
+    return row.longest;
+  }
+
   jobs(filter: JobFilter = {}): Job[] {
     const conditions: string[] = [];
     const values: (string | number)[] = [];
