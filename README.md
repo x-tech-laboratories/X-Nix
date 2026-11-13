@@ -105,10 +105,11 @@ Account page also turns on a second factor and makes tokens for scripts.
 ## MCP
 
 `/api/mcp` offers the API to AI clients as MCP tools over streamable HTTP: listing and reading hosts, flakes,
-deployments, caches, fleet runs, jobs, samples and builds, and the same actions the page has. Each tool runs its
-route as the caller, so a viewer's token reads and only an admin's acts. Installing onto a machine wipes its disks and
-stays on the page, as do file downloads. A client sends a token from the Account page as a bearer header; a read-only
-token runs only the tools that read.
+deployments, caches, fleet runs, jobs, samples, builds and backups, and the same actions the page has, installing a
+machine included, which like the page needs its address typed again to confirm. Each tool runs its route as the caller,
+so a viewer's token reads and only an admin's acts. File downloads stay on the page, as do the account and user routes,
+which take no tokens. A client sends a token from the Account page as a bearer header; a read-only token runs only the
+tools that read. Settings shows the address to give a client.
 
 ```sh
 claude mcp add --transport http x-nix https://x-nix.example/api/mcp --header "Authorization: Bearer <token>"
@@ -118,7 +119,7 @@ claude mcp add --transport http x-nix https://x-nix.example/api/mcp --header "Au
 
 The state database, which holds the users added on the Users page, their sessions and tokens, and every job, event and
 reading, is backed up once a day into `<X_NIX_STATE_DIR>/backups`, keeping the last 14 daily copies; an admin changes
-that, backs up by hand, restores or deletes a backup on the Backups page. A restore first backs up the current data,
+that, backs up by hand, restores or deletes a backup under Backups on the Settings page. A restore first backs up the current data,
 then stops the server, which systemd starts again with the backup in place of the database.
 
 X-Nix keeps no history of its items, which the Application Standard asks of apps whose users edit items: what it stores
