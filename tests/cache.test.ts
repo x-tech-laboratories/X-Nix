@@ -328,14 +328,14 @@ describe("actions", () => {
   });
 
   it("push the row's store path", async () => {
-    const harness = await checked({ push_command: "attic push fleet" });
+    const harness = await checked({ push_command: "attic push fleet", retry_push: false });
     expect((await harness.cache.act("push", "Alpha")).ok).toBe(true);
     expect(harness.cache.running_job()?.command).toContain("attic push fleet");
     expect(harness.cache.running_job()?.command).toContain(alpha);
   });
 
   it("push from the host that read the row, even once a more preferred host is up", async () => {
-    const harness = await checked({ push_command: "attic push fleet", host: ["odin", "host"] });
+    const harness = await checked({ push_command: "attic push fleet", retry_push: false, host: ["odin", "host"] });
     expect(rows(harness).Alpha.host).toBe("host");
     harness.agents.add("odin", new FakeAgent());
 
@@ -345,7 +345,7 @@ describe("actions", () => {
   });
 
   it("update only their own row once they finish", async () => {
-    const harness = await checked({ push_command: "attic push fleet" });
+    const harness = await checked({ push_command: "attic push fleet", retry_push: false });
     await harness.cache.act("push", "Alpha");
     harness.agent.end(harness.agent.last_run("attic push")!, `pushing...\n${built("Alpha", alpha, 1)}`, 0);
     await harness.cache.cycle();
@@ -445,6 +445,34 @@ describe("config", () => {
 
   it("shares one id space with deployments", () => {
     expect(() => parse_config({ deployments: [{ id: "fleet" }], caches: [base] })).toThrow("Two flakes, deployments or caches");
+  });
+});
+
+// ── Push retry ───────────────────────────────────────────────────────────────
+
+describe("a push retry", () => {
+  const partly_pushed = built("Alpha", alpha, 12) + built("Beta", beta, 3, ["/nix/store/dddd-dep"]) + built("kernel", kernel, 1);
+
+  it("follows a check that finds a target built here but not fully pushed, pushing it where it was built", async () => {
+    const harness = make_cache({ push_command: "attic push fleet" });
+    await check(harness, partly_pushed);
+    const job = harness.cache.running_job()!;
+    expect([job.kind, job.trigger, job.agent]).toEqual(["push", "retry", rows(harness).Beta.host]);
+    expect(job.command).toContain(beta);
+    expect(harness.store.events(harness.cache.id).some((event) => event.message.includes("Push of Beta started again"))).toBe(true);
+  });
+
+  it("leaves alone a fully pushed cache, an unbuilt target, and a cache without push_command or with retry_push off", async () => {
+    for (const [values, output] of [
+      [{ push_command: "attic push fleet" }, built("Alpha", alpha, 12) + built("Beta", beta, 3) + built("kernel", kernel, 1)],
+      [{ push_command: "attic push fleet" }, line("Alpha", "target", alpha) + line("Alpha", "built", 0) + line("Alpha", "own", 1) + line("Alpha", "missing", alpha)],
+      [{}, partly_pushed],
+      [{ push_command: "attic push fleet", retry_push: false }, partly_pushed],
+    ] as const) {
+      const harness = make_cache(values);
+      await check(harness, output);
+      expect(harness.cache.running_job()).toBeNull();
+    }
   });
 });
 

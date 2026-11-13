@@ -441,6 +441,7 @@ PATH; elsewhere, a host without it fails the job with a message saying so.
 | `build_links`    | `<cache id>-<target>`             | Each target's link name under `build_root_dir`.                         |
 | `build_at`       | none                              | Run Build all daily at this local time, such as `04:00`, in place of that cycle's check. |
 | `push_command`   | none                              | Run with a store path appended to push it; Build also pushes with it.   |
+| `retry_push`     | `true`                            | After a check, push again the first target built here whose closure the cache still lacks paths of, so a failed upload is retried every `interval`. |
 | `drop_pushed`    | none                              | Targets kept only in the cache: once fully pushed, the root is removed and the closure's path list kept beside it as `<link>.closure`. |
 | `eval_jobs_bin`  | `nix-eval-jobs`                   | The program Build all evaluates every target with.                      |
 | `eval_workers`   | `4`                               | How many targets Build all evaluates at once.                           |

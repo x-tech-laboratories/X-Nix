@@ -204,6 +204,8 @@ export interface CacheSettings {
   // When Build all runs daily, local to the server.
   build_at: TimeOfDay | null;
   push_command: string | null;
+  // Whether a check that finds a target built here but not fully pushed pushes it again.
+  retry_push: boolean;
   // Targets kept only in the cache once fully pushed.
   drop_pushed: string[];
   // The nix-eval-jobs program Build all evaluates with, and how many workers it evaluates on.
@@ -489,6 +491,7 @@ export function cache_settings(entry: unknown, index = 0, flakes = new Map<strin
     build_links: read.names("build_links"),
     build_at: read.time_of_day("build_at"),
     push_command: read.text("push_command"),
+    retry_push: read.flag("retry_push", true),
     drop_pushed: read.list("drop_pushed", []),
     eval_jobs_bin: read.text("eval_jobs_bin") ?? "nix-eval-jobs",
     eval_workers: Math.max(1, Math.trunc(read.limit("eval_workers", 4) ?? 4)),

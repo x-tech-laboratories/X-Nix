@@ -5,7 +5,9 @@
 // runs the previous reading stands. A target whose evaluation fails is failed; one not yet built, or not fully pushed,
 // is `pending_status`. Each target can also be built or pushed by hand, one job at a time, and the job's own check of
 // that target updates its row once it ends; a push of a target not built here builds it, and the build pushes it. Build all builds every target in one job, keeping how each one's build ended,
-// and with `build_at` runs daily in place of that cycle's check.
+// and with `build_at` runs daily in place of that cycle's check. With `retry_push`, a check that finds a target built here
+// whose closure the cache still lacks paths of pushes it again, one target per check, so a failed upload is retried
+// every `interval` until the cache holds it.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -232,7 +234,7 @@ export class Cache {
         last_modified_epoch: metadata.last_modified_epoch, oldest_input: metadata.oldest_input, inputs_last_modified_epoch: metadata.inputs_last_modified_epoch,
       };
       this.save_rows(rows, metadata?.revision ?? this.reading()?.revision ?? null, extra, this.reading()?.build_all ?? null, flake);
-      return;
+      return this.retry_push(rows);
     }
 
     if (job.kind === "build-all") return this.finish_build_all(finished, report);
@@ -251,6 +253,16 @@ export class Cache {
     if (name === undefined || previous === null) return;
     const rows = previous.rows.map((row) => (report.targets.has(row.name) ? target_row(this.settings, row.name, report.targets.get(row.name), job.agent) : row));
     this.save_rows(rows, previous.revision, []);
+  }
+
+  // Pushes the first target built here that the cache still lacks paths of, where it was built.
+  private async retry_push(rows: TargetRow[]): Promise<void> {
+    if (!this.settings.retry_push || this.settings.push_command === null) return;
+    const row = rows.find((candidate) => candidate.built === true && candidate.local && candidate.target !== null && candidate.missing_count > 0);
+    if (row === undefined) return;
+    const launched = await this.launch("push", push_operation(this.settings, row.name, row.target!), "retry", row.host);
+    if (launched.job_id === null) this.store.add_event(this.id, this.now(), "warning", `Could not retry the push of ${row.name}: ${launched.error}`);
+    else this.store.add_event(this.id, this.now(), "info", `Push of ${row.name} started again; the cache lacks ${row.missing_count} of its paths`);
   }
 
   // Updates every row Build all reported on, keeps how each target's build ended, and records each in the build history.
