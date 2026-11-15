@@ -84,6 +84,11 @@ function GenerationSizes({ deployment, generations }: { deployment: Deployment; 
 
 // ── Parts ────────────────────────────────────────────────────────────────────
 
+// A NixOS version's release, such as 26.11 of 26.11.20261108.4c1a2f3; the whole version is in the findings.
+function release_of(version: string): string {
+  return /^\d+\.\d+/.exec(version)?.[0] ?? version;
+}
+
 // The system's state at a glance; what it is configured to do is under Details.
 function SystemTiles({ deployment }: { deployment: Deployment }) {
   const reading = deployment.reading;
@@ -94,7 +99,7 @@ function SystemTiles({ deployment }: { deployment: Deployment }) {
       <Tile label="Reboot" value={reading?.reboot_required === true ? "Needed" : reading?.reboot_required === false ? "Not needed" : "—"} />
       <Tile label="Generation" value={String(reading?.generation ?? "—")} />
       <Tile label="Last switch" value={reading?.switched_epoch ? age(reading.switched_epoch) : "—"} />
-      <Tile label="NixOS" value={reading?.version ?? "—"} />
+      <Tile label="NixOS" value={reading?.version ? release_of(reading.version) : "—"} />
     </Tiles>
   );
 }
