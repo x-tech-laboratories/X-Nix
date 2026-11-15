@@ -9,7 +9,7 @@ import {
   clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
   rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
 } from "./fake_agent.ts";
-import { innermost, type SwitchOperation } from "../src/shared/operations.ts";
+import { innermost, unfetchable_exit_code, type SwitchOperation } from "../src/shared/operations.ts";
 
 const matching = result(0, `${current_closure}\n`);
 const newer_closure = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-nixos-system-host-26.11";
@@ -598,6 +598,27 @@ describe("building elsewhere", () => {
     store.save_evaluation(deployment.id, waiting);
     await deployment.cycle();
     expect(store.job(late.job_id!)!.error).toContain("was built but never reached the cache");
+  });
+
+  it("says when the cache holds the system but the host cannot fetch all of it", async () => {
+    const agents = new AgentPool("host", new FakeAgent());
+    const builder = new FakeAgent();
+    agents.add("builder", builder);
+    const own = agents.get(null) as FakeAgent;
+    const store = new Store(":memory:");
+    const deployment = new Deployment(deployment_settings({ id: "host-deploy", cache_url: "https://cache.example/fleet", build_agent: "builder" }), { store, agents, now: () => clock.now });
+    own.answers.push(['"kind":"cache_holds"', result(unfetchable_exit_code)]);
+
+    const outcome = await deployment.act("switch");
+    builder.end(builder.last_run('"kind":"build"')!, `${target_closure}\n`, 0);
+    await deployment.cycle();
+    expect(store.job(outcome.job_id!)!.progress).toBe(`${target_closure} is in the cache, but host cannot fetch all of it yet; it may still hold a miss from before the push`);
+
+    const waiting = deployment.evaluation();
+    waiting.switch_wait!.since_epoch -= 901;
+    store.save_evaluation(deployment.id, waiting);
+    await deployment.cycle();
+    expect(store.job(outcome.job_id!)!.error).toContain("reached the cache, but host could not fetch all of it");
   });
 
   it("runs Build on the cache's first host, as the cache's build that pushes it, at the pin when there is one", async () => {

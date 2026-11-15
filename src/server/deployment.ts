@@ -49,7 +49,7 @@ import { overdue_text } from "./overdue.ts";
 import { build_translation, tend_build } from "./live_builds.ts";
 import { follow, start_run, track_wake, type Followed } from "./runs.ts";
 import type { EventLevel, Job, JobKind, JobWithOutput, Store } from "./store.ts";
-import { operation_of, type Operation } from "../shared/operations.ts";
+import { operation_of, unfetchable_exit_code, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -613,9 +613,11 @@ export class Deployment {
     else this.store.add_event(this.id, this.now(), "info", "Automatic switch started");
   }
 
-  private async cache_holds(target: string, host: string | null = this.agent_for("switch")): Promise<boolean> {
+  // Whether the cache holds the system and the host can fetch all of it, the cache holds it but the host cannot, or neither.
+  private async cache_holds(target: string, host: string | null = this.agent_for("switch")): Promise<"held" | "unfetchable" | "absent"> {
     const result = await this.agents.get(host).run(cache_holds_operation(this.settings, target), { timeout_in_seconds: cache_check_timeout_in_seconds });
-    return result.exit_code === 0;
+    if (result.exit_code === 0) return "held";
+    return result.exit_code === unfetchable_exit_code ? "unfetchable" : "absent";
   }
 
   // ── Daily jobs ───────────────────────────────────────────────────────────
@@ -791,11 +793,19 @@ export class Deployment {
   private async advance_push(job: Job, waiting: SwitchWait): Promise<void> {
     const target = waiting.target!;
     const checker = this.agents.pick([job.agent, ...this.build_agents()], false);
-    if (await this.cache_holds(target, checker).catch(() => false)) {
+    const holds = await this.cache_holds(target, checker).catch(() => "absent" as const);
+    if (holds === "held") {
       this.store.append_output(job.id, "The cache holds the system; switching\n");
       return this.start_switch(job, target);
     }
-    if (this.now() - waiting.since_epoch < push_wait_in_seconds) return this.store.set_progress(job.id, `Waiting for ${target} to reach the cache`);
+    const where = this.host_name(checker);
+    const waited = this.now() - waiting.since_epoch >= push_wait_in_seconds;
+    // A host answers from a miss it cached before the push until its narinfo-cache-negative-ttl runs out.
+    if (holds === "unfetchable") {
+      if (!waited) return this.store.set_progress(job.id, `${target} is in the cache, but ${where} cannot fetch all of it yet; it may still hold a miss from before the push`);
+      return this.end_wait(job, `${target} reached the cache, but ${where} could not fetch all of it; check its substituters and narinfo-cache-negative-ttl, and switch again`);
+    }
+    if (!waited) return this.store.set_progress(job.id, `Waiting for ${target} to reach the cache`);
     return this.end_wait(job, `${target} was built but never reached the cache; push it there, as attic watch-store does, and switch again`);
   }
 

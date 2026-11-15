@@ -14,7 +14,7 @@ import {
 } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
-import type { BuildOperation, EvaluateOperation, GithubUpdateOperation, LocalUpdateOperation, Operation } from "../src/shared/operations.ts";
+import { unfetchable_exit_code, type BuildOperation, type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type Operation } from "../src/shared/operations.ts";
 import { current_closure, host_values } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -161,9 +161,9 @@ describe("the switch from the cache", () => {
     expect(await holds("")).toBe(0);
   });
 
-  it("does not hold a closure with a path nothing can fetch, or a system the cache lacks", async () => {
-    expect(await holds("don't know how to build these paths:\n  /nix/store/00000000000000000000000000000000-bash")).toBe(1);
-    expect(await holds("these 2 derivations will be built:")).toBe(1);
+  it("does not hold a closure with a path nothing can fetch, telling it from a system the cache lacks", async () => {
+    expect(await holds("don't know how to build these paths:\n  /nix/store/00000000000000000000000000000000-bash")).toBe(unfetchable_exit_code);
+    expect(await holds("these 2 derivations will be built:")).toBe(unfetchable_exit_code);
     expect(await holds("", false)).toBe(1);
   });
 
