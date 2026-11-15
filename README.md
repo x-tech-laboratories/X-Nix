@@ -203,7 +203,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
 | `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |
-| `build_progress`    | `true`                            | Read Build's structured log into counts and a tree of what builds and downloads. |
+| `build_progress`    | `true`                            | Read the structured log of Build, and of a switch building or fetching on its host, into counts and a tree of what builds and downloads. |
 | `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
 | `pin`               | none                              | A commit hash or tag that evaluation, build and switch use instead of the branch head. |
 
@@ -227,7 +227,8 @@ on the host itself compares at once when it ends. When the flake's closure is no
 store yet, the page says so and the switch builds it. The Generations panel lists every generation
 of the system profile, rolls back to any of them as a job that records why, and opens the closure
 browser: a generation's dependency tree with each path's own and closure size, and its largest
-paths. A Build with `build_progress` shows what is building, downloading and done, and its job's
+paths. A Build with `build_progress`, whether it builds itself or through a cache, and a switch
+building or fetching the system on its host, show what is building, downloading and done, and the job's
 page shows every derivation nix plans to build as a tree table, each under a derivation that needs
 it, with the paths it fetches, each one's status and build phase, and how long it took.
 
@@ -425,6 +426,7 @@ PATH; elsewhere, a host without it fails the job with a message saying so.
 | `nix_bin`        | `nix`                             | The nix program.                                                        |
 | `nix_args`       | flakes enabled                    | Arguments before every nix command.                                     |
 | `build_args`     | `--keep-going --print-build-logs` | Arguments for Build.                                                    |
+| `build_progress` | `true`                            | Read the structured log of Build and Build all into counts and a tree of what builds and downloads. |
 | `build_root_dir` | none                              | Link each build here, so it stays rooted until the next replaces it.    |
 | `build_links`    | `<cache id>-<target>`             | Each target's link name under `build_root_dir`.                         |
 | `build_at`       | none                              | Run Build all daily at this local time, such as `04:00`, in place of that cycle's check. |

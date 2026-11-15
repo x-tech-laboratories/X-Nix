@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cache_build, cache_build_all, cache_check, cache_push, missing_paths } from "../src/agent/operations/cache.ts";
+import { cache_build, cache_build_all, cache_check, cache_push, missing_paths, whole_lines } from "../src/agent/operations/cache.ts";
 import type { Context, ProgramResult, RunProgram, StreamUse } from "../src/agent/programs.ts";
 import { cache_settings, type CacheSettings } from "../src/server/config.ts";
 import { build_all_operation, build_operation, check_operation, parse_report, push_operation } from "../src/server/nixos/attic.ts";
@@ -226,7 +226,7 @@ describe("build all", () => {
     expect(report.targets.get("Broken")).toMatchObject({ build: "eval_failed", error: "error: attribute 'x' missing  at flake.nix:3" });
     expect(report.targets.get("Alpha")?.build_seconds).toMatch(/^\d+$/);
     expect(ran.output()).toContain(`Alpha: evaluated, building ${alpha}`);
-    expect(ran.calls).toContainEqual(["nix", "build", "--no-link", "/nix/store/aaaa-alpha.drv^*"]);
+    expect(ran.calls).toContainEqual(["nix", "build", "--no-link", "--log-format", "internal-json", "-v", "/nix/store/aaaa-alpha.drv^*"]);
     expect(readFileSync(join(folder, "eval-args"), "utf8")).toContain("--impure --workers 4 --gc-roots-dir");
   });
 
@@ -241,5 +241,22 @@ describe("build all", () => {
     const ran = builds_and_inspects();
     expect(await cache_build_all(ran.context, build_all_operation(settings({ eval_jobs_bin: "/nonexistent/nix-eval-jobs" })))).toBe(127);
     expect(ran.errors()).toContain("/nonexistent/nix-eval-jobs is not installed on this host");
+  });
+});
+
+describe("whole lines", () => {
+  it("passes on only ended lines, whole characters, and the rest once flushed", () => {
+    const written: string[] = [];
+    const lined = whole_lines({ write: (chunk) => void written.push(String(chunk)) });
+    const snowman = Buffer.from("☃");
+
+    lined.write("@nix {\"a\"");
+    lined.write(":1}\nhalf");
+    lined.write(Buffer.concat([Buffer.from(" "), snowman.subarray(0, 1)]));
+    lined.write(Buffer.concat([snowman.subarray(1), Buffer.from("\n")]));
+    lined.write("rest");
+    lined.flush();
+
+    expect(written).toEqual(['@nix {"a":1}\n', "half ☃\n", "rest\n"]);
   });
 });

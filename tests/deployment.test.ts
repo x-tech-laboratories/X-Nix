@@ -463,6 +463,23 @@ describe("building elsewhere", () => {
     return outcome;
   }
 
+  it("reads the cache's build of the system into the build job's counts and tree", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("build");
+    const run = harness.builder.last_run('"kind":"cache_build"')!;
+    expect(run.command).toContain("internal-json");
+    const hello = "/nix/store/dddddddddddddddddddddddddddddddd-hello-2.12.drv";
+    const message = (msg: string) => `@nix ${JSON.stringify({ action: "msg", level: 3, msg })}\n`;
+    harness.builder.write(run, message("this derivation will be built:") + message(`  ${hello}`)
+      + `@nix ${JSON.stringify({ action: "start", id: 5, type: 105, fields: [hello] })}\n`);
+
+    await harness.deployment.cycle();
+
+    const job = harness.store.job(outcome.job_id!)!;
+    expect(job.progress).toBe("Built 0, building 1; downloaded 0");
+    expect(JSON.parse(job.live!).planned[hello]).toMatchObject({ kind: "build", state: "building" });
+  });
+
   it("builds a switch on the cache's first host, which pushes it, then fetches and activates it under the same job", async () => {
     const harness = with_builder();
 
@@ -479,7 +496,7 @@ describe("building elsewhere", () => {
 
     const switching = harness.agent.last_run("switch-to-configuration")!;
     expect(switching.run_id).toBe(harness.store.job(outcome.job_id!)!.run_id);
-    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
+    expect(shown_command(switching.command)).toContain(`build --no-link --log-format internal-json -v ${target_closure}`);
     expect(shown_command(switching.command)).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
     expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
     expect(harness.store.job(outcome.job_id!)!.output).toContain("The cache holds the system; switching");
@@ -734,7 +751,7 @@ describe("a small host evaluated and built elsewhere", () => {
 
     const switching = pi.last_run("switch-to-configuration")!;
     expect(deployment.running_job()).toMatchObject({ kind: "switch", agent: "pi", trigger: "automatic" });
-    expect(shown_command(switching.command)).toContain(`build --no-link ${target_closure}`);
+    expect(shown_command(switching.command)).toContain(`build --no-link --log-format internal-json -v ${target_closure}`);
     expect(shown_command(switching.command)).toContain(`sudo -n nix-env -p /nix/var/nix/profiles/system --set ${target_closure}`);
     expect(switching.command).toContain('"magic_rollback":true');
     expect(shown_command(switching.command)).toContain("systemd-inhibit");
@@ -1121,6 +1138,23 @@ describe("live build progress", () => {
     const planned = JSON.parse(harness.store.job(harness.deployment.running_job()!.id)!.live!).planned;
     expect(planned[app].needs).toEqual([hello]);
     expect(planned[hello].needs).toEqual([]);
+  });
+
+  it("reads a switch that builds on its own host, naming the build as its progress only while it builds", async () => {
+    const harness = make_deployment({ configuration: "host" });
+    const outcome = await harness.deployment.act("switch");
+    const run = harness.agent.last_run("internal-json")!;
+    const line = (entry: Record<string, unknown>) => `@nix ${JSON.stringify(entry)}\n`;
+    harness.agent.write(run, line({ action: "start", id: 5, type: 105, fields: ["/nix/store/dddddddddddddddddddddddddddddddd-hello-2.12.drv"] }));
+
+    await cycle(harness);
+
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ kind: "switch", progress: "Built 0, building 1; downloaded 0" });
+    harness.agent.write(run, line({ action: "stop", id: 5 }) + "activating the configuration...\n");
+    await cycle(harness);
+    const job = harness.store.job(outcome.job_id!)!;
+    expect(job.progress).toBe("activating the configuration...");
+    expect(JSON.parse(job.live!).builds_done).toBe(1);
   });
 });
 

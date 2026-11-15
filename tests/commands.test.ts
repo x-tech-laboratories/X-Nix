@@ -159,11 +159,12 @@ describe("the switch from the cache", () => {
 
   it("fetches the closure, sets the system profile and activates it", () => {
     expect(cache_switch_steps(settings(from_cache), current_closure, "switch")).toEqual([
-      { argv: [...nix, "build", "--no-link", current_closure] },
+      { argv: [...nix, "build", "--no-link", "--log-format", "internal-json", "-v", current_closure] },
       { argv: [...nix, "path-info", "--recursive", current_closure], quiet: true },
       { argv: ["sudo", "-n", "nix-env", "-p", "/nix/var/nix/profiles/system", "--set", current_closure] },
       { argv: ["sudo", "-n", `${current_closure}/bin/switch-to-configuration`, "switch"] },
     ]);
+    expect(cache_switch_steps(settings({ ...from_cache, build_progress: false }), current_closure, "switch")[0]).toEqual({ argv: [...nix, "build", "--no-link", current_closure] });
   });
 
   it("sets the system profile only in the modes that make a boot entry", () => {
