@@ -18,6 +18,10 @@ const result_types = { build_log_line: 101, set_phase: 104, progress: 105, set_e
 // The most verbose message level shown: info, as nix prints without -v.
 const shown_level = 3;
 
+// An activity's id, read as written: nix starts each process's ids at its pid shifted 32 bits, past what a number holds
+// exactly, so two ids could round to one. Only a key follows `{` or `,`, as within a string `"` is escaped.
+const id_pattern = /[{,]"id":(\d+)/;
+
 export interface Activity {
   type: number;
   name: string;
@@ -92,7 +96,7 @@ function read_line(progress: BuildProgress, line: string, now: number): string |
     return line;
   }
   const fields = Array.isArray(entry.fields) ? entry.fields : [];
-  const id = String(entry.id ?? "");
+  const id = id_pattern.exec(line)?.[1] ?? String(entry.id ?? "");
   switch (entry.action) {
     case "msg": {
       const message = strip_colours(entry.msg ?? "");
