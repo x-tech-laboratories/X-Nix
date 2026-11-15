@@ -2,7 +2,8 @@
 //
 // Every `interval` the flake's host reads `nix flake metadata`, which gives the revision, when the flake last changed and
 // each locked input. Update runs as a long run on that host that outlives a restart of the server: a local checkout's
-// lock is written in place, and a github: flake with a `push_ssh_key` is cloned, updated and pushed back. With
+// lock is written in place, and a github: flake with a `push_ssh_key` is cloned, updated and pushed back, each only once
+// every deployment and cache naming the flake evaluates, or builds, against the new lock. With
 // `update_at` it also runs daily. Every `input_check_interval` the host asks each input's Git remote where its branch
 // points, with `git ls-remote` rather than a forge's API, and updates as soon as one moved. Once an update ends well, or
 // a read finds the flake changed since the last one, every deployment and cache naming the flake evaluates afresh.
@@ -71,6 +72,8 @@ export interface FlakeOptions {
   agents: AgentPool;
   // Tells every deployment and cache naming the flake to evaluate afresh, once an update or a push has changed it.
   on_updated?: (flake: Flake) => void;
+  // The attributes of the flake that deployments and caches naming it build, which an update checks before it writes the lock.
+  checked_attributes?: (flake: Flake) => string[];
   // The time in seconds, which tests set.
   now?: () => number;
 }
@@ -84,6 +87,7 @@ export class Flake {
   private readonly store: Store;
   private readonly agents: AgentPool;
   private readonly on_updated: (flake: Flake) => void;
+  private readonly checked_attributes: (flake: Flake) => string[];
   private readonly now: () => number;
   // Cycles and actions run one at a time.
   private queue: Promise<unknown> = Promise.resolve();
@@ -93,6 +97,7 @@ export class Flake {
     this.store = options.store;
     this.agents = options.agents;
     this.on_updated = options.on_updated ?? (() => {});
+    this.checked_attributes = options.checked_attributes ?? (() => []);
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -313,7 +318,7 @@ export class Flake {
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   private async launch(trigger: string): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
-    const operation = update_operation(this.settings);
+    const operation = update_operation(this.settings, this.checked_attributes(this));
     const run_id = `${this.id}-update-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
@@ -334,7 +339,7 @@ export class Flake {
   // Keeps an update that could not start in the history, with why.
   private record_failed_launch(trigger: string, error: string): number {
     const job_id = this.store.create_job({
-      deployment_id: this.id, kind: "update", command: JSON.stringify(update_operation(this.settings)), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
+      deployment_id: this.id, kind: "update", command: JSON.stringify(update_operation(this.settings, this.checked_attributes(this))), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now(),
     });
     this.store.append_output(job_id, `${error}\n`);
     this.store.finish_job(job_id, "failed", null, "The job could not be started", this.now());

@@ -9,7 +9,7 @@ import { send_magic_packet } from "@x-tech-laboratories/x-libs/agent/wake";
 import { run_steps, step_argv, type Context } from "../programs.ts";
 import { boot_probe } from "./boot.ts";
 import { cache_build, cache_build_all, cache_check, cache_push } from "./cache.ts";
-import { build, cache_holds, closure_diff, evaluate, github_update } from "./deploy.ts";
+import { build, cache_holds, closure_diff, evaluate, github_update, local_update } from "./deploy.ts";
 import { derivations } from "./derivations.ts";
 import { install, media } from "./provision.ts";
 import { generations, locate, piece, probe, products, remote_heads, store_probe } from "./reads.ts";
@@ -43,6 +43,7 @@ export async function perform(context: Context, operation: Operation): Promise<n
     case "build": return build(context, operation);
     case "switch": return switch_system(context, operation);
     case "github_update": return github_update(context, operation);
+    case "local_update": return local_update(context, operation);
     case "confirm_switch": return confirm_switch(context, operation);
     case "signal_rollback": return signal_rollback(context, operation);
     case "cache_check": return cache_check(context, operation);

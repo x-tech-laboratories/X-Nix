@@ -7,7 +7,7 @@ import type { RunResult } from "../agents/agent.ts";
 import type { DeploymentSettings, FlakeSettings } from "../config.ts";
 import {
   eval_mark, is_store_path, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type RemoteHeadsOperation,
-  type Step, type TimedOperation,
+  type Step, type TimedOperation, type UpdateCheck,
 } from "../../shared/operations.ts";
 import { github_repository, local_path, refs_to_ask, type InputRemote } from "./flake.ts";
 
@@ -93,19 +93,23 @@ export function remote_heads_operation(remotes: InputRemote[]): RemoteHeadsOpera
 }
 
 // Updates every input of the lock, refetching each branch it follows rather than trusting nix's cached lookup of it,
-// which may be up to an hour old.
-export function update_operation(settings: FlakeSettings): Operation {
+// which may be up to an hour old; with attributes to check, the new lock is written or pushed only once they pass.
+export function update_operation(settings: FlakeSettings, attributes: string[] = []): Operation {
+  const check: UpdateCheck | null = settings.check_update === "none" || attributes.length === 0 ? null : { attributes, build: settings.check_update === "build" };
+  // sudo keeps NIX_CONFIG only when asked, so the access tokens reach nix running as root.
+  const keep_nix_config = settings.require_sudo && settings.access_tokens_file !== null;
+  if (!pushes_to_github(settings) && check !== null) {
+    return with_access_tokens(settings, { kind: "local_update", nix: nix(settings), path: local_path(settings.url)!, sudo: settings.require_sudo, keep_nix_config, check });
+  }
   if (!pushes_to_github(settings)) {
-    // sudo keeps NIX_CONFIG only when asked, so the access tokens reach nix running as root.
-    const keep = settings.require_sudo && settings.access_tokens_file !== null ? ["--preserve-env=NIX_CONFIG"] : [];
-    const argv = [...sudo(settings), ...keep, ...nix(settings), "flake", "update", "--refresh", "--flake", settings.url];
+    const argv = [...sudo(settings), ...(keep_nix_config ? ["--preserve-env=NIX_CONFIG"] : []), ...nix(settings), "flake", "update", "--flake", settings.url, "--refresh"];
     return with_access_tokens(settings, { kind: "programs", steps: [{ argv }] });
   }
   const repository = github_repository(settings.url)!;
   const [name, email = ""] = settings.commit_author.split("<", 2);
   return with_access_tokens(settings, {
     kind: "github_update", nix: nix(settings), ssh_url: repository.ssh_url, branch: repository.branch, ssh_key: settings.push_ssh_key!,
-    author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message,
+    author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message, check,
   });
 }
 

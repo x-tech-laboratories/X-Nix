@@ -21,8 +21,10 @@ let
   ];
 
   commands =
+    # A checked update of a local checkout copies the lock it checked over the checkout's own.
+    [ "${system_bin}/cp -T *x-nix-update-*/flake.lock */flake.lock" ]
     # Switch, boot, test and dry activation with nixos-rebuild, which pull mode's switch to a git+ flake also uses.
-    map (mode: "${system_bin}/nixos-rebuild ${mode} --flake *") modes
+    ++ map (mode: "${system_bin}/nixos-rebuild ${mode} --flake *") modes
     # Switch from the cache: the system profile's next generation, then the fetched system's own activation.
     ++ [ "${system_bin}/nix-env -p ${system_profile} --set /nix/store/*" ]
     ++ map (mode: "/nix/store/*-nixos-system-*/bin/switch-to-configuration ${mode}") modes

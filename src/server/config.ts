@@ -24,6 +24,11 @@ export type DirectOn = "host" | "server" | "ranked";
 
 export const direct_on_values: DirectOn[] = ["host", "server", "ranked"];
 
+// What a flake's update does to every deployment and cache naming the flake before it writes the new lock.
+export type CheckUpdate = "evaluate" | "build" | "none";
+
+export const check_update_values: CheckUpdate[] = ["evaluate", "build", "none"];
+
 export const level_of_status: Record<Status, "info" | "warning" | "error"> = { online: "info", info: "info", unavailable: "warning", warning: "warning", failed: "error" };
 
 // A time of day as hours and minutes, local to the server.
@@ -93,6 +98,7 @@ export interface FlakeSettings {
   push_ssh_key: string | null;
   commit_author: string;
   commit_message: string;
+  check_update: CheckUpdate;
   require_sudo: boolean;
   nix_bin: string;
   nix_args: string[];
@@ -372,6 +378,8 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
   if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Flake ${index + 1} needs an \`id\` of letters, digits, - and _`);
   const url = read.text("url");
   if (url === null) throw new ConfigError(`Flake '${id}' needs the \`url\` of its flake reference`);
+  const check_update = read.text("check_update") ?? "evaluate";
+  if (!check_update_values.includes(check_update as CheckUpdate)) throw new ConfigError(`\`check_update\` of ${read.owner} must be one of ${check_update_values.join(", ")}`);
   return {
     id,
     name: read.text("name") ?? id,
@@ -388,6 +396,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
     push_ssh_key: read.text("push_ssh_key"),
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
+    check_update: check_update as CheckUpdate,
     require_sudo: read.flag("require_sudo", true),
     nix_bin: read.text("nix_bin") ?? "nix",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
@@ -395,7 +404,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 }
 
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
-const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"];
+const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "check_update", "max_input_age"];
 
 // The settings of a deployment's own build, which its cache takes over when it names one.
 const cache_only_keys = ["cache_url", "build_at", "build_agent", "build_root_dir"];

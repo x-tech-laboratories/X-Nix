@@ -91,7 +91,8 @@ programs with argument vectors through `src/agent/programs.ts`.
 | `evaluate`        | `nix eval` of the toplevel and `nix flake metadata`, printed between `@@x-nix-eval` markers. Usually inside `timed`. |
 | `build`           | `nix build` with `--log-format internal-json`, so the server can show live progress.    |
 | `switch`          | Pre-switch checks, fetch, watchdog, activation, `post_switch`, health commands; `@@x-nix-switch` markers. See [Flows](/developer/flows/#a-guarded-switch). |
-| `github_update`   | Clones a `github:` flake over SSH, updates its lock, commits and pushes.              |
+| `github_update`   | Clones a `github:` flake over SSH, updates its lock, checks it, commits and pushes.   |
+| `local_update`    | Updates a local checkout's lock into a spare file, checks it, and copies it over the checkout's. |
 | `cache_check`     | Evaluates and checks every cache target; `@@x-nix-cache` lines.                       |
 | `cache_build`     | Builds one target, pushes it, checks it.                                              |
 | `cache_push`      | Pushes one target, checks it.                                                         |
@@ -99,7 +100,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 | `install`         | nixos-anywhere, with the agent key placed through `--extra-files`.                     |
 | `media`           | Builds an ISO, netboot files or a kexec tarball and links it under `media_root_dir`.  |
 
-Collections, local flake updates and rollbacks are `programs` long runs.
+Collections, unchecked local flake updates and rollbacks are `programs` long runs.
 
 ### Marker lines
 

@@ -75,6 +75,11 @@ export function targets(settings: CacheSettings): [name: string, installable: st
   ];
 }
 
+// Every target's attribute of the flake, as an update checks them.
+export function target_attributes(settings: CacheSettings): string[] {
+  return targets(settings).map(([name]) => target_of(settings, name).attribute);
+}
+
 // The build root a target's build is linked at, when there is a build_root_dir.
 export function build_link(settings: CacheSettings, name: string): string | null {
   if (settings.build_root_dir === null) return null;

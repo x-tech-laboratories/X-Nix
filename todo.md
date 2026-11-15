@@ -10,7 +10,6 @@
 - Fix the timing-flaky test in `tests/agents.test.ts`: it fails under parallel load and passes alone.
 - Decide whether a switch whose `switch-to-configuration` exits 4 (it activated, but some units failed) should still roll back: `switch_system` treats every non-zero status as a failure, and one failed unit made Odin build and revert generations 505 to 513.
 - Serve `/api/openapi.json`, which the Application Standard asks of every app: the `routes` table in `src/server/mcp.ts` already lists each call with its parameters, so it can be built from `api_spec`.
-- Check a flake update before it is committed and pushed: evaluate, and optionally build, every deployment and cache naming the flake against the new lock, and keep the old lock if any fails. Today an update is pushed first and evaluated after, so a broken input reaches the remote.
 - Offer to land a flake update as a pull request instead of pushing to its branch, so the change can be reviewed and pass CI first.
 - Let a staged rollout wait between stages: a soak time after each stage, health checks passing over that time, and an optional admin approval before the next stage starts. Today it only stops on a failure, drift or `sync_timeout`.
 - Record who started each job and fleet run (user or token, or the schedule, input check or webhook), and show it on the job and in the events, so every change has an audit trail.

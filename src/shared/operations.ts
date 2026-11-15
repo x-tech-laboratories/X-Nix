@@ -207,7 +207,13 @@ export interface SwitchOperation {
   close_nix_lock_holders?: { sudo: boolean };
 }
 
-// Clones a github: flake, updates its lock, and pushes a commit back.
+// What an update checks before it writes or pushes the new lock: each attribute of the flake, evaluated or built.
+export interface UpdateCheck {
+  attributes: string[];
+  build: boolean;
+}
+
+// Clones a github: flake, updates its lock, and pushes a commit back once the check passes.
 export interface GithubUpdateOperation extends NixSettings {
   kind: "github_update";
   ssh_url: string;
@@ -216,6 +222,18 @@ export interface GithubUpdateOperation extends NixSettings {
   author_name: string;
   author_email: string;
   message: string;
+  // Absent from an older server's update, which pushes unchecked.
+  check?: UpdateCheck | null;
+}
+
+// Updates a local checkout's lock into a spare file, and writes it over the checkout's own once the check passes.
+export interface LocalUpdateOperation extends NixSettings {
+  kind: "local_update";
+  path: string;
+  sudo: boolean;
+  // sudo keeps NIX_CONFIG, which carries the flake's access tokens.
+  keep_nix_config: boolean;
+  check: UpdateCheck;
 }
 
 // Writes the file that confirms a guarded switch to its watchdog.
@@ -320,14 +338,14 @@ export interface MediaOperation extends NixSettings {
 export type Operation =
   | ProbeOperation | StoreProbeOperation | BootProbeOperation | GenerationsOperation | ProductsOperation | LocateOperation | PieceOperation
   | DerivationsOperation | CacheHoldsOperation | ClosureDiffOperation | RemoteHeadsOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
-  | NixConfigOperation | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
+  | NixConfigOperation | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | LocalUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
   | CacheCheckOperation | CacheBuildOperation | CachePushOperation | CacheBuildAllOperation | InstallOperation | MediaOperation;
 
 export type OperationKind = Operation["kind"];
 
 export const operation_kinds: OperationKind[] = [
   "probe", "store_probe", "boot_probe", "generations", "products", "locate", "piece", "derivations", "cache_holds", "closure_diff", "remote_heads", "programs", "wake",
-  "kept_awake", "timed", "nix_config", "evaluate", "build", "switch", "github_update", "confirm_switch", "signal_rollback", "cache_check", "cache_build",
+  "kept_awake", "timed", "nix_config", "evaluate", "build", "switch", "github_update", "local_update", "confirm_switch", "signal_rollback", "cache_check", "cache_build",
   "cache_push", "cache_build_all", "install", "media",
 ];
 
