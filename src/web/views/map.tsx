@@ -32,7 +32,7 @@ function tone_of(status: Status | null | undefined, running: boolean): FlowTone 
 
 const drift_tones: Record<ReturnType<typeof drift_state>[1], FlowTone> = { good: "ok", warn: "warning", bad: "critical", none: "unknown" };
 
-function fleet_map({ flakes, caches, hosts, deployments }: Fleet): { columns: FlowColumn[]; links: FlowLink[] } {
+export function fleet_map({ flakes, caches, hosts, deployments }: Fleet): { columns: FlowColumn[]; links: FlowLink[] } {
   const links: FlowLink[] = [];
   const flake_tone = new Map(flakes.map((flake) => [flake.id, tone_of(flake.reading?.status, flake.running_job !== null)]));
 
