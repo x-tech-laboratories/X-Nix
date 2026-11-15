@@ -164,6 +164,9 @@ in
 
     security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix-agent") ];
 
+    # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
+    nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;
+
     systemd.services.x-nix-agent = {
       description = "X-Nix agent";
       wantedBy = [ "multi-user.target" ];
