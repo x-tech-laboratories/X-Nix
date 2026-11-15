@@ -35,8 +35,10 @@ export function OverviewView() {
             const attention = found.filter((row) => reasons(row).length > 0 || troubled.has(row_status(row) ?? "online"));
             return <>
               <SummaryTiles rows={found} />
-              <div className="charts"><StatusDonut rows={found} /></div>
-              <Section title="Needs attention">{attention.length === 0 ? <Empty title="Nothing needs attention." /> : <AttentionTable rows={attention} />}</Section>
+              <div className="charts">
+                <StatusDonut rows={found} />
+                <Section title="Needs attention">{attention.length === 0 ? <Empty title="Nothing needs attention." /> : <AttentionTable rows={attention} />}</Section>
+              </div>
             </>;
           }}
         </Loaded>
