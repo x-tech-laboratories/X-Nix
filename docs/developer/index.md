@@ -1,8 +1,5 @@
 ---
 title: Developer guide
-sidebar:
-  order: 0
-  label: Overview
 ---
 
 This guide is for people who change X-Nix itself. It explains how the code is laid out, how the server, the agents and

@@ -1,8 +1,5 @@
 ---
 title: User guide
-sidebar:
-  order: 0
-  label: Overview
 ---
 
 This guide is for people who install X-Nix, write its config file and use its page. It tells you what X-Nix does and
