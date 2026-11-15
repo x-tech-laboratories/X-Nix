@@ -1275,6 +1275,23 @@ describe("a deployment its cache builds", () => {
     expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: "Fleet cache: error: attribute 'host' missing" });
   });
 
+  it("takes a check that ends while a job runs, without arming an automatic switch", async () => {
+    const harness = fed({ auto_switch: true, auto_switch_after: "0" });
+    harness.save_check({ target: null, eval_error: "error: attribute 'tag' missing" }, clock.now - 600);
+    await collect(harness);
+    expect(status_of(harness)).toBe("failed");
+    const outcome = await harness.deployment.act("build");
+    harness.save_check({}, clock.now - 30);
+
+    await harness.deployment.cycle();
+
+    expect(harness.deployment.running_job()?.id).toBe(outcome.job_id);
+    expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: null, evaluated_epoch: clock.now - 30 });
+    const texts = harness.deployment.reading()!.messages.map((message) => message.text);
+    expect(texts.some((text) => text.startsWith("Flake evaluation failed"))).toBe(false);
+    expect(texts.some((text) => text.includes("switching automatically"))).toBe(false);
+  });
+
   it("takes the target of a row saved before rows carried an evaluation error", async () => {
     const harness = fed();
     harness.save_check({ eval_error: undefined });

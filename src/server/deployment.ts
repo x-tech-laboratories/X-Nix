@@ -336,7 +336,12 @@ export class Deployment {
     return this.serial(async () => {
       if (options.force_eval && this.running_evaluation() === null) this.request_evaluation();
       const job = this.running_job();
-      if (job !== null) return this.poll_job(job);
+      if (job !== null) {
+        await this.poll_job(job);
+        // A check the cache finished while the job runs reaches the page now, not once the job ends.
+        if (this.running_job() !== null && this.cache_check_unread()) await this.probe_cycle();
+        return;
+      }
       if (this.auto_switch_due !== null) return this.launch_auto_switch(this.auto_switch_due);
       const due = this.scheduled_due();
       if (due !== null) return this.launch_scheduled(due.kind, due.slot);
@@ -420,7 +425,8 @@ export class Deployment {
           evaluation.drift_target = target;
           evaluation.drift_since_epoch = now;
         }
-        messages.push(...this.consider_auto_switch(fields, evaluation, target, now));
+        // Armed only between jobs, so drift judged while a switch replaces the system never starts another after it.
+        if (this.running_job() === null) messages.push(...this.consider_auto_switch(fields, evaluation, target, now));
       }
     }
 
@@ -494,6 +500,15 @@ export class Deployment {
     // A failed evaluation waits only retry_interval, so a fix is seen soon.
     const failed = evaluation.eval_error !== null || evaluation.metadata_error !== null;
     return this.now() - evaluation.evaluated_epoch >= (failed ? this.settings.retry_interval : this.settings.eval_interval);
+  }
+
+  // Whether the cache that evaluates this deployment finished a check newer than the evaluation last taken from it.
+  private cache_check_unread(): boolean {
+    const evaluating = this.evaluating_cache();
+    const checked = evaluating?.cache.reading()?.evaluated_epoch ?? null;
+    if (checked === null) return false;
+    const taken = this.evaluation().evaluated_epoch;
+    return taken === null || checked > taken;
   }
 
   // Takes the target, revision and flake facts the cache's last check found for this host's configuration, which a
