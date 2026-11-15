@@ -17,6 +17,8 @@ X-Nix is a web portal for a fleet of NixOS machines. It tells you whether each m
 should, and it updates flakes, builds systems, switches them safely, keeps binary caches filled, watches the Nix store
 and boot entries, and installs NixOS on new machines, all from one page.
 
+![The Overview: hosts by status, what needs attention, and which flakes build which caches and hosts](/assets/screenshots/overview.png)
+
 ---
 
 ## What it does
