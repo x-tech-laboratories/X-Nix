@@ -1,5 +1,5 @@
-// The Overview: the fleet in counts and by status, the hosts that need attention and why, the jobs running now, and the
-// last week of jobs by day and by owner. Each host's own state is on the Hosts page, which every row here links to.
+// The Overview: the fleet in counts and by status, the hosts that need attention and why, a map of which flakes build
+// which caches and hosts, the jobs running now, and the last week of jobs by day and by owner. Each host's own state is on the Hosts page, which every row here links to.
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { Donut } from "@x-tech-laboratories/x-libs/web/react/charts";
@@ -12,6 +12,7 @@ import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
 import { JobsPerDay, JobTimeline, load_recent_jobs, OutcomeDonut } from "./charts.tsx";
 import { host_rows, row_status, type Row } from "./hosts.tsx";
+import { MapSection } from "./map.tsx";
 import { drift_state, JobsTable, live } from "./shared.tsx";
 import { last_collection_tone } from "./store.tsx";
 
@@ -40,6 +41,7 @@ export function OverviewView() {
           }}
         </Loaded>
       </Stack>
+      <MapSection />
       <Section title="Running now">
         <Stack>
           <Loaded resource={running}>
