@@ -40,8 +40,9 @@ function states(run: FleetRun | null): Record<string, string> {
 
 describe("fleet settings", () => {
   it("default to four at once, no stages and a 30 minute sync timeout", () => {
-    expect(parse_config({}).fleet).toEqual({ parallel: 4, stages: [], sync_timeout: 1800 });
-    expect(parse_config({ fleet: { parallel: 2, stages: ["@canary", "web-*"], sync_timeout: "10m" } }).fleet).toEqual({ parallel: 2, stages: ["@canary", "web-*"], sync_timeout: 600 });
+    expect(parse_config({}).fleet).toEqual({ parallel: 4, stages: [], sync_timeout: 1800, soak: 0, approve_stages: false });
+    expect(parse_config({ fleet: { parallel: 2, stages: ["@canary", "web-*"], sync_timeout: "10m", soak: "15m", approve_stages: true } }).fleet)
+      .toEqual({ parallel: 2, stages: ["@canary", "web-*"], sync_timeout: 600, soak: 900, approve_stages: true });
     expect(() => parse_config({ fleet: { parallel: 0 } })).toThrow(ConfigError);
     expect(() => parse_config({ fleet: [] })).toThrow(ConfigError);
   });
@@ -231,6 +232,48 @@ describe("a staged rollout", () => {
     expect(states(ended)).toEqual({ canary: "failed", "web-1": "skipped" });
     expect(ended.hosts[0].message).toContain("Still drifting");
     expect(ended.state).toBe("failed");
+    expect(run_of(agent, "web-1")).toBeUndefined();
+    clock.now = start;
+  });
+
+  it("holds the next stage while the last soaks, then until an admin approves it", async () => {
+    const start = clock.now;
+    const { fleet, harnesses, agent } = make_fleet([{ id: "canary", tags: ["canary"] }, { id: "web-1" }], { soak: "10m", approve_stages: true });
+    const { run } = await fleet.start({ action: "switch", selector: "*", staged: true, stages: ["@canary"] });
+    expect((await fleet.approve(run!.id)).ok).toBe(false);
+
+    await switch_and_evaluate(harnesses.get("canary")!, agent, true);
+    await fleet.advance();
+    await fleet.advance();
+    expect(states(fleet.run(run!.id))).toEqual({ canary: "succeeded", "web-1": "queued" });
+    expect(fleet.run(run!.id)!.message).toContain("soaking for 10 minutes");
+
+    clock.now += 601;
+    await fleet.advance();
+    expect(states(fleet.run(run!.id))["web-1"]).toBe("queued");
+    expect(fleet.run(run!.id)!.message).toBe("Stage 2 waits for approval");
+
+    const approved = await fleet.approve(run!.id, "admin");
+    expect(approved.ok).toBe(true);
+    expect(states(approved.run)["web-1"]).toBe("running");
+    clock.now = start;
+  });
+
+  it("stops when a host of the soaking stage drifts again", async () => {
+    const start = clock.now;
+    const { fleet, harnesses, agent } = make_fleet([{ id: "canary", tags: ["canary"] }, { id: "web-1" }], { soak: "10m" });
+    const { run } = await fleet.start({ action: "switch", selector: "*", staged: true, stages: ["@canary"] });
+    await switch_and_evaluate(harnesses.get("canary")!, agent, true);
+    await fleet.advance();
+    await fleet.advance();
+
+    clock.now += 60;
+    await collect(harnesses.get("canary")!);
+    await fleet.advance();
+
+    const ended = fleet.run(run!.id)!;
+    expect(states(ended)).toEqual({ canary: "failed", "web-1": "skipped" });
+    expect(ended.hosts[0].message).toContain("Drifted from the flake while its stage soaked");
     expect(run_of(agent, "web-1")).toBeUndefined();
     clock.now = start;
   });

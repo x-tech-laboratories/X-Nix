@@ -4,11 +4,12 @@
 // deployment's part is an ordinary job, started with the fleet run named as its trigger and followed by the
 // deployment's own cycle; the run only reads how each job ended. A staged run goes through its stages in order, each
 // stage a selector such as "@canary": a staged switch waits for each host to read as in sync against a fresh evaluation
-// before the next starts, and the first failure stops the rollout.
+// before the next starts, and the first failure stops the rollout. Between stages the run can hold: the finished stage
+// soaks, failing a host that turns failed or drifts, and the next waits for an admin's approval when the run needs one.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+import { format_duration, parse_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { DeploymentSettings, FleetSettings } from "./config.ts";
 import type { Deployment } from "./deployment.ts";
@@ -39,6 +40,14 @@ export interface FleetHost {
   finished_epoch: number | null;
 }
 
+// A finished stage the run holds at before the next: soaking until a time, and waiting for approval when the run needs it.
+export interface StageGate {
+  stage: number;
+  soak_until_epoch: number;
+  approved: boolean;
+  approved_by: string | null;
+}
+
 export interface FleetRun {
   id: number;
   action: FleetActionId;
@@ -51,6 +60,11 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  // How long each finished stage soaks, and whether the next needs approval; absent from runs started before either was kept.
+  soak?: number;
+  approve?: boolean;
+  // The finished stage the run holds at, or null while none does.
+  gate?: StageGate | null;
   // Who started it; absent from runs started before it was kept.
   started_by?: string;
   started_epoch: number;
@@ -66,6 +80,8 @@ export interface FleetRequest {
   staged?: unknown;
   stages?: unknown;
   parallel?: unknown;
+  soak?: unknown;
+  approve?: unknown;
 }
 
 export interface FleetOutcome {
@@ -175,6 +191,10 @@ export class Fleet {
       }
       stages = ((request.stages as string[] | undefined) ?? this.settings.stages).map((stage) => stage.trim()).filter(Boolean);
     }
+    const soak = soak_of(request.soak, this.settings.soak);
+    if (soak === null) return refuse("`soak` must be a duration such as \"15m\", or a number of seconds");
+    if (request.approve !== undefined && request.approve !== null && typeof request.approve !== "boolean") return refuse("`approve` must be true or false");
+    const approve = (request.approve as boolean | null | undefined) ?? this.settings.approve_stages;
 
     const now = this.now();
     const hosts = picked.map((deployment, index): FleetHost => ({
@@ -186,7 +206,7 @@ export class Fleet {
     else if (staged && hosts.some((host) => host.stage === stages.length)) stages = [...stages, "the rest"];
     const run: Omit<FleetRun, "id"> = {
       action, selector, staged, stages, parallel, state: "running", current_stage: Math.min(...hosts.map((host) => host.stage)), stop_requested: false,
-      started_by, started_epoch: now, finished_epoch: null, message: null, hosts,
+      soak: staged ? soak : 0, approve: staged && approve, gate: null, started_by, started_epoch: now, finished_epoch: null, message: null, hosts,
     };
     const id = this.store.create_fleet_run("running", run);
     for (const deployment of picked) this.store.add_event(deployment.id, now, "info", `Fleet run #${id} queued by ${started_by}: ${action}`);
@@ -203,6 +223,20 @@ export class Fleet {
       run.stop_requested = true;
       await this.advance_run(run);
       return { ok: true, message: `Fleet run #${id} is stopping`, run: this.run(id) };
+    });
+  }
+
+  // Lets a run held for approval start its next stage, once any soak still running has passed.
+  approve(id: number, approved_by = "manual"): Promise<FleetOutcome> {
+    return this.serial(async () => {
+      const run = this.run(id);
+      if (run === null) return { ok: false, message: `No fleet run #${id}`, run: null };
+      const gate = run.gate ?? null;
+      if (run.state !== "running" || gate === null || gate.approved) return { ok: false, message: `Fleet run #${id} is not waiting for approval`, run };
+      run.gate = { ...gate, approved: true, approved_by };
+      for (const host of run.hosts) if (host.stage === gate.stage) this.store.add_event(host.deployment_id, this.now(), "info", `Fleet run #${id}: ${approved_by} approved the next stage`);
+      await this.advance_run(run);
+      return { ok: true, message: `Fleet run #${id} may start its next stage`, run: this.run(id) };
     });
   }
 
@@ -236,12 +270,13 @@ export class Fleet {
       if (host.state === "running") this.follow_host(run, host, now);
       if (host.state === "verifying") this.verify_host(host, now);
     }
+    if (run.gate) this.watch_soak(run, run.gate, now);
     const halted = run.stop_requested || (run.staged && run.hosts.some((host) => host.state === "failed"));
     if (halted) {
       const reason = run.stop_requested ? "Stopped before it started" : "Skipped: an earlier stage failed";
       for (const host of run.hosts) if (host.state === "queued") this.finish_host(host, "skipped", reason, now);
     }
-    if (run.staged) run.current_stage = this.next_stage(run);
+    if (run.staged) run.current_stage = this.next_stage(run, now);
 
     let active = run.hosts.filter((host) => active_states.has(host.state)).length;
     for (const host of run.hosts) {
@@ -255,12 +290,51 @@ export class Fleet {
     this.store.save_fleet_run(run.id, run.state, run);
   }
 
-  // The stage to work on: the current one until none of its hosts is left to finish, then the next that has hosts.
-  private next_stage(run: FleetRun): number {
+  // The stage to work on: the current one until none of its hosts is left to finish and its gate opens, then the next that has hosts.
+  private next_stage(run: FleetRun, now: number): number {
     const unfinished = (stage: number) => run.hosts.some((host) => host.stage === stage && (host.state === "queued" || active_states.has(host.state)));
     if (unfinished(run.current_stage)) return run.current_stage;
     const later = run.hosts.filter((host) => host.stage > run.current_stage && host.state === "queued").map((host) => host.stage);
-    return later.length === 0 ? run.current_stage : Math.min(...later);
+    if (later.length === 0 || !this.gate_open(run, now)) return run.current_stage;
+    return Math.min(...later);
+  }
+
+  // Whether the finished current stage lets the next start: once it has soaked, and been approved when the run needs it.
+  private gate_open(run: FleetRun, now: number): boolean {
+    const soak = run.soak ?? 0;
+    const approve = run.approve ?? false;
+    if (soak === 0 && !approve) return true;
+    if (run.gate?.stage !== run.current_stage) {
+      run.gate = { stage: run.current_stage, soak_until_epoch: now + soak, approved: !approve, approved_by: null };
+    }
+    const gate = run.gate;
+    const next = run.current_stage + 2;
+    if (now < gate.soak_until_epoch) {
+      run.message = `Stage ${run.current_stage + 1} is soaking for ${format_duration(gate.soak_until_epoch - now)} before stage ${next}`;
+      return false;
+    }
+    if (!gate.approved) {
+      run.message = `Stage ${next} waits for approval`;
+      return false;
+    }
+    run.gate = null;
+    run.message = null;
+    return true;
+  }
+
+  // Fails a host of the held stage whose status turns failed, or a switched host that drifts from the flake again.
+  private watch_soak(run: FleetRun, gate: StageGate, now: number): void {
+    for (const host of run.hosts) {
+      if (host.stage !== gate.stage || host.state !== "succeeded") continue;
+      const reading = this.deployments.get(host.deployment_id)?.reading() ?? null;
+      if (reading === null || reading.checked_epoch < (host.finished_epoch ?? now)) continue;
+      if (reading.status === "failed") {
+        const reason = reading.messages.find((message) => message.level === "error")?.text;
+        this.finish_host(host, "failed", reason ? `Failed while its stage soaked: ${reason}` : "Failed while its stage soaked", now);
+      } else if (run.action === "switch" && reading.up_to_date === false) {
+        this.finish_host(host, "failed", "Drifted from the flake while its stage soaked", now);
+      }
+    }
   }
 
   private async start_host(run: FleetRun, host: FleetHost): Promise<void> {
@@ -336,6 +410,18 @@ export class Fleet {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// A run's soak in seconds: a duration such as "15m", a number of seconds, the settings' when absent, or null when malformed.
+function soak_of(value: unknown, fallback: number): number | null {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+  if (typeof value !== "string") return null;
+  try {
+    return parse_duration(value, "soak");
+  } catch {
+    return null;
+  }
+}
 
 // The index of the first stage whose selector picks the deployment, or one past the last for a host no stage names.
 function stage_of(deployment: Deployment, stages: string[], index: number): number {

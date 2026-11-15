@@ -216,6 +216,8 @@ export interface FleetView {
   parallel: number;
   stages: string[];
   sync_timeout: number;
+  soak: number;
+  approve_stages: boolean;
   tags: string[];
   runs: FleetRun[];
 }
@@ -631,7 +633,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   // ── Fleet ────────────────────────────────────────────────────────────────
 
   app.get("/api/fleet", async (): Promise<FleetView> => ({
-    parallel: fleet.settings.parallel, stages: fleet.settings.stages, sync_timeout: fleet.settings.sync_timeout, tags: fleet.tags(), runs: fleet.runs(),
+    parallel: fleet.settings.parallel, stages: fleet.settings.stages, sync_timeout: fleet.settings.sync_timeout, soak: fleet.settings.soak,
+    approve_stages: fleet.settings.approve_stages, tags: fleet.tags(), runs: fleet.runs(),
   }));
 
   // The ids a selector such as "web-* @canary" picks.
@@ -649,6 +652,12 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/stop", async (request, reply) => {
     const outcome = await fleet.stop(Number(request.params.id));
+    return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
+  });
+
+  // Lets a staged run held for approval start its next stage.
+  app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/approve", async (request, reply) => {
+    const outcome = await fleet.approve(Number(request.params.id), started_by(request.viewer));
     return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
   });
 

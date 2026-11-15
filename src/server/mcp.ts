@@ -106,7 +106,7 @@ export const routes: Record<string, RouteToolSpec> = {
     route: "POST /api/fleet/runs",
     description:
       "Runs an action on many deployments, picked by a selector or a list of ids, so many at a time; staged goes through the stage selectors in order, " +
-      "stopping at the first failure.",
+      "stopping at the first failure, soaking each finished stage for soak (such as \"15m\") and waiting for approval before the next when approve is true.",
     params: [
       { name: "action", schema: one_of(fleet_action_ids) },
       { name: "selector", schema: text, optional: true },
@@ -114,10 +114,15 @@ export const routes: Record<string, RouteToolSpec> = {
       { name: "staged", schema: { type: "boolean" }, optional: true },
       { name: "stages", schema: { type: "array", items: { type: "string" } }, optional: true },
       { name: "parallel", schema: whole, optional: true },
+      { name: "soak", schema: text, optional: true },
+      { name: "approve", schema: { type: "boolean" }, optional: true },
     ],
   },
   get_fleet_run: { route: "GET /api/fleet/runs/:id", description: "Shows one fleet run and how far each deployment in it got.", params: [{ name: "id", schema: whole }] },
   stop_fleet_run: { route: "POST /api/fleet/runs/:id/stop", description: "Stops a fleet run from starting any more deployments.", params: [{ name: "id", schema: whole }] },
+  approve_fleet_run: {
+    route: "POST /api/fleet/runs/:id/approve", description: "Lets a staged fleet run waiting for approval start its next stage.", params: [{ name: "id", schema: whole }],
+  },
 
   list_caches: { route: "GET /api/caches", description: "Lists the binary caches with each target and whether it is built and pushed.", params: [] },
   get_cache: { route: "GET /api/caches/:id", description: "Shows one binary cache with each target and whether it is built and pushed.", params: [cache] },
