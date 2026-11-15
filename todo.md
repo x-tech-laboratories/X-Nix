@@ -9,3 +9,4 @@
 - Port more generic UI to X-Libs: `EventsList`, a state-to-tone badge, and a jobs table/page.
 - Fix the timing-flaky test in `tests/agents.test.ts`: it fails under parallel load and passes alone.
 - Decide whether a switch whose `switch-to-configuration` exits 4 (it activated, but some units failed) should still roll back: `switch_system` treats every non-zero status as a failure, and one failed unit made Odin build and revert generations 505 to 513.
+- Serve `/api/openapi.json`, which the Application Standard asks of every app: the `routes` table in `src/server/mcp.ts` already lists each call with its parameters, so it can be built from `api_spec`.
