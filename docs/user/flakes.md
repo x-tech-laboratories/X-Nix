@@ -26,6 +26,12 @@ flake's host:
 - **A `github:` flake with a `push_ssh_key`** is cloned, updated, committed with `commit_author` and `commit_message`,
   and pushed back over SSH. github.com's host key comes from the system's known hosts.
 
+Before either writes or pushes the new lock, it is checked: every deployment naming the flake has its system evaluated
+against it, and so does every target of a cache naming the flake. With `check_update` set to `build` they are built
+instead, and with `none` the lock is written unchecked. A check that fails keeps the old lock, pushes nothing, and fails
+the update with the attributes that broke. A deployment is checked once its host's name is known, which its first read
+supplies when it sets no `configuration`.
+
 Any other flake cannot be updated by X-Nix, and the page says so. Once an update ends well, every deployment and cache
 naming the flake evaluates afresh, so drift shows at once.
 
@@ -79,6 +85,7 @@ services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-acce
 | `push_ssh_key`         | none                          | The key a `github:` flake's update pushes with.            |
 | `commit_author`        | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
 | `commit_message`       | `chore(flake): update inputs` | The update commit's message.                               |
+| `check_update`         | `evaluate`                    | What an update does to everything naming the flake before it writes the lock: `evaluate`, `build` or `none`. |
 | `require_sudo`         | `true`                        | Update a local checkout under `sudo -n`.                   |
 | `nix_bin`              | `nix`                         | The nix program.                                           |
 | `nix_args`             | the experimental features     | Arguments before nix's subcommand.                         |

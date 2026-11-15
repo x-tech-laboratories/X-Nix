@@ -21,6 +21,7 @@ import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { Flake } from "./flake.ts";
 import { Host } from "./host.ts";
+import { target_attributes } from "./nixos/attic.ts";
 import { Notifier } from "./notifications.ts";
 import { OverdueJobs } from "./overdue.ts";
 import { Fleet } from "./fleet.ts";
@@ -29,6 +30,7 @@ import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
+import { nix_string } from "../shared/operations.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -105,7 +107,15 @@ const on_updated = (flake: Flake) => {
   }
   for (const cache of caches.filter((candidate) => candidate.settings.flake_id === flake.id)) void poller.refresh(cache);
 };
-const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated }));
+// An update checks the system of every deployment naming the flake whose attribute is known, and every target of its caches.
+const checked_attributes = (flake: Flake) => [...new Set([
+  ...deployments.flatMap((deployment) => {
+    const attribute = deployment.settings.flake_id === flake.id ? deployment.attribute() : null;
+    return attribute === null ? [] : [`nixosConfigurations.${nix_string(attribute)}.config.system.build.toplevel`];
+  }),
+  ...caches.filter((cache) => cache.settings.flake_id === flake.id).flatMap((cache) => target_attributes(cache.settings)),
+])];
+const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated, checked_attributes }));
 const poller = new Poller(deployments, null, caches, [provisioner], flakes, [...hosts.values()]);
 poller.follow_new_jobs(store);
 const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });

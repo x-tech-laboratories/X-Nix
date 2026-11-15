@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { build, cache_holds, evaluate, github_update } from "../src/agent/operations/deploy.ts";
+import { build, cache_holds, evaluate, github_update, local_update } from "../src/agent/operations/deploy.ts";
 import { perform } from "../src/agent/operations/index.ts";
 import type { Context, ProgramOptions, ProgramResult, RunProgram } from "../src/agent/programs.ts";
 import { ConfigError, deployment_settings, flake_settings, host_settings, parse_config } from "../src/server/config.ts";
@@ -10,7 +14,7 @@ import {
 } from "../src/server/nixos/commands.ts";
 import { github_repository, local_path, short_revision } from "../src/server/nixos/flake.ts";
 import { generation_of, parse_probe, reboot_required } from "../src/server/nixos/probe.ts";
-import type { BuildOperation, EvaluateOperation, GithubUpdateOperation, Operation } from "../src/shared/operations.ts";
+import type { BuildOperation, EvaluateOperation, GithubUpdateOperation, LocalUpdateOperation, Operation } from "../src/shared/operations.ts";
 import { current_closure, host_values } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -248,8 +252,52 @@ describe("the build", () => {
 describe("the update", () => {
   const github = { url: "github:owner/config", push_ssh_key: "/run/secrets/deploy_key" };
 
-  it("updates a local flake in place", () => {
-    expect(update_operation(flake())).toEqual({ kind: "programs", steps: [{ argv: ["sudo", "-n", ...nix, "flake", "update", "--refresh", "--flake", "/etc/nixos"] }] });
+  const attributes = ['nixosConfigurations."odin".config.system.build.toplevel'];
+
+  it("updates a local flake in place, unchecked when nothing names it or checks are off", () => {
+    const in_place = { kind: "programs", steps: [{ argv: ["sudo", "-n", ...nix, "flake", "update", "--flake", "/etc/nixos", "--refresh"] }] };
+
+    expect(update_operation(flake())).toEqual(in_place);
+    expect(update_operation(flake({ check_update: "none" }), attributes)).toEqual(in_place);
+  });
+
+  it("checks a local flake's new lock before writing it, building with check_update build", () => {
+    expect(update_operation(flake(), attributes)).toEqual({
+      kind: "local_update", nix, path: "/etc/nixos", sudo: true, keep_nix_config: false, check: { attributes, build: false },
+    });
+    expect((update_operation(flake({ check_update: "build" }), attributes) as LocalUpdateOperation).check.build).toBe(true);
+    expect(() => flake({ check_update: "sometimes" })).toThrow(ConfigError);
+  });
+
+  it("writes a local lock only once every attribute evaluates against it", async () => {
+    const checkout = mkdtempSync(join(tmpdir(), "x-nix-checkout-"));
+    writeFileSync(join(checkout, "flake.lock"), "old");
+    const operation = update_operation(flake({ url: checkout, require_sudo: false }), [...attributes, "packages.x86_64-linux.tool"]) as LocalUpdateOperation;
+    // nix writes the new lock where it is told to.
+    const lock_of = (argv: string[]) => (argv.includes("--output-lock-file") ? void writeFileSync(argv[argv.indexOf("--output-lock-file") + 1], "new") : undefined);
+    const failing = fake_context((argv) => (lock_of(argv), argv.includes("eval") && argv.at(-1)!.includes("tool") ? { exit_code: 1 } : {}));
+
+    expect(await local_update(failing.context, operation)).toBe(1);
+    expect(failing.ran.filter((argv) => argv.includes("eval"))).toHaveLength(2);
+    expect(failing.ran.some((argv) => argv[0] === "cp")).toBe(false);
+    expect(failing.output()).toContain("The new lock breaks packages.x86_64-linux.tool");
+
+    const passing = fake_context((argv) => lock_of(argv) ?? {});
+    expect(await local_update(passing.context, operation)).toBe(0);
+    const [update, check] = passing.ran;
+    const new_lock = update[update.indexOf("--output-lock-file") + 1];
+    expect(check).toEqual([...nix, "eval", "--raw", "--no-write-lock-file", "--reference-lock-file", new_lock, `${checkout}#${attributes[0]}.drvPath`]);
+    expect(passing.ran.at(-1)).toEqual(["cp", "-T", new_lock, `${checkout}/flake.lock`]);
+    rmSync(checkout, { recursive: true });
+  });
+
+  it("does not push a github: flake's lock that fails its check", async () => {
+    const operation = update_operation(flake(github), attributes) as GithubUpdateOperation;
+    const { context, ran, output } = fake_context((argv) => (argv.includes("diff") ? { exit_code: 1 } : argv.includes("eval") ? { exit_code: 1 } : {}));
+
+    expect(await github_update(context, operation)).toBe(1);
+    expect(ran.some((argv) => argv.includes("commit") || argv.includes("push"))).toBe(false);
+    expect(output()).toContain("The new lock was not pushed");
   });
 
   it("updates a github: flake unprivileged, pushing over SSH with pinned host keys", async () => {

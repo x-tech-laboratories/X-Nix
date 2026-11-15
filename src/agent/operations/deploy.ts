@@ -1,15 +1,16 @@
 // A deployment's own operations: evaluating the host's toplevel, building it, asking whether the cache holds it,
-// comparing two closures, and updating a github: flake's lock with a commit pushed back.
+// comparing two closures, and updating a flake's lock: a local checkout's in place, or a github: flake's with a commit
+// pushed back, each only once the new lock evaluates.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
   diff_mark, eval_mark, fresh_lookup, is_store_path, show_argv, toplevel, type BuildOperation, type CacheHoldsOperation, type ClosureDiffOperation,
-  type EvaluateOperation, type GithubUpdateOperation,
+  type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck,
 } from "../../shared/operations.ts";
 import { on_path, type Context } from "../programs.ts";
 
@@ -117,7 +118,7 @@ export async function closure_diff(context: Context, operation: ClosureDiffOpera
 
 // ── Update ───────────────────────────────────────────────────────────────────
 
-// Clones the flake's repository, updates its lock and pushes a commit back, as the agent's user rather than root.
+// Clones the flake's repository, updates its lock and pushes a commit back once the check passes, as the agent's user rather than root.
 export async function github_update(context: Context, operation: GithubUpdateOperation): Promise<number> {
   const folder = mkdtempSync(join(tmpdir(), "x-nix-update-"));
   const repository = join(folder, "repo");
@@ -136,8 +137,11 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
       context.out.write("Every input is already current\n");
       return 0;
     }
-    const inputs = [...`${updated.stdout}\n${updated.stderr}`.matchAll(/Updated input '([^']*)'/g)].map((match) => `- ${match[1]}`);
-    const message = [operation.message, "", ...inputs].join("\n");
+    if (operation.check != null && !(await check_lock(context, operation.nix, repository, [], operation.check))) {
+      context.out.write("The new lock was not pushed\n");
+      return 1;
+    }
+    const message = [operation.message, "", ...updated_inputs(updated)].join("\n");
     const identity = ["-c", `user.name=${operation.author_name}`, "-c", `user.email=${operation.author_email}`];
     const committed = await git(["-C", repository, ...identity, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
     if (committed.exit_code !== 0) return committed.exit_code;
@@ -147,5 +151,65 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
     return 0;
   } finally {
     rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+// Updates the checkout's lock into a spare file, checks it, and only then copies it over the checkout's own.
+export async function local_update(context: Context, operation: LocalUpdateOperation): Promise<number> {
+  const folder = mkdtempSync(join(tmpdir(), "x-nix-update-"));
+  const new_lock = join(folder, "flake.lock");
+  const lock = join(operation.path, "flake.lock");
+  const sudo = operation.sudo ? ["sudo", "-n", ...(operation.keep_nix_config ? ["--preserve-env=NIX_CONFIG"] : [])] : [];
+  try {
+    const update = [...sudo, ...operation.nix, "flake", "update", "--flake", operation.path, "--refresh", "--output-lock-file", new_lock];
+    const updated = await context.program(context, update, { echo: true, stdout: "both", stderr: "both" });
+    if (updated.exit_code !== 0) return 1;
+    const written = read_text(new_lock);
+    if (written === null) {
+      context.out.write(`nix wrote no lock to ${new_lock}\n`);
+      return 1;
+    }
+    if (written === read_text(lock)) {
+      context.out.write("Every input is already current\n");
+      return 0;
+    }
+    if (!(await check_lock(context, operation.nix, operation.path, ["--reference-lock-file", new_lock], operation.check))) {
+      context.out.write("The lock was left as it was\n");
+      return 1;
+    }
+    const copied = await context.program(context, [...(operation.sudo ? ["sudo", "-n"] : []), "cp", "-T", new_lock, lock], { echo: true });
+    if (copied.exit_code !== 0) return copied.exit_code;
+    context.out.write(`Wrote ${lock}\n`);
+    return 0;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+// Evaluates or builds each attribute against the new lock, going on past a failure so the log names every one that broke.
+async function check_lock(context: Context, nix: string[], flake: string, lock_args: string[], check: UpdateCheck): Promise<boolean> {
+  const failed: string[] = [];
+  for (const attribute of check.attributes) {
+    context.out.write(`${check.build ? "Building" : "Evaluating"} ${attribute} with the new lock\n`);
+    const argv = check.build
+      ? [...nix, "build", "--no-link", "--no-write-lock-file", ...lock_args, `${flake}#${attribute}`]
+      : [...nix, "eval", "--raw", "--no-write-lock-file", ...lock_args, `${flake}#${attribute}.drvPath`];
+    const result = await context.program(context, argv, { echo: true, stdout: check.build ? "show" : "drop" });
+    if (result.exit_code !== 0) failed.push(attribute);
+  }
+  if (failed.length > 0) context.out.write(`The new lock breaks ${failed.join(", ")}\n`);
+  return failed.length === 0;
+}
+
+// The inputs nix said it moved, one line each.
+function updated_inputs(updated: { stdout: string; stderr: string }): string[] {
+  return [...`${updated.stdout}\n${updated.stderr}`.matchAll(/Updated input '([^']*)'/g)].map((match) => `- ${match[1]}`);
+}
+
+function read_text(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
   }
 }

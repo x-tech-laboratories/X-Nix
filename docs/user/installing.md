@@ -123,7 +123,8 @@ matched by its path under `/run/current-system/sw/bin`. They cover:
 - a switch that fetches what another machine built: `nix-env -p /nix/var/nix/profiles/system --set /nix/store/*` and
   that system's `switch-to-configuration` in each mode;
 - rollbacks and the watchdog: `nix-env ... --switch-generation *` and the system profile's `switch-to-configuration`;
-- a flake's Update on a local checkout: `nix ... flake update --flake *`;
+- a flake's Update on a local checkout: `nix ... flake update --flake *`, and the `cp -T` that writes the lock it
+  checked over the checkout's;
 - `systemctl reboot` and `nix-collect-garbage`;
 - the boot loader's reads and one-shot setters: `bootctl list --json=short`, `cat /boot/grub/grub.cfg`,
   `grub-editenv list`, `bootctl set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`;
