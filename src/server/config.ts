@@ -177,6 +177,10 @@ export interface FleetSettings {
   stages: string[];
   // How long a staged switch may take to read as in sync before the rollout stops.
   sync_timeout: number;
+  // How long each finished stage must stay healthy before the next starts.
+  soak: number;
+  // Whether an admin must approve each next stage.
+  approve_stages: boolean;
 }
 
 // A host that builds the fleet's closures, and the Attic cache they are pushed to.
@@ -439,7 +443,10 @@ export function fleet_settings(entry: unknown): FleetSettings {
   const read = new Reader((entry ?? {}) as Record<string, unknown>, "the fleet");
   const parallel = read.limit("parallel", 4) ?? 4;
   if (!Number.isInteger(parallel) || parallel < 1) throw new ConfigError("`parallel` of the fleet must be a whole number of at least 1");
-  return { parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m") };
+  return {
+    parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m"), soak: read.duration("soak", "0s"),
+    approve_stages: read.flag("approve_stages", false),
+  };
 }
 
 // The host's agent key, checked as an OpenSSH public key line.

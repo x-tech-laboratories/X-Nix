@@ -32,6 +32,15 @@ last stage. With no stages it goes one host at a time.
 A staged switch waits, before the next host starts, for each host to read as in sync against an evaluation made after
 the switch. The first failure, drift or `sync_timeout` stops the rollout, and the hosts still queued are skipped.
 
+Once a stage has finished, the run can hold before the next:
+
+- **Soak.** With `soak` set, the finished stage must stay healthy that long. A host whose status turns failed, or a
+  switched host that drifts from the flake again, fails the stage and stops the rollout.
+- **Approval.** With `approve_stages` on, the next stage waits until an admin presses **Approve next stage** on the
+  run's page; the approval is noted in the history of each host of the finished stage.
+
+A run started from the API or MCP may set `soak` and `approve` for itself.
+
 ## Settings
 
 The config's `fleet` object:
@@ -41,3 +50,5 @@ The config's `fleet` object:
 | `parallel`     | `4`     | How many deployments a run acts on at once.                      |
 | `stages`       | none    | The stage selectors a staged rollout goes through, such as `["@canary", "@web"]`. |
 | `sync_timeout` | `30m`   | How long a staged switch may take to read as in sync.            |
+| `soak`           | `0s`    | How long each finished stage must stay healthy before the next starts. |
+| `approve_stages` | `false` | Wait for an admin's approval before each next stage.             |

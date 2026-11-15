@@ -300,6 +300,10 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  soak?: number;
+  approve?: boolean;
+  // The finished stage the run holds at, soaking or waiting for approval.
+  gate?: { stage: number; soak_until_epoch: number; approved: boolean; approved_by: string | null } | null;
   started_by?: string;
   started_epoch: number;
   finished_epoch: number | null;
@@ -311,6 +315,8 @@ export interface Fleet {
   parallel: number;
   stages: string[];
   sync_timeout: number;
+  soak: number;
+  approve_stages: boolean;
   tags: string[];
   runs: FleetRun[];
 }

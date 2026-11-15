@@ -40,9 +40,9 @@ export function RunsTable({ runs }: { runs: FleetRun[] }) {
 export function FleetRunView({ id }: { id: number }) {
   const run = use_resource(() => api<FleetRun>(`/api/fleet/runs/${id}`), [id], live);
 
-  const stop = async () => {
+  const post = async (action: "stop" | "approve") => {
     try {
-      toast((await api<FleetOutcome>(`/api/fleet/runs/${id}/stop`, "POST")).message);
+      toast((await api<FleetOutcome>(`/api/fleet/runs/${id}/${action}`, "POST")).message);
     } catch (error) {
       error_toast(error);
     }
@@ -53,7 +53,10 @@ export function FleetRunView({ id }: { id: number }) {
   return (
     <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [`Run ${id}`, null]]} />
-      <PageHeading title={`Fleet run ${id}`} actions={shown && shown.state === "running" && !shown.stop_requested && <button className="danger" onClick={() => void stop()}>Stop</button>} />
+      <PageHeading title={`Fleet run ${id}`} actions={shown && shown.state === "running" && !shown.stop_requested && <>
+        {shown.gate && !shown.gate.approved && <button className="accent solid" onClick={() => void post("approve")}>Approve next stage</button>}
+        <button className="danger" onClick={() => void post("stop")}>Stop</button>
+      </>} />
       <Stack>
         <Loaded resource={run}>
           {(found) => <>
