@@ -112,7 +112,9 @@ describe("build and push operations", () => {
   it("build from the latest flake, rooted under its link", () => {
     const build = build_operation(settings(), "Alpha");
     expect(build).toMatchObject({ kind: "cache_build", target: { installable: 'github:owner/fleet#nixosConfigurations."Alpha".config.system.build.toplevel', link: null } });
-    expect(build.cache).toMatchObject({ build_args: ["--keep-going", "--print-build-logs"], refresh: true });
+    expect(build.cache).toMatchObject({ build_args: ["--log-format", "internal-json", "-v", "--keep-going", "--print-build-logs"], refresh: true });
+    expect(build_operation(settings({ build_progress: false }), "Alpha").cache.build_args).toEqual(["--keep-going", "--print-build-logs"]);
+    expect(push_operation(settings(), "Alpha", "/nix/store/x").cache.build_args).not.toContain("internal-json");
     const rooted = settings({ build_root_dir: "/roots/", build_links: { Alpha: "alpha-deploy" } });
     expect(build_operation(rooted, "Alpha").target.link).toBe("/roots/alpha-deploy");
     expect(build_operation(rooted, "Beta").target.link).toBe("/roots/fleet-Beta");

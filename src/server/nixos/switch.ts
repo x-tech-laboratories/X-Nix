@@ -78,8 +78,9 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
   const steps = store_path === null ? rebuild_steps(settings, mode) : cache_switch_steps(settings, store_path, mode);
   const guarded = mode !== "dry-activate";
   const watch = guarded && watches(settings, mode) ? switch_watch(settings, mode, token) : null;
-  // A watched nixos-rebuild builds first, before the watchdog starts, so the build never uses up the activation's time.
-  const build_first = watch === null ? [] : rebuild_build_steps(settings);
+  // A watched nixos-rebuild builds first, before the watchdog starts, so the build never uses up the activation's time;
+  // with build_progress every nixos-rebuild does, so its job shows the build as nix's structured log tells it.
+  const build_first = watch === null && !settings.build_progress ? [] : rebuild_build_steps(settings);
   const operation: SwitchOperation = {
     kind: "switch",
     mode,

@@ -155,7 +155,8 @@ export interface DeploymentSettings {
   health_urls: string[];
   health_period: number;
   health_timeout: number;
-  // Whether Build reads nix's structured log, so its job shows what is building and downloading.
+  // Whether Build and a switch building on its own host read nix's structured log, so their jobs show what is building
+  // and downloading.
   build_progress: boolean;
   // Names a fleet selector picks the deployment by, as @tag.
   tags: string[];
@@ -197,6 +198,8 @@ export interface CacheSettings {
   nix_bin: string;
   nix_args: string[];
   build_args: string[];
+  // Whether Build and Build all read nix's structured log, so their jobs show what is building and downloading.
+  build_progress: boolean;
   build_root_dir: string | null;
   build_links: Record<string, string>;
   // When Build all runs daily, local to the server.
@@ -485,6 +488,7 @@ export function cache_settings(entry: unknown, index = 0, flakes = new Map<strin
     nix_bin: read.text("nix_bin") ?? "nix",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
     build_args: read.list("build_args", ["--keep-going", "--print-build-logs"]),
+    build_progress: read.flag("build_progress", true),
     build_root_dir: read.text("build_root_dir"),
     build_links: read.names("build_links"),
     build_at: read.time_of_day("build_at"),

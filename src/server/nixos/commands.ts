@@ -114,6 +114,10 @@ export function update_operation(settings: FlakeSettings): Operation {
 // Makes nix print its activities as JSON lines, which the job turns back into log lines and counts of builds.
 export const progress_args = ["--log-format", "internal-json", "-v"];
 
+function progress(settings: Pick<DeploymentSettings, "build_progress">): string[] {
+  return settings.build_progress ? progress_args : [];
+}
+
 // Realises the host's closure without activating it, so a later switch substitutes instead of building.
 export function build_operation(settings: DeploymentSettings, attribute: string | null): BuildOperation {
   return {
@@ -121,7 +125,7 @@ export function build_operation(settings: DeploymentSettings, attribute: string 
     nix: nix(settings),
     flake: settings.flake,
     attribute,
-    args: [...(settings.build_progress ? progress_args : []), ...settings.build_args],
+    args: [...progress(settings), ...settings.build_args],
     refresh: refreshes(settings.flake),
     // One link per deployment, so each build replaces the garbage-collector root the last one held.
     root_link: settings.build_root_dir === null ? null : `${settings.build_root_dir.replace(/\/+$/, "")}/${settings.id}`,
@@ -151,13 +155,14 @@ export function rebuild_steps(settings: DeploymentSettings, mode: SwitchMode): S
   return [{ argv: [...settings.switch_wrapper, ...sudo(settings), settings.rebuild_bin, mode, "--flake", flake_reference, ...args] }];
 }
 
-// Builds the system nixos-rebuild then activates, so a guarded switch's watchdog times the activation alone; none when
+// Builds the system nixos-rebuild then activates, so a guarded switch's watchdog times the activation alone and the job
+// can read the build's structured log; none when
 // nixos-rebuild builds elsewhere, on build_host or for target_host, or names no configuration to build.
 export function rebuild_build_steps(settings: DeploymentSettings): Step[] {
   if (settings.configuration === null || settings.build_host !== null || settings.target_host !== null) return [];
   const installable = `${settings.flake}#nixosConfigurations.${JSON.stringify(settings.configuration)}.config.system.build.toplevel`;
   const refresh = refreshes(settings.flake) ? ["--refresh"] : [];
-  return [{ argv: [...settings.switch_wrapper, ...nix(settings), "build", "--no-link", ...settings.build_args, ...refresh, installable] }];
+  return [{ argv: [...settings.switch_wrapper, ...nix(settings), "build", "--no-link", ...progress(settings), ...settings.build_args, ...refresh, installable] }];
 }
 
 // Fetches the evaluated closure and activates it in the mode asked, so the host neither evaluates nor builds. The daemon
@@ -175,7 +180,7 @@ export function cache_switch_steps(settings: DeploymentSettings, store_path: str
 export function cache_fetch_steps(settings: DeploymentSettings, store_path: string): Step[] {
   if (!is_store_path(store_path)) throw new Error(`'${store_path}' is not a store path`);
   const steps: Step[] = [
-    { argv: [...nix(settings), "build", "--no-link", store_path] },
+    { argv: [...nix(settings), "build", "--no-link", ...progress(settings), store_path] },
     { argv: [...nix(settings), "path-info", "--recursive", store_path], quiet: true },
   ];
   return steps.map((step) => ({ ...step, argv: [...settings.switch_wrapper, ...step.argv] }));

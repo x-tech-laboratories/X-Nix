@@ -16,7 +16,7 @@ import {
   flake_report_name, nix_string, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation, type CachePushOperation,
   type CacheTarget, type CacheSettings as CacheSpec, type Operation,
 } from "../../shared/operations.ts";
-import { timed } from "./commands.ts";
+import { progress_args, timed } from "./commands.ts";
 import { local_path } from "./flake.ts";
 
 export { report_mark } from "../../shared/operations.ts";
@@ -91,6 +91,11 @@ function target_of(settings: CacheSettings, name: string): CacheTarget {
   return { name, installable: new Map(targets(settings)).get(name)!, attribute, link, list: kept ? `${link}.closure` : null };
 }
 
+// The spec of an operation that builds, whose nix prints its structured log with build_progress, so its job shows a tree.
+function building_spec(settings: CacheSettings): CacheSpec {
+  return { ...spec(settings), build_args: [...(settings.build_progress ? progress_args : []), ...settings.build_args] };
+}
+
 function spec(settings: CacheSettings): CacheSpec {
   return {
     nix: [settings.nix_bin, ...settings.nix_args],
@@ -115,7 +120,7 @@ export function check_operation(settings: CacheSettings): Operation {
 
 // Builds one target from the flake's latest revision, pushes what it built when there is a push_command, then checks it.
 export function build_operation(settings: CacheSettings, name: string): CacheBuildOperation {
-  return { kind: "cache_build", cache: spec(settings), target: target_of(settings, name) };
+  return { kind: "cache_build", cache: building_spec(settings), target: target_of(settings, name) };
 }
 
 // Pushes one target's store path, then checks it again; the push's status is the run's.
@@ -132,7 +137,7 @@ export function build_all_expression(settings: CacheSettings): string {
 // Evaluates and builds every target, then checks each, failing when any target did not build.
 export function build_all_operation(settings: CacheSettings): CacheBuildAllOperation {
   return {
-    kind: "cache_build_all", cache: spec(settings), targets: targets(settings).map(([name]) => target_of(settings, name)),
+    kind: "cache_build_all", cache: building_spec(settings), targets: targets(settings).map(([name]) => target_of(settings, name)),
     eval_jobs: settings.eval_jobs_bin, eval_workers: settings.eval_workers, expression: build_all_expression(settings),
   };
 }

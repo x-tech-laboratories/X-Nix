@@ -27,6 +27,7 @@ import { timed_out_exit_code } from "./nixos/commands.ts";
 import type { Operation } from "../shared/operations.ts";
 import { parse_metadata } from "./nixos/flake.ts";
 import { latest_slot } from "./deployment.ts";
+import { build_translation, tend_build } from "./live_builds.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, JobWithOutput, Store } from "./store.ts";
 
@@ -209,7 +210,7 @@ export class Cache {
 
   private async poll_job(job: Job): Promise<void> {
     const timed_out = (exit_code: number) => (exit_code === timed_out_exit_code && job.kind === "check" ? `Timed out after ${format_duration(this.settings.timeout)}` : null);
-    const followed = await follow(this.store, this.agents, job, this.now, timed_out);
+    const followed = await follow(this.store, this.agents, job, this.now, timed_out, build_translation(this.store, job, this.now));
     if (followed.outcome === "unreachable") {
       this.store.add_event(this.id, this.now(), "warning", `Could not poll the running ${job.kind}: ${followed.error}`);
       return;
@@ -219,7 +220,8 @@ export class Cache {
     // The last line is often a report line, which says nothing to a person.
     const last_line = finished.output.split("\n").map((text) => text.trim()).filter((text) => text !== "" && !text.startsWith(report_mark)).pop();
     if (job.kind === "check") this.store.set_progress(job.id, `${report.targets.size} of ${targets(this.settings).length} targets evaluated`);
-    else if (last_line !== undefined) this.store.set_progress(job.id, last_line);
+    // A build printing nix's structured log names what is building instead.
+    else if (!(await tend_build(this.store, this.agents, job)) && last_line !== undefined) this.store.set_progress(job.id, last_line);
     if (followed.outcome === "running") return;
 
     if (job.kind === "check") {

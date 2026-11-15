@@ -13,12 +13,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 import {
   flake_report_name, fresh_lookup, missing_tool_exit_code, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation,
   type CachePushOperation, type CacheSettings, type CacheTarget,
 } from "../../shared/operations.ts";
-import { on_path, person_command, type Context } from "../programs.ts";
+import { on_path, person_command, type Context, type Sink } from "../programs.ts";
 
 // ── Reporting ────────────────────────────────────────────────────────────────
 
@@ -200,9 +201,13 @@ export async function cache_build_all(context: Context, operation: CacheBuildAll
       const started = Date.now();
       const link = target.link === null ? ["--no-link"] : ["--out-link", target.link];
       if (cache.build_root_dir !== null) mkdirSync(cache.build_root_dir, { recursive: true });
-      const built = await context.program(context, [...cache.nix, "build", ...link, ...cache.build_args, `${drv}^*`]);
+      // Builds run side by side, so each passes on whole lines and nix's structured log reaches the job unbroken.
+      const lined = { ...context, out: whole_lines(context.out), err: whole_lines(context.err) };
+      const built = await context.program(lined, [...cache.nix, "build", ...link, ...cache.build_args, `${drv}^*`]);
       let word: Outcome["word"] = built.exit_code === 0 ? "ok" : "failed";
-      if (word === "ok" && cache.push_command !== null && (await push(context, cache, out)).exit_code !== 0) word = "push_failed";
+      if (word === "ok" && cache.push_command !== null && (await push(lined, cache, out)).exit_code !== 0) word = "push_failed";
+      lined.out.flush();
+      lined.err.flush();
       context.out.write(`${target.name}: ${word}\n`);
       return { word, seconds: Math.round((Date.now() - started) / 1000), out };
     };
@@ -253,8 +258,9 @@ function evaluate_jobs(context: Context, argv: string[], each: (job: EvaluatedJo
   return new Promise((resolve) => {
     const child = spawn(argv[0], argv.slice(1), { detached: context.own_groups, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
+    const err = whole_lines(context.err);
     child.stderr.on("data", (chunk: Buffer) => {
-      context.err.write(chunk);
+      err.write(chunk);
       stderr = (stderr + chunk.toString("utf8")).slice(-4096);
     });
     createInterface({ input: child.stdout }).on("line", (line) => {
@@ -269,12 +275,32 @@ function evaluate_jobs(context: Context, argv: string[], each: (job: EvaluatedJo
     child.on("error", (error) => resolve({ exit_code: 127, stderr: error.message }));
     child.on("close", (code) => {
       context.signal.removeEventListener("abort", stop);
+      err.flush();
       resolve({ exit_code: code ?? 1, stderr });
     });
   });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// Passes on only whole lines, so programs printing side by side never split each other's; flush passes on the rest.
+export function whole_lines(sink: Sink): Sink & { flush(): void } {
+  const decoder = new StringDecoder("utf8");
+  let carry = "";
+  return {
+    write(chunk) {
+      const text = carry + (typeof chunk === "string" ? chunk : decoder.write(chunk));
+      const end = text.lastIndexOf("\n") + 1;
+      carry = text.slice(end);
+      if (end > 0) sink.write(text.slice(0, end));
+    },
+    flush() {
+      const rest = carry + decoder.end();
+      carry = "";
+      if (rest !== "") sink.write(`${rest}\n`);
+    },
+  };
+}
 
 function lines(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
