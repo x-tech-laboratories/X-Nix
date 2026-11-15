@@ -121,6 +121,7 @@ function App() {
     <Shell
       key={logged_in ? "open" : "closed"}
       brand="X-Nix"
+      brand_icon="/icon.svg"
       sidebar={me && <Sidebar sections={shown_sections} section={place.section} item={place.item} />}
       theme={theme}
       user={me?.name ?? null}
