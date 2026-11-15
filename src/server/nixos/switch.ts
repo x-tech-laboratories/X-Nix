@@ -10,7 +10,8 @@
 // health_period until they all pass or health_timeout passes, then prints a line asking X-Nix to confirm. X-Nix runs the
 // HTTP checks and confirms through the agent. The watchdog rolls back to the previous system when told to, when the
 // activation outlasts activation_timeout, or, with magic_rollback, when no confirmation arrives within confirm_timeout
-// (plus health_timeout when there are health checks). The run ends by printing the watchdog's outcome on a marker line,
+// (plus health_timeout when there are health checks). With defer_switch_on, a switch whose new system changes one of
+// those parts sets it for the next boot instead. The run ends by printing the watchdog's outcome on a marker line,
 // which the server reads to say why a switch was refused or rolled back. With inhibit_sleep, a sleep inhibitor on the
 // activated host lasts exactly as long as the run.
 
@@ -22,9 +23,11 @@ import type { DeploymentSettings } from "../config.ts";
 import { read_facts, type Generation } from "../../shared/facts.ts";
 import {
   innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
-  type SwitchOperation, type SwitchWatch,
+  type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
-import { cache_fetch_steps, cache_switch_steps, post_switch_argv, rebuild_build_steps, rebuild_steps, sudo, system_profile, type SwitchMode } from "./commands.ts";
+import {
+  cache_fetch_steps, cache_switch_steps, nix, post_switch_argv, rebuild_build_steps, rebuild_steps, sudo, system_profile, type SwitchMode,
+} from "./commands.ts";
 
 export type { Generation } from "../../shared/facts.ts";
 export { switch_mark } from "../../shared/operations.ts";
@@ -78,8 +81,9 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
   const steps = store_path === null ? rebuild_steps(settings, mode) : cache_switch_steps(settings, store_path, mode);
   const guarded = mode !== "dry-activate";
   const watch = guarded && watches(settings, mode) ? switch_watch(settings, mode, token) : null;
-  // A watched nixos-rebuild builds first, before the watchdog starts, so the build never uses up the activation's time.
-  const build_first = watch === null ? [] : rebuild_build_steps(settings);
+  const defer = mode === "switch" ? switch_defer(settings, store_path) : null;
+  // A watched or deferrable nixos-rebuild builds first, so the build never uses up the activation's time and the new system can be compared.
+  const build_first = watch === null && defer === null ? [] : rebuild_build_steps(settings);
   const operation: SwitchOperation = {
     kind: "switch",
     mode,
@@ -89,10 +93,21 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
     post_switch: post_switch_argv(settings),
     pre_switch_checks: guarded ? settings.pre_switch_checks : [],
     watch,
+    defer,
     // Only the switch agent's own host can be looked at, so a switch to target_host goes without.
     ...(settings.close_nix_lock_holders && settings.target_host === null ? { close_nix_lock_holders: { sudo: settings.require_sudo } } : {}),
   };
   return kept_awake(settings, operation);
+}
+
+// What sets a switch for the next boot instead, when the settings name parts and the switching host's own new system can be found
+// before it activates: fetched from the cache, or built here by nixos-rebuild.
+function switch_defer(settings: DeploymentSettings, store_path: string | null): SwitchDefer | null {
+  if (settings.defer_switch_on.length === 0 || settings.target_host !== null) return null;
+  if (store_path !== null) return { parts: settings.defer_switch_on, system: store_path, nix: nix(settings), boot_steps: cache_switch_steps(settings, store_path, "boot") };
+  if (rebuild_build_steps(settings).length === 0) return null;
+  const installable = `${settings.flake}#nixosConfigurations.${JSON.stringify(settings.configuration)}.config.system.build.toplevel`;
+  return { parts: settings.defer_switch_on, system: installable, nix: nix(settings), boot_steps: rebuild_steps(settings, "boot") };
 }
 
 function switch_watch(settings: DeploymentSettings, mode: SwitchMode, token: string): SwitchWatch {

@@ -13,6 +13,7 @@ import { format_duration, parse_duration } from "@x-tech-laboratories/x-libs/dur
 
 import type { DeploymentSettings, FleetSettings } from "./config.ts";
 import type { Deployment } from "./deployment.ts";
+import { switch_verdict } from "./nixos/switch.ts";
 import type { Store } from "./store.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
@@ -360,6 +361,8 @@ export class Fleet {
       return;
     }
     if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? "The job failed", now);
+    const outcome = run.action === "switch" ? switch_verdict(job.output).outcome : null;
+    if (outcome?.kind === "deferred") return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);
     if (!(run.staged && run.action === "switch")) return this.finish_host(host, "succeeded", "Finished", now);
     host.state = "verifying";
     host.verify_since_epoch = job.finished_epoch ?? now;

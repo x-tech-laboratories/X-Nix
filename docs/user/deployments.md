@@ -142,6 +142,15 @@ such as an editor's language server, keeps it open and the switch waiting. A job
 notes what it is waiting for and who holds the lock. With `close_nix_lock_holders`, the switch stops those holders
 after a minute; their work ends, so it is off by default.
 
+### Switching at the next boot
+
+Some parts of a system cannot be swapped while it runs. With `defer_switch_on` naming any of `kernel`, `systemd` and
+`dbus`, a switch compares those parts of the new system with the running one before it activates anything. When one
+differs, it sets the new system for the next boot instead, as Boot does, and the deployment shows it waiting on a
+reboot until the host runs another system. A staged fleet run counts such a host as done. It needs the new system's
+path on the switching host before the activation: one fetched from the cache, or one nixos-rebuild builds there for a
+named `configuration`; a switch to a `target_host` always switches.
+
 ## Settings
 
 | Setting             | Default                           | Meaning                                                              |
@@ -180,6 +189,7 @@ after a minute; their work ends, so it is off by default.
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Stop what holds the Nix store database once the activation has waited a minute for it. Not with `target_host`. |
+| `defer_switch_on`   | none                              | Set a switch for the next boot instead when the new system changes any of `kernel`, `systemd` or `dbus`. |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; fetching or building the system comes before and is not counted. |
 | `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |

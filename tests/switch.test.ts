@@ -1,4 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import { changed_parts } from "../src/agent/operations/switch.ts";
+import type { Context } from "../src/agent/programs.ts";
 
 import { ConfigError, deployment_settings, host_settings } from "../src/server/config.ts";
 import {
@@ -44,6 +51,35 @@ describe("switch settings", () => {
     expect(switch_of(switch_job_operation(settings(), "switch", "ab12")).close_nix_lock_holders).toBeUndefined();
     expect(asked.close_nix_lock_holders).toEqual({ sudo: true });
     expect(remote.close_nix_lock_holders).toBeUndefined();
+  });
+
+  it("set a switch for the next boot only when defer_switch_on names parts and the host's own new system is known", () => {
+    const cached = switch_of(switch_job_operation(settings({ defer_switch_on: ["kernel", "systemd"] }), "switch", "ab12", target_closure));
+    const built = switch_of(switch_job_operation(settings({ defer_switch_on: ["kernel"], configuration: "odin" }), "switch", "ab12"));
+
+    expect(cached.defer).toMatchObject({ parts: ["kernel", "systemd"], system: target_closure });
+    expect(cached.defer!.boot_steps.at(-1)!.argv).toEqual(["sudo", "-n", `${target_closure}/bin/switch-to-configuration`, "boot"]);
+    expect(built.defer!.system).toBe('/etc/nixos#nixosConfigurations."odin".config.system.build.toplevel');
+    expect(built.fetch_steps).toHaveLength(1);
+    expect(switch_of(switch_job_operation(settings(), "switch", "ab12", target_closure)).defer).toBeNull();
+    expect(switch_of(switch_job_operation(settings({ defer_switch_on: ["kernel"] }), "boot", "ab12", target_closure)).defer).toBeNull();
+    expect(switch_of(switch_job_operation(settings({ defer_switch_on: ["kernel"], target_host: "root@odin" }), "switch", "ab12", target_closure)).defer).toBeNull();
+    expect(() => settings({ defer_switch_on: ["firmware"] })).toThrow(ConfigError);
+  });
+
+  it("name the parts the new system changes from the running one", async () => {
+    const root = mkdtempSync(join(tmpdir(), "x-nix-defer-"));
+    // Two systems sharing systemd but not the kernel.
+    for (const name of ["kernel-a", "kernel-b", "systemd", "running", "next"]) mkdirSync(join(root, name));
+    symlinkSync(join(root, "kernel-a"), join(root, "running", "kernel"));
+    symlinkSync(join(root, "kernel-b"), join(root, "next", "kernel"));
+    for (const system of ["running", "next"]) symlinkSync(join(root, "systemd"), join(root, system, "systemd"));
+    const context = { out: { write: () => true } } as unknown as Context;
+
+    const defer = { parts: ["kernel", "systemd", "dbus"] as const, nix: ["nix"], boot_steps: [] };
+    expect(await changed_parts(context, { ...defer, parts: [...defer.parts], system: join(root, "next") }, join(root, "running"))).toEqual(["kernel"]);
+    expect(await changed_parts(context, { ...defer, parts: [...defer.parts], system: join(root, "running") }, join(root, "running"))).toEqual([]);
+    rmSync(root, { recursive: true });
   });
 
   it("accept only http and https health URLs", () => {
