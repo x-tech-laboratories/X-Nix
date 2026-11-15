@@ -137,6 +137,22 @@ describe("live build progress", () => {
     expect(summarise(progress)).toBe("Built 1 of 2; downloaded 1");
   });
 
+  it("tells apart activities whose ids are too large for a number to hold exactly", () => {
+    const progress = empty_progress();
+    // Ids from pid 4000000, which nix shifts 32 bits; 2^54 and 2^54 + 1 are the same number in JavaScript.
+    const [first, second] = ["18014398509481984", "18014398509481985"];
+    const raw = (action: string, id: string, rest: string) => `@nix {"action":"${action}",${rest}"id":${id}}`;
+    read_build_log(progress, [
+      raw("start", first, `"fields":["${drv}"],`).replace("}", ',"type":105}'),
+      raw("start", second, `"fields":["/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-zlib-1.3"],`).replace("}", ',"type":108}'),
+      "",
+    ].join("\n"), false);
+
+    expect(Object.keys(progress.activities).sort()).toEqual([first, second]);
+    read_build_log(progress, `${raw("stop", first, "")}\n`, false);
+    expect(summarise(progress)).toBe("Built 1; downloaded 0, downloading 1");
+  });
+
   it("counts a failed builder and forgets running activities once the build ends", () => {
     const progress = empty_progress();
     read_build_log(progress, `${nix_line({ action: "start", id: 2, type: 105, fields: [drv] })}\n`, false);
