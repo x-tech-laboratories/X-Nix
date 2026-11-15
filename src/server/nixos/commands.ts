@@ -114,6 +114,10 @@ export function update_operation(settings: FlakeSettings): Operation {
 // Makes nix print its activities as JSON lines, which the job turns back into log lines and counts of builds.
 export const progress_args = ["--log-format", "internal-json", "-v"];
 
+// nixos-rebuild hands the log format to every nix it runs, here, on build_host and for target_host; without -v, which
+// would also print each command it runs, as nix's plan and activities need no more than its default level.
+const rebuild_progress_args = ["--log-format", "internal-json"];
+
 function progress(settings: Pick<DeploymentSettings, "build_progress">): string[] {
   return settings.build_progress ? progress_args : [];
 }
@@ -149,14 +153,14 @@ export function rebuild_steps(settings: DeploymentSettings, mode: SwitchMode): S
   const args = [
     ...(settings.build_host ? ["--build-host", settings.build_host] : []),
     ...(settings.target_host ? ["--target-host", settings.target_host] : []),
+    ...(settings.build_progress ? rebuild_progress_args : []),
     ...settings.rebuild_args,
     ...(refreshes(settings.flake) ? ["--refresh"] : []),
   ];
   return [{ argv: [...settings.switch_wrapper, ...sudo(settings), settings.rebuild_bin, mode, "--flake", flake_reference, ...args] }];
 }
 
-// Builds the system nixos-rebuild then activates, so a guarded switch's watchdog times the activation alone and the job
-// can read the build's structured log; none when
+// Builds the system nixos-rebuild then activates, so a guarded switch's watchdog times the activation alone; none when
 // nixos-rebuild builds elsewhere, on build_host or for target_host, or names no configuration to build.
 export function rebuild_build_steps(settings: DeploymentSettings): Step[] {
   if (settings.configuration === null || settings.build_host !== null || settings.target_host !== null) return [];

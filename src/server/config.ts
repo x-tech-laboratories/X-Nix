@@ -155,8 +155,7 @@ export interface DeploymentSettings {
   health_urls: string[];
   health_period: number;
   health_timeout: number;
-  // Whether Build and a switch building on its own host read nix's structured log, so their jobs show what is building
-  // and downloading.
+  // Whether Build and a switch read nix's structured log, so their jobs show what is building and downloading.
   build_progress: boolean;
   // Names a fleet selector picks the deployment by, as @tag.
   tags: string[];
