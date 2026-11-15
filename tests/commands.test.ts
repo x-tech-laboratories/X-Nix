@@ -104,7 +104,7 @@ describe("the evaluation", () => {
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 describe("the switch", () => {
-  const argv = (values: Record<string, unknown> = {}, mode: "switch" | "boot" = "switch") => rebuild_steps(settings(values), mode)[0].argv;
+  const argv = (values: Record<string, unknown> = {}, mode: "switch" | "boot" = "switch") => rebuild_steps(settings({ build_progress: false, ...values }), mode)[0].argv;
 
   it("switches to the flake, naming the configuration when set", () => {
     expect(argv()).toEqual(["sudo", "-n", "nixos-rebuild", "switch", "--flake", "/etc/nixos"]);
@@ -122,6 +122,12 @@ describe("the switch", () => {
       .toEqual(["--build-host", "root@builder", "--target-host", "root@odin", "--show-trace"]);
     expect(argv()).not.toContain("--build-host");
     expect(argv()).not.toContain("--target-host");
+  });
+
+  it("with build_progress, has nixos-rebuild print nix's structured log wherever it builds, without its own debug lines", () => {
+    expect(argv({ build_progress: true, build_host: "root@builder", rebuild_args: ["--show-trace"] }).slice(-5))
+      .toEqual(["--build-host", "root@builder", "--log-format", "internal-json", "--show-trace"]);
+    expect(argv({ build_progress: true })).not.toContain("-v");
   });
 
   it("runs the wrapper outside sudo", () => {

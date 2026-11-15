@@ -983,7 +983,7 @@ describe("safer switches", () => {
     const job = harness.deployment.running_job()!;
     expect(job.kind).toBe("dry-activate");
     expect(JSON.parse(job.command)).toMatchObject({ kind: "switch", mode: "dry-activate", watch: null, pre_switch_checks: [] });
-    expect(shown_command(job.command).split("\n").slice(1)).toEqual(["sudo -n nixos-rebuild dry-activate --flake /etc/nixos"]);
+    expect(shown_command(job.command).split("\n").slice(1)).toEqual(["sudo -n nixos-rebuild dry-activate --flake /etc/nixos --log-format internal-json"]);
   });
 
   it("confirms a switch once its HTTP checks pass, and only once", async () => {

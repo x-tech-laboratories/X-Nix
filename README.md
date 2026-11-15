@@ -203,7 +203,7 @@ else on the first that can be woken, so a build moves to a faster machine whenev
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
 | `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |
-| `build_progress`    | `true`                            | Read the structured log of Build, and of a switch building or fetching on its host, into counts and a tree of what builds and downloads. |
+| `build_progress`    | `true`                            | Read the structured log of Build and of a switch, nixos-rebuild's on `build_host` and for `target_host` too, into counts and a tree of what builds and downloads. |
 | `tags`              | none                              | Names a fleet selector picks the deployment by, as `@tag`.           |
 | `pin`               | none                              | A commit hash or tag that evaluation, build and switch use instead of the branch head. |
 
@@ -227,9 +227,9 @@ on the host itself compares at once when it ends. When the flake's closure is no
 store yet, the page says so and the switch builds it. The Generations panel lists every generation
 of the system profile, rolls back to any of them as a job that records why, and opens the closure
 browser: a generation's dependency tree with each path's own and closure size, and its largest
-paths. A Build with `build_progress`, whether it builds itself or through a cache, and a switch
-building or fetching the system on its host, show what is building, downloading and done, and the job's
-page shows every derivation nix plans to build as a tree table, each under a derivation that needs
+paths. A Build with `build_progress`, whether it builds itself or through a cache, and a switch,
+whether it fetches from the cache or runs nixos-rebuild here, on `build_host` or for `target_host`,
+show what is building, downloading and done, and the job's page shows every derivation nix plans to build as a tree table, each under a derivation that needs
 it, with the paths it fetches, each one's status and build phase, and how long it took.
 
 A switch is guarded when `pre_switch_checks`, `health_commands`, `health_urls` or `magic_rollback`

@@ -74,18 +74,21 @@ describe("switch operations", () => {
     expect(switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin", build_host: "root@thor" }), "switch", "ab12")).fetch_steps).toEqual([]);
   });
 
-  it("with build_progress, builds the system first for any nixos-rebuild, printing nix's structured log", () => {
-    const steps = switch_of(switch_job_operation(settings({ configuration: "Odin" }), "switch", "ab12")).fetch_steps!;
+  it("with build_progress, builds a guarded system first printing nix's structured log, and leaves an unguarded one to nixos-rebuild", () => {
+    const guarded = switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin" }), "switch", "ab12"));
+    const plain = switch_of(switch_job_operation(settings({ configuration: "Odin" }), "switch", "ab12"));
 
-    expect(steps.map((step) => step.argv.join(" "))).toEqual([
+    expect(guarded.fetch_steps!.map((step) => step.argv.join(" "))).toEqual([
       'nix --extra-experimental-features nix-command flakes build --no-link --log-format internal-json -v --keep-going --print-build-logs /etc/nixos#nixosConfigurations."Odin".config.system.build.toplevel',
     ]);
+    expect(plain.fetch_steps).toEqual([]);
+    expect(plain.steps[0].argv.join(" ")).toContain("nixos-rebuild switch --flake /etc/nixos#Odin --log-format internal-json");
   });
 
   it("runs nixos-rebuild alone in each mode when nothing guards it", () => {
     const plain = switch_of(switch_job_operation(settings(), "boot", "ab12"));
 
-    expect(plain.steps).toEqual([{ argv: ["sudo", "-n", "nixos-rebuild", "boot", "--flake", "/etc/nixos"] }]);
+    expect(plain.steps).toEqual([{ argv: ["sudo", "-n", "nixos-rebuild", "boot", "--flake", "/etc/nixos", "--log-format", "internal-json"] }]);
     expect(plain.activation_name).toBe("nixos-rebuild boot");
     const dry = switch_of(switch_job_operation(settings({ magic_rollback: true, pre_switch_checks: ["false"] }), "dry-activate", "ab12"));
     expect([dry.watch, dry.pre_switch_checks]).toEqual([null, []]);
