@@ -27,8 +27,8 @@ Deployments, flakes and caches share one set of ids, so no two of them may have 
 ## What X-Nix records
 
 **Job.** Anything X-Nix runs on a machine that takes time: an evaluation, a build, a switch, a garbage collection, a
-flake update, an install. A job keeps its whole output, what started it (a person, a schedule, an automatic switch, a
-push, a fleet run), and how it ended. Long jobs keep running if the X-Nix server restarts, and the page picks them up
+flake update, an install. A job keeps its whole output, what started it (the signed-in user, marked when they used a token,
+a schedule, an automatic switch, a push, a fleet run), and how it ended. Long jobs keep running if the X-Nix server restarts, and the page picks them up
 again.
 
 **Event.** A line in a deployment's, host's, flake's or cache's history: its status changed, a switch was rolled back, a

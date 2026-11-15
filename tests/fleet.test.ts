@@ -117,9 +117,10 @@ describe("a fleet run", () => {
   it("acts on what the selector picks, no more at once than parallel allows", async () => {
     const { fleet, harnesses, agent } = make_fleet([{ id: "web-1" }, { id: "web-2" }, { id: "web-3" }, { id: "db-1" }]);
 
-    const outcome = await fleet.start({ action: "build", selector: "web-*", parallel: 2 });
+    const outcome = await fleet.start({ action: "build", selector: "web-*", parallel: 2 }, "admin");
 
     expect(outcome.ok).toBe(true);
+    expect(outcome.run!.started_by).toBe("admin");
     expect(states(outcome.run)).toEqual({ "web-1": "running", "web-2": "running", "web-3": "queued" });
     expect(harnesses.get("web-1")!.store.jobs({ deployment_id: "web-1" })[0].trigger).toBe(`fleet #${outcome.run!.id}`);
     await end_job(harnesses.get("web-1")!, agent, 0, "build");

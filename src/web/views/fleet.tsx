@@ -62,6 +62,7 @@ export function FleetRunView({ id }: { id: number }) {
               ["State", <FleetRunBadge state={found.state} />],
               ["Picked", found.selector],
               ["At once", found.parallel],
+              ["Started by", found.started_by ?? "—"],
               ["Started", <Age epoch={found.started_epoch} />],
               ["Finished", <Age epoch={found.finished_epoch} />],
               ["Outcome", found.message ?? summary(found)],

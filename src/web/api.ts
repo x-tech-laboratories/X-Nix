@@ -300,6 +300,7 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  started_by?: string;
   started_epoch: number;
   finished_epoch: number | null;
   message: string | null;

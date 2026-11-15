@@ -51,6 +51,8 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  // Who started it; absent from runs started before it was kept.
+  started_by?: string;
   started_epoch: number;
   finished_epoch: number | null;
   message: string | null;
@@ -144,7 +146,7 @@ export class Fleet {
   // ── Starting ─────────────────────────────────────────────────────────────
 
   // Checks the request, keeps the new run and starts its first hosts.
-  async start(request: FleetRequest): Promise<FleetOutcome> {
+  async start(request: FleetRequest, started_by = "manual"): Promise<FleetOutcome> {
     const refuse = (message: string): FleetOutcome => ({ ok: false, message, run: null });
     const action = request.action as FleetActionId;
     if (!fleet_action_ids.includes(action)) return refuse(`No fleet action named '${String(request.action)}'`);
@@ -184,10 +186,10 @@ export class Fleet {
     else if (staged && hosts.some((host) => host.stage === stages.length)) stages = [...stages, "the rest"];
     const run: Omit<FleetRun, "id"> = {
       action, selector, staged, stages, parallel, state: "running", current_stage: Math.min(...hosts.map((host) => host.stage)), stop_requested: false,
-      started_epoch: now, finished_epoch: null, message: null, hosts,
+      started_by, started_epoch: now, finished_epoch: null, message: null, hosts,
     };
     const id = this.store.create_fleet_run("running", run);
-    for (const deployment of picked) this.store.add_event(deployment.id, now, "info", `Fleet run #${id} queued: ${action}`);
+    for (const deployment of picked) this.store.add_event(deployment.id, now, "info", `Fleet run #${id} queued by ${started_by}: ${action}`);
     await this.advance();
     return { ok: true, message: `Fleet run #${id} started on ${picked.length} deployment${picked.length === 1 ? "" : "s"}`, run: this.run(id) };
   }

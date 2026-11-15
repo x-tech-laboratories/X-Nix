@@ -171,7 +171,7 @@ export class Provisioner {
 
   // ── Starting ─────────────────────────────────────────────────────────────
 
-  install(request: InstallRequest): Promise<ProvisionOutcome> {
+  install(request: InstallRequest, trigger = "manual"): Promise<ProvisionOutcome> {
     return this.serial(async () => {
       const refusal = this.request_refusal(request);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
@@ -179,7 +179,7 @@ export class Provisioner {
       const key = request.stop_after_partitioning ? null : generate_agent_key(`x-nix-agent-${request.host}`);
       const operation = install_operation(this.settings, request, key?.public_line ?? null);
       const agent = request.agent === this.agents.own_host ? null : request.agent ?? this.settings.install_agent;
-      const launched = await this.launch(request.host, "install", agent, operation, key?.private_text ?? null);
+      const launched = await this.launch(request.host, "install", agent, operation, key?.private_text ?? null, trigger);
       if (launched.job_id === null) return { ok: false, message: `Could not start the install: ${launched.error}`, job_id: null };
       const what = request.stop_after_partitioning ? "Partitioning" : "Install";
       this.store.add_event(request.host, this.now(), "info", `${what} of ${request.flake}#${request.configuration} on ${request.address} started`);
@@ -187,17 +187,19 @@ export class Provisioner {
     });
   }
 
-  build_media(request: MediaRequest): Promise<ProvisionOutcome> {
+  build_media(request: MediaRequest, trigger = "manual"): Promise<ProvisionOutcome> {
     return this.serial(async () => {
       const link_name = `${request.owner.slice(0, 60)}-${request.format}-${this.now()}-${randomBytes(3).toString("hex")}`.replace(/[^A-Za-z0-9._-]/g, "_");
       const operation = media_operation(this.settings, this.media_root_dir, request.flake, request.configuration, request.format, link_name);
-      const launched = await this.launch(request.owner, "media", null, operation, null, link_name);
+      const launched = await this.launch(request.owner, "media", null, operation, null, trigger, link_name);
       if (launched.job_id === null) return { ok: false, message: `Could not start the media build: ${launched.error}`, job_id: null };
       return { ok: true, message: `Build of the ${request.format} medium for ${request.configuration} started`, job_id: launched.job_id };
     });
   }
 
-  private async launch(owner: string, kind: JobKind, agent: string | null, operation: Operation, stdin: string | null, run_id?: string): Promise<{ job_id: number | null; error: string }> {
+  private async launch(
+    owner: string, kind: JobKind, agent: string | null, operation: Operation, stdin: string | null, trigger: string, run_id?: string,
+  ): Promise<{ job_id: number | null; error: string }> {
     const id = run_id ?? `${owner}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {
@@ -205,7 +207,7 @@ export class Provisioner {
     } catch (error) {
       return { job_id: null, error: error instanceof AgentError ? error.message : String(error) };
     }
-    const job_id = this.store.create_job({ deployment_id: owner, kind, command: JSON.stringify(operation), agent, run_id: id, trigger: "manual", started_epoch: this.now() });
+    const job_id = this.store.create_job({ deployment_id: owner, kind, command: JSON.stringify(operation), agent, run_id: id, trigger, started_epoch: this.now() });
     if (waking !== null) {
       track_wake(this.store, job_id, agent ?? this.agents.own_host, waking, this.now, (error) => {
         this.store.add_event(owner, this.now(), "error", `Could not start the ${kind}: ${error}`);

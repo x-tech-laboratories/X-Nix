@@ -13,7 +13,7 @@ import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_fold
 
 import type { AgentPool } from "./agents/agent.ts";
 import { agent_statuses, type Hub } from "./agents/hub.ts";
-import { register_auth, type Accounts } from "./auth.ts";
+import { register_auth, started_by, type Accounts } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
@@ -485,7 +485,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (host === null) return reply;
     const action = request.params.action as HostActionId;
     if (!host_action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
-    const outcome = await host.act(action);
+    const outcome = await host.act(action, started_by(request.viewer));
     if (outcome.ok) poller.soon(host);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
@@ -495,7 +495,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const host = find_host(request.params.name, reply);
     if (host === null) return reply;
     if (typeof request.body?.entry !== "string") return reply.code(400).send({ error: "Name the boot entry as `entry`" });
-    const outcome = await host.set_next_boot(request.body.entry, request.body.reboot === true);
+    const outcome = await host.set_next_boot(request.body.entry, request.body.reboot === true, started_by(request.viewer));
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 
@@ -530,7 +530,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.post<{ Params: { id: string } }>("/api/flakes/:id/update", async (request, reply) => {
     const flake = find_flake(request.params.id, reply);
     if (flake === null) return reply;
-    const outcome = await flake.update();
+    const outcome = await flake.update(started_by(request.viewer));
     if (outcome.ok) poller.soon(flake);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
@@ -562,7 +562,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (deployment === null) return reply;
     const action = request.params.action as ActionId;
     if (!action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
-    const outcome = await deployment.act(action);
+    const outcome = await deployment.act(action, started_by(request.viewer));
     if (outcome.ok) poller.soon(deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
@@ -583,7 +583,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.post<{ Params: { id: string }; Body: { force?: unknown } | undefined }>("/api/deployments/:id/diff", async (request, reply) => {
     const deployment = find(request.params.id, reply);
     if (deployment === null) return reply;
-    return deployment.diff(request.body?.force === true);
+    return deployment.diff(request.body?.force === true, started_by(request.viewer));
   });
 
   app.get<{ Params: { id: string } }>("/api/deployments/:id/generations", async (request, reply) => {
@@ -608,7 +608,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     const generation = request.body?.generation;
     if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) return reply.code(400).send({ error: "Name the generation as a whole `generation` number" });
     const given = typeof request.body?.reason === "string" ? request.body.reason.trim().slice(0, 200) : "";
-    const outcome = await deployment.roll_back(generation, given || "asked for from the page");
+    const outcome = await deployment.roll_back(generation, given || "asked for from the page", started_by(request.viewer));
     if (outcome.ok) poller.soon(deployment);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
@@ -638,7 +638,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request) => fleet.select(request.query.selector ?? "").map((deployment) => deployment.id));
 
   app.post<{ Body: FleetRequest }>("/api/fleet/runs", async (request, reply) => {
-    const outcome = await fleet.start(request.body ?? {});
+    const outcome = await fleet.start(request.body ?? {}, started_by(request.viewer));
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 
@@ -689,7 +689,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (cache === null) return reply;
     const action = request.params.action as CacheActionId;
     if (!cache_action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
-    const outcome = await cache.act(action, request.params.name);
+    const outcome = await cache.act(action, request.params.name, started_by(request.viewer));
     if (outcome.ok) poller.soon(cache);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
@@ -721,7 +721,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
       const parsed = parse_install_request(request.body);
       if (typeof parsed === "string") return reply.code(400).send({ error: parsed });
       if (request.body?.confirm !== parsed.address) return reply.code(400).send({ error: `Type the target's address, ${parsed.address}, to confirm its disks are wiped` });
-      const outcome = await provisioner.install(parsed);
+      const outcome = await provisioner.install(parsed, started_by(request.viewer));
       if (outcome.ok) poller.soon(provisioner);
       return reply.code(outcome.ok ? 200 : 409).send(outcome);
     });
@@ -746,7 +746,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
       for (const [name, value] of [["flake", flake], ["configuration", configuration]] as const) {
         if (typeof value !== "string" || value.trim() === "" || /[\n\r\0]/.test(value)) return reply.code(400).send({ error: `Name the ${name} to build from` });
       }
-      const outcome = await provisioner.build_media({ owner, flake: (flake as string).trim(), configuration: (configuration as string).trim(), format });
+      const outcome = await provisioner.build_media({ owner, flake: (flake as string).trim(), configuration: (configuration as string).trim(), format }, started_by(request.viewer));
       if (outcome.ok) poller.soon(provisioner);
       return reply.code(outcome.ok ? 200 : 409).send(outcome);
     });

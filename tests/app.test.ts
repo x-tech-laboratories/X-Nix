@@ -111,8 +111,9 @@ describe("/api/deployments", () => {
 
     expect(started.statusCode).toBe(200);
     expect(refused.statusCode).toBe(409);
-    const jobs = (await inject("GET", "/api/jobs?deployment=host-deploy")).json<{ id: number; kind: string }[]>();
+    const jobs = (await inject("GET", "/api/jobs?deployment=host-deploy")).json<{ id: number; kind: string; trigger: string }[]>();
     expect(jobs.map((job) => job.kind)).toEqual(["switch"]);
+    expect(jobs[0].trigger).toBe("admin");
     expect((await inject("GET", `/api/jobs/${jobs[0].id}`)).json()).toHaveProperty("output");
     expect((await inject("GET", "/api/jobs?kind=collect")).json()).toEqual([]);
   });

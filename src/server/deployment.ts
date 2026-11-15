@@ -1035,8 +1035,8 @@ export class Deployment {
   // ── Package diff ─────────────────────────────────────────────────────────
 
   // Compares the running closure with the flake's, running the diff unless the last one compared the same two.
-  diff(force: boolean): Promise<DiffOutcome> {
-    return this.serial(() => this.compute_diff(force, "manual"));
+  diff(force: boolean, trigger = "manual"): Promise<DiffOutcome> {
+    return this.serial(() => this.compute_diff(force, trigger));
   }
 
   private async compute_diff(force: boolean, trigger: string): Promise<DiffOutcome> {
@@ -1089,7 +1089,7 @@ export class Deployment {
   }
 
   // Activates an earlier generation of the system profile, recording why.
-  roll_back(generation: number, reason: string): Promise<ActionOutcome> {
+  roll_back(generation: number, reason: string, trigger = "manual"): Promise<ActionOutcome> {
     return this.serial(async () => {
       if (this.running_job() !== null) return { ok: false, message: "A job is already running for this deployment", job_id: null };
       const { generations, error } = await this.generations();
@@ -1098,9 +1098,9 @@ export class Deployment {
       if (chosen === undefined) return { ok: false, message: `Generation ${generation} is not one of the host's system generations`, job_id: null };
       if (chosen.current && chosen.profile) return { ok: false, message: `Generation ${generation} is already running`, job_id: null };
       const operation = rollback_operation(this.settings, generation, reason);
-      const launched = await this.launch("rollback", operation, "manual", false);
+      const launched = await this.launch("rollback", operation, trigger, false);
       if (launched.job_id === null) {
-        const job_id = this.record_failed_launch("rollback", operation, "manual", launched.error);
+        const job_id = this.record_failed_launch("rollback", operation, trigger, launched.error);
         return { ok: false, message: `Could not start the rollback: ${launched.error}`, job_id };
       }
       this.store.add_event(this.id, this.now(), "warning", `Rolling back to generation ${generation}: ${reason}`);
