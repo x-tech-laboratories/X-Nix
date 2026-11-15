@@ -1,7 +1,8 @@
 // A switch: its pre-switch checks, the fetch of a closure from the cache, its watchdog, the activation, post_switch and
 // its health checks, printing marker lines that tell the server how it went; and the files X-Nix writes to confirm a
 // switch or to have it rolled back. A guarded switch ends once its watchdog gives an outcome, even while the activation
-// hangs, and with close_nix_lock_holders it stops what keeps the activation from the Nix store database.
+// hangs, and with close_nix_lock_holders it stops what keeps the activation from the Nix store database. A switch whose
+// new system changes a part that cannot be swapped while running sets it for the next boot instead.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -12,8 +13,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
-  stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type SignalRollbackOperation,
-  type SwitchOperation, type SwitchWatch,
+  is_store_path, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
+  type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import { person_command, run_steps, type Context } from "../programs.ts";
 import { descendants, lock_file_id, lock_holders, nix_database_lock, read_locks, read_processes, show_holders, type ProcessInfo } from "../waits.ts";
@@ -63,6 +64,17 @@ export async function switch_system(context: Context, operation: SwitchOperation
       mark(`outcome unchanged Building or fetching the system failed with status ${fetched}`);
       return fetched;
     }
+  }
+
+  const defer = operation.defer ?? null;
+  const changed = defer === null ? [] : await changed_parts(context, defer);
+  if (defer !== null && changed.length > 0) {
+    const reason = `The new system changes ${changed.join(", ")}, so it starts at the next boot`;
+    say(reason);
+    mark("phase boot");
+    const status = await run_steps(context, defer.boot_steps);
+    mark(status === 0 ? `outcome deferred ${reason}` : `outcome unchanged Setting the new system for the next boot failed with status ${status}`);
+    return status;
   }
 
   const watch = operation.watch;
@@ -214,6 +226,25 @@ function start_watchdog(watch: SwitchWatch, folder: string): void {
   } finally {
     closeSync(log);
   }
+}
+
+// ── Deferring ────────────────────────────────────────────────────────────────
+
+// Where each part lies inside a system.
+const part_paths: Record<DeferPart, string> = { kernel: "kernel", systemd: "systemd", dbus: "sw/bin/dbus-daemon" };
+
+// The parts the new system changes from the running one; none when the new system's path cannot be found.
+export async function changed_parts(context: Context, defer: SwitchDefer, running = "/run/current-system"): Promise<DeferPart[]> {
+  let system = defer.system;
+  if (!system.startsWith("/")) {
+    const built = await context.program(context, [...defer.nix, "build", "--no-link", "--print-out-paths", system], { stdout: "keep", stderr: "drop" });
+    system = built.stdout.trim().split("\n").pop() ?? "";
+  }
+  if (!is_store_path(system) && !existsSync(system)) {
+    context.out.write("Could not find the new system's path, so it switches without checking what it changes\n");
+    return [];
+  }
+  return defer.parts.filter((part) => real(join(system, part_paths[part])) !== real(join(running, part_paths[part])));
 }
 
 // ── Signals ──────────────────────────────────────────────────────────────────

@@ -84,6 +84,8 @@ export interface Evaluation {
   last_diff: ClosureDiff | null;
   // A switch waiting on what it depends on before its run starts; absent when none waits.
   switch_wait?: SwitchWait;
+  // A switch set for the next boot, and the system running when it was, until the host runs another; absent when none waits.
+  deferred_switch?: { reason: string; running: string | null };
 }
 
 // What a switch waits on: a build on another host, or the system it built reaching the cache.
@@ -444,6 +446,11 @@ export class Deployment {
       messages.push({ level: "warning", text });
     }
 
+    if (evaluation.deferred_switch !== undefined && evaluation.deferred_switch.running !== fields.current) delete evaluation.deferred_switch;
+    if (evaluation.deferred_switch !== undefined) {
+      raise(this.settings.reboot_status);
+      messages.push({ level: level_of_status[this.settings.reboot_status], text: `Waiting on a reboot: ${evaluation.deferred_switch.reason}` });
+    }
     const reboot = reboot_required(fields.booted_parts, fields.current_parts);
     if (reboot === true) {
       raise(this.settings.reboot_status);
@@ -986,6 +993,10 @@ export class Deployment {
       return { level: "error", text: `${noun} could not be rolled back: ${outcome.reason}` };
     }
     if (outcome.kind === "kept") return { level: "warning", text: `${noun} kept unconfirmed: ${outcome.reason}` };
+    if (outcome.kind === "deferred") {
+      this.store.save_evaluation(this.id, { ...this.evaluation(), deferred_switch: { reason: outcome.reason, running: this.reading()?.current ?? null } });
+      return { level: "warning", text: `${noun} set for the next boot: ${outcome.reason}` };
+    }
     if (outcome.kind === "unknown") {
       fail(outcome.reason || "The watchdog never reported an outcome");
       return { level: "error", text: `${noun} ended without a word from its watchdog: ${outcome.reason}` };

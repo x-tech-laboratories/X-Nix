@@ -189,6 +189,20 @@ export interface SwitchWatch {
   unconfirmed_reason: string;
 }
 
+// The parts of a system that cannot be swapped while it runs, which can hold a switch until the next boot.
+export type DeferPart = "kernel" | "systemd" | "dbus";
+
+export const defer_parts: DeferPart[] = ["kernel", "systemd", "dbus"];
+
+// Sets the new system for the next boot instead of switching when it changes one of the parts.
+export interface SwitchDefer {
+  parts: DeferPart[];
+  // The new system's store path, or the installable whose build gives it, already built by the fetch steps.
+  system: string;
+  nix: Argv;
+  boot_steps: Step[];
+}
+
 // Activates a new system, after pre-switch checks and under a watchdog when they are set, then runs post_switch.
 export interface SwitchOperation {
   kind: "switch";
@@ -203,6 +217,8 @@ export interface SwitchOperation {
   post_switch: Argv | null;
   pre_switch_checks: string[];
   watch: SwitchWatch | null;
+  // Absent from an older server's switch, which always switches.
+  defer?: SwitchDefer | null;
   // Stops what holds the Nix store database open once the activation has waited a minute for it; absent when off.
   close_nix_lock_holders?: { sudo: boolean };
 }

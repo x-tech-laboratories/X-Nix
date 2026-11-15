@@ -11,4 +11,3 @@
 - Decide whether a switch whose `switch-to-configuration` exits 4 (it activated, but some units failed) should still roll back: `switch_system` treats every non-zero status as a failure, and one failed unit made Odin build and revert generations 505 to 513.
 - Serve `/api/openapi.json`, which the Application Standard asks of every app: the `routes` table in `src/server/mcp.ts` already lists each call with its parameters, so it can be built from `api_spec`.
 - Offer to land a flake update as a pull request instead of pushing to its branch, so the change can be reviewed and pass CI first.
-- Defer a switch to the next boot when it changes what cannot be swapped live (the kernel, systemd, dbus or the init system): set the generation for boot instead, and show the host as waiting on a reboot.

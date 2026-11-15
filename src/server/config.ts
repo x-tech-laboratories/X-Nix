@@ -11,6 +11,7 @@ import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
 import type { WakeSettings } from "./agents/wake.ts";
 import { read_channels, type Channel } from "./notifications.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
+import { defer_parts, type DeferPart } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,8 @@ export interface DeploymentSettings {
   magic_rollback: boolean;
   // Whether a switch whose activation waits a minute for the Nix store database stops what holds it open.
   close_nix_lock_holders: boolean;
+  // The parts whose change sets a switch for the next boot instead.
+  defer_switch_on: DeferPart[];
   activation_timeout: number;
   confirm_timeout: number;
   // Commands run on the host and URLs fetched from X-Nix after a switch, until they pass or health_timeout passes.
@@ -449,6 +452,13 @@ export function fleet_settings(entry: unknown): FleetSettings {
   };
 }
 
+// The parts named by defer_switch_on, each one X-Nix can compare.
+function defer_switch_on(parts: string[], owner: string): DeferPart[] {
+  const unknown = parts.find((part) => !defer_parts.includes(part as DeferPart));
+  if (unknown !== undefined) throw new ConfigError(`\`defer_switch_on\` of ${owner} names '${unknown}'; it may name ${defer_parts.join(", ")}`);
+  return parts as DeferPart[];
+}
+
 // The host's agent key, checked as an OpenSSH public key line.
 function agent_key(line: string | null, host: string): string | null {
   if (line === null) return null;
@@ -596,6 +606,7 @@ export function deployment_settings(
     pre_switch_checks: read.list("pre_switch_checks", []),
     magic_rollback: read.flag("magic_rollback", false),
     close_nix_lock_holders: read.flag("close_nix_lock_holders", false),
+    defer_switch_on: defer_switch_on(read.list("defer_switch_on", []), read.owner),
     activation_timeout: read.duration("activation_timeout", "4m"),
     confirm_timeout: read.duration("confirm_timeout", "30s"),
     health_commands: read.list("health_commands", []),

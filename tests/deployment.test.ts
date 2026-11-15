@@ -1027,6 +1027,19 @@ describe("safer switches", () => {
     expect(harness.store.events(harness.deployment.id)[0].message).toContain("Switch rolled back to the previous system: Health check 1");
   });
 
+  it("notes a switch set for the next boot until the host runs another system", async () => {
+    const harness = make_deployment();
+    await collect(harness);
+    await harness.deployment.act("switch");
+    harness.agent.end(harness.agent.last_run('"kind":"switch"')!, "@@x-nix-switch outcome deferred The new system changes kernel, so it starts at the next boot\n", 0);
+
+    await cycle(harness);
+    await collect(harness);
+
+    expect(harness.store.events(harness.deployment.id).some((event) => event.message.includes("Switch set for the next boot: The new system changes kernel"))).toBe(true);
+    expect(harness.deployment.reading()!.messages.map((message) => message.text)).toContain("Waiting on a reboot: The new system changes kernel, so it starts at the next boot");
+  });
+
   it("records a refusal by a pre-switch check", async () => {
     const harness = make_deployment({ pre_switch_checks: ["test -d /boot"] });
     await harness.deployment.act("boot");
