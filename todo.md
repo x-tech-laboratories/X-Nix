@@ -12,5 +12,4 @@
 - Serve `/api/openapi.json`, which the Application Standard asks of every app: the `routes` table in `src/server/mcp.ts` already lists each call with its parameters, so it can be built from `api_spec`.
 - Offer to land a flake update as a pull request instead of pushing to its branch, so the change can be reviewed and pass CI first.
 - Let a staged rollout wait between stages: a soak time after each stage, health checks passing over that time, and an optional admin approval before the next stage starts. Today it only stops on a failure, drift or `sync_timeout`.
-- Record who started each job and fleet run (user or token, or the schedule, input check or webhook), and show it on the job and in the events, so every change has an audit trail.
 - Defer a switch to the next boot when it changes what cannot be swapped live (the kernel, systemd, dbus or the init system): set the generation for boot instead, and show the host as waiting on a reboot.

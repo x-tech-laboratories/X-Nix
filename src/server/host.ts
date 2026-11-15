@@ -254,7 +254,7 @@ export class Host {
   }
 
   // Sets the entry the host boots into once, then reboots when asked; a command rather than a job, as a reboot ends it.
-  set_next_boot(entry: string, reboot: boolean): Promise<HostActionOutcome> {
+  set_next_boot(entry: string, reboot: boolean, trigger = "manual"): Promise<HostActionOutcome> {
     return this.serial(async () => {
       const refusal = this.next_boot_refusal(entry);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
@@ -262,7 +262,7 @@ export class Host {
       const boot = reading.boot!;
       const title = boot.entries.find((candidate) => candidate.id === entry)!.title;
       const operation = next_boot_operation(boot, entry, reboot, this.settings.require_sudo);
-      const outcome = await this.run_at_once("next-boot", operation, "manual", `Next boot set to ${title}${reboot ? "; rebooting" : ""}`, `Could not set the next boot to ${title}`);
+      const outcome = await this.run_at_once("next-boot", operation, trigger, `Next boot set to ${title}${reboot ? "; rebooting" : ""}`, `Could not set the next boot to ${title}`);
       if (outcome.ok) {
         // Shown at once, rather than after the next cycle reads it back.
         this.store.save_reading(this.id, { ...reading, boot: { ...boot, next: entry, entries: boot.entries.map((candidate) => ({ ...candidate, next: candidate.id === entry })) } });

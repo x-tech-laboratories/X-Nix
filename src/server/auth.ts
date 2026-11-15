@@ -6,7 +6,7 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
-import { register_accounts, type Need } from "@x-tech-laboratories/x-libs/server/account_sign_in";
+import { register_accounts, type Need, type Viewer } from "@x-tech-laboratories/x-libs/server/account_sign_in";
 import { AccountStore } from "@x-tech-laboratories/x-libs/server/account_store";
 import { load_accounts as load_accounts_from, type Accounts } from "@x-tech-laboratories/x-libs/server/passwords";
 import type { FastifyInstance } from "fastify";
@@ -31,6 +31,12 @@ export function load_accounts(file_path?: string): Accounts {
 // is checked again on its own.
 export function needed(method: string, path: string): Need {
   return method === "GET" || path === "/api/mcp" ? "any" : { role: "admin" };
+}
+
+// Who a job or fleet run was started by, as its history shows it: the signed-in user, marked when they used a token.
+export function started_by(viewer: Viewer | null): string {
+  if (viewer === null) return "manual";
+  return viewer.via === "token" ? `${viewer.name} (token)` : viewer.name;
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────
