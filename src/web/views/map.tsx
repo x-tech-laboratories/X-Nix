@@ -75,7 +75,9 @@ export function fleet_map({ flakes, caches, hosts, deployments }: Fleet): { colu
       const [drift, drift_tone] = drift_state(deployment);
       const cache = deployment.cache_id === null ? undefined : caches.find((item) => item.id === deployment.cache_id);
       if (cache !== undefined) {
-        const row = cache.reading?.rows.find((item) => item.name === deployment.name);
+        // A cache names each target by its nixosConfigurations attribute, which defaults to the host's hostname.
+        const target = deployment.configuration ?? deployment.reading?.hostname;
+        const row = cache.reading?.rows.find((item) => item.name === target);
         links.push({ from: node_id.cache(cache.id), to: node_id.host(host.name), tone: row ? tone_of(row.status, false) : "unknown", title: `${cache.name} → ${deployment.name}${row ? `: ${row.summary}` : ""}` });
       } else if (deployment.flake_id !== null) {
         links.push({ from: node_id.flake(deployment.flake_id), to: node_id.host(host.name), tone: drift_tones[drift_tone], title: `${deployment.flake} → ${deployment.name}: ${drift}` });
