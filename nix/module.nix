@@ -277,6 +277,9 @@ in
 
     security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix") ];
 
+    # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
+    nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;
+
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
   };
 }

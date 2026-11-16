@@ -462,3 +462,6 @@ export const timed_out_exit_code = 124;
 
 // The exit status sh gives a program it cannot find, which an operation also gives for a missing tool.
 export const missing_tool_exit_code = 127;
+
+// The exit status a cache_holds gives when the cache holds the store path but the host cannot fetch all of its closure.
+export const unfetchable_exit_code = 3;

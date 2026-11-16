@@ -9,8 +9,8 @@ import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
-  diff_mark, eval_mark, fresh_lookup, is_store_path, show_argv, toplevel, type BuildOperation, type CacheHoldsOperation, type ClosureDiffOperation,
-  type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck,
+  diff_mark, eval_mark, fresh_lookup, is_store_path, show_argv, toplevel, unfetchable_exit_code, type BuildOperation, type CacheHoldsOperation,
+  type ClosureDiffOperation, type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck,
 } from "../../shared/operations.ts";
 import { on_path, type Context } from "../programs.ts";
 
@@ -66,7 +66,8 @@ async function has_path(context: Context, nix: string[], path: string, store: st
 
 // Succeeds only when the cache holds the store path and the host can fetch every path of its closure. Caches such as
 // Attic leave out what an upstream cache serves, so the closure is checked against the host's own substituters. The dry
-// run succeeds even for a path nothing can fetch, so its output is read instead.
+// run succeeds even for a path nothing can fetch, so its output is read instead, and a closure the host cannot fetch
+// gives its own status.
 export async function cache_holds(context: Context, operation: CacheHoldsOperation): Promise<number> {
   if (!is_store_path(operation.store_path)) {
     context.err.write(`'${operation.store_path}' is not a store path`);
@@ -77,7 +78,7 @@ export async function cache_holds(context: Context, operation: CacheHoldsOperati
   const plan = await context.program(context, [...operation.nix, "build", "--dry-run", "--no-link", operation.store_path], { stdout: "keep", stderr: "keep" });
   if (plan.exit_code !== 0) return plan.exit_code;
   const text = `${plan.stdout}\n${plan.stderr}`;
-  return text.includes("know how to build") || text.includes("will be built") ? 1 : 0;
+  return text.includes("know how to build") || text.includes("will be built") ? unfetchable_exit_code : 0;
 }
 
 // ── Closure diff ─────────────────────────────────────────────────────────────
