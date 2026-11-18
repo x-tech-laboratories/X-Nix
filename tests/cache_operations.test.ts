@@ -6,11 +6,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cache_build, cache_build_all, cache_check, cache_push, missing_paths, whole_lines } from "../src/agent/operations/cache.ts";
+import { cache_build, cache_build_all, cache_check, cache_push, nix_store, whole_lines } from "../src/agent/operations/cache.ts";
 import type { Context, ProgramResult, RunProgram, StreamUse } from "../src/agent/programs.ts";
 import { cache_settings, type CacheSettings } from "../src/server/config.ts";
 import { build_all_operation, build_operation, check_operation, parse_report, push_operation } from "../src/server/nixos/attic.ts";
-import type { CacheCheckOperation } from "../src/shared/operations.ts";
+import type { CacheCheckOperation, CacheSettings as CacheSpec } from "../src/shared/operations.ts";
 
 const alpha = "/nix/store/aaaa-nixos-system-Alpha";
 const beta = "/nix/store/bbbb-nixos-system-Beta";
@@ -69,7 +69,7 @@ describe("check", () => {
     const ran = scripted((argv) => {
       if (has(argv, "eval") && argv.at(-1)!.endsWith("#Broken")) return { exit_code: 1, stderr: "error: no such attribute\n" };
       if (has(argv, "eval")) return { stdout: alpha };
-      if (has(argv, "--stdin")) return { stdout: `{"${alpha}":{"ca":null},"${dep}":null}` };
+      if (has(argv, "--print-invalid")) return { stdout: `${dep}\n` };
       // nix pads the path column with spaces then a tab, so the widest path has only the tab.
       if (has(argv, "-r", "--sigs")) return { stdout: `${alpha}      \tultimate\n${dep}\tultimate\n/nix/store/eeee-glibc   \tcache.nixos.org-1:abc\n` };
       if (has(argv, "metadata")) return { stdout: '{"revision":"abc"}' };
@@ -86,20 +86,21 @@ describe("check", () => {
   });
 
   it("refreshes a remote flake only until one evaluation succeeds", async () => {
-    const ran = scripted((argv) => (has(argv, "eval") ? (argv.at(-1)!.includes("Alpha") ? { exit_code: 1 } : { stdout: beta }) : { stdout: "{}" }));
+    const ran = scripted((argv) => (has(argv, "eval") ? (argv.at(-1)!.includes("Alpha") ? { exit_code: 1 } : { stdout: beta }) : { stdout: "" }));
     await cache_check(ran.context, check_of({ flake: "github:o/f", configurations: ["Alpha", "Beta", "Gamma"] }));
     const evaluations = ran.calls.filter((argv) => has(argv, "eval"));
     expect(evaluations.map((argv) => argv.includes("--refresh"))).toEqual([true, true, false]);
   });
 
-  it("reads missing paths from either shape nix prints, and fails a check the cache did not answer", async () => {
-    expect(missing_paths(`[{"path":"${alpha}","valid":true},{"path":"${dep}","valid":false}]`)).toEqual([dep]);
-    expect(missing_paths(`{"${alpha}":{},"${dep}":null}`)).toEqual([dep]);
-    expect(missing_paths("")).toBeNull();
+  it("asks the nix-store beside nix, and fails a check the cache did not answer", async () => {
+    expect(nix_store({ nix: ["/nix/store/aaaa-nix-2.35/bin/nix", "-v"] } as CacheSpec)).toBe("/nix/store/aaaa-nix-2.35/bin/nix-store");
 
-    const ran = scripted((argv) => (has(argv, "eval") ? { stdout: alpha } : has(argv, "--stdin") ? { exit_code: 1, stderr: "unable to download" } : undefined));
+    const ran = scripted((argv) => (has(argv, "eval") ? { stdout: alpha } : has(argv, "--print-invalid") ? { exit_code: 1, stderr: "unable to download" } : { exit_code: 1 }));
     await cache_check(ran.context, check_of());
     expect(parse_report(ran.output()).targets.get("Alpha")?.cache_error).toBe("unable to download");
+    expect(ran.calls.find((argv) => has(argv, "--print-invalid"))).toEqual([
+      "nix-store", "--option", "narinfo-cache-negative-ttl", "0", "--store", "https://cache.example/fleet", "--check-validity", "--print-invalid", alpha,
+    ]);
   });
 });
 
@@ -113,7 +114,7 @@ describe("kept only in the cache", () => {
     if (list !== null) writeFileSync(`${link}.closure`, list);
     const ran = scripted((argv) => {
       if (has(argv, "eval")) return { stdout: alpha };
-      if (has(argv, "--stdin")) return { stdout: `{"${alpha}":{}${missing ? `,"${missing}":null` : ""}}` };
+      if (has(argv, "--print-invalid")) return { stdout: missing ? `${missing}\n` : "" };
       if (has(argv, "-r")) return { stdout: `${alpha}\n${dep}\n` };
       if (has(argv, "path-info")) return { exit_code: local ? 0 : 1 };
       return undefined;
@@ -156,7 +157,7 @@ describe("build and push", () => {
   const quiet = (build: Answer, push: Answer = undefined) => scripted((argv) => {
     if (argv[0] === "/bin/sh") return push;
     if (has(argv, "build")) return build;
-    if (has(argv, "--stdin")) return { stdout: "{}" };
+    if (has(argv, "--print-invalid")) return { stdout: "" };
     if (has(argv, "-r")) return { stdout: alpha };
     return undefined;
   });
@@ -203,7 +204,7 @@ describe("build all", () => {
   const builds_and_inspects = (push: Answer = undefined) => scripted((argv) => {
     if (argv[0] === "/bin/sh") return push;
     if (has(argv, "build")) return argv.some((word) => word.includes("bad")) ? { exit_code: 1, stderr: "error: builder failed\n" } : undefined;
-    if (has(argv, "--stdin")) return { stdout: "{}" };
+    if (has(argv, "--print-invalid")) return { stdout: "" };
     if (has(argv, "-r")) return { stdout: alpha };
     if (has(argv, "path-info")) return { exit_code: argv.includes(alpha) ? 0 : 1 };
     return undefined;

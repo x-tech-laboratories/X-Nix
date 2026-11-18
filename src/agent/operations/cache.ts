@@ -65,14 +65,15 @@ async function inspect(context: Context, cache: CacheSettings, target: CacheTarg
   }
   report(context, target.name, "own", String(own.length));
 
-  const asked = await context.program(context, [...cache.nix, "path-info", "--stdin", "--json", ...fresh_lookup, "--store", cache.cache_url], {
-    stdin: own.map((path) => `${path}\n`).join(""), stdout: "keep", stderr: "keep",
+  // nix path-info fails outright on a path a binary cache lacks since Nix 2.35, where nix-store lists it.
+  const asked = await context.program(context, [nix_store(cache), ...cache.nix.slice(1), ...fresh_lookup, "--store", cache.cache_url, "--check-validity", "--print-invalid", ...own], {
+    stdout: "keep", stderr: "keep",
   });
-  const missing = missing_paths(asked.stdout);
-  if (missing === null) {
+  if (asked.exit_code !== 0) {
     report(context, target.name, "cache_error", tail(asked.stderr));
     return;
   }
+  const missing = lines(asked.stdout);
   for (const path of missing) report(context, target.name, "missing", path);
 
   // Only a root still pointing at this closure is dropped, and its list is in place before the root goes.
@@ -99,19 +100,9 @@ async function own_paths(context: Context, cache: CacheSettings, out: string): P
     .map(([path]) => path);
 }
 
-// The paths `nix path-info --json` says the store lacks, from either its old list or its newer object form.
-export function missing_paths(json: string): string[] | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(json);
-  } catch {
-    return null;
-  }
-  if (Array.isArray(data)) {
-    return data.filter((item) => item?.valid === false && typeof item.path === "string").map((item) => item.path as string);
-  }
-  if (typeof data !== "object" || data === null) return null;
-  return Object.entries(data as Record<string, unknown>).filter(([, info]) => info === null).map(([path]) => path);
+// The nix-store installed beside the cache's nix.
+export function nix_store(cache: CacheSettings): string {
+  return cache.nix[0].replace(/nix$/, "nix-store");
 }
 
 async function check_target(context: Context, cache: CacheSettings, target: CacheTarget, refresh: boolean): Promise<boolean> {
