@@ -503,6 +503,23 @@ describe("building elsewhere", () => {
     expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
   });
 
+  it("waits to build while another system builds on the same host, then builds", async () => {
+    const harness = with_builder();
+    const other = harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "builder", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+
+    const outcome = await harness.deployment.act("switch");
+
+    expect(outcome.ok).toBe(true);
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeUndefined();
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "running", progress: `Waiting to build on builder: job #${other} of other is building there` });
+
+    harness.store.finish_job(other, "succeeded", 0, null, clock.now);
+    await harness.deployment.cycle();
+
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeDefined();
+    expect(harness.store.job(outcome.job_id!)!.progress).toBe("Building on builder");
+  });
+
   it("activates boot and test from what the build pushed too", async () => {
     const harness = with_builder();
 
