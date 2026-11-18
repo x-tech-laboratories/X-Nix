@@ -14,7 +14,8 @@
 // guarded (see nixos/switch.ts): while it waits for confirmation, each poll runs the HTTP checks and confirms, and once it
 // ends its marker lines say whether it was refused or rolled back and why. No action waits on a cache, which only speeds
 // things up: Build and a switch, started by a person, a fleet run or the drift, build where direct_on says. Built on the
-// switching host, a switch runs nixos-rebuild at once; built elsewhere, its job builds there first, the build pushes the
+// switching host, a switch runs nixos-rebuild at once; built elsewhere, its job builds there first, waiting while any other
+// system build runs on that host, the build pushes the
 // system to cache_url, and the switch fetches and activates it. A new action ends a switch still building first.
 // Rollback activates any earlier generation of the system profile. Before a switch the page asks for the package diff between the running and the built closure,
 // which runs as a job and is kept with the evaluation, and the closure browser reads any generation's dependency graph.
@@ -172,6 +173,12 @@ const cache_check_timeout_in_seconds = 60;
 const push_wait_in_seconds = 900;
 // How long one health check's URL may take to answer.
 const http_check_timeout_in_milliseconds = 10_000;
+
+// The jobs that build a whole system, of which a switch starts its build only when none runs on that host: a fleet's
+// systems drift together when their flake changes, and building them all at once on one host runs it out of memory.
+const system_build_kinds: JobKind[] = ["build", "build-target", "build-all"];
+// The hosts a switch is starting a build on, held from before its run starts until its job exists.
+const starting_builds = new Set<string>();
 
 // ── Schedules ────────────────────────────────────────────────────────────────
 
@@ -773,10 +780,14 @@ export class Deployment {
     return this.end_wait(job, `X-Nix no longer waits on the cache this way (${waiting.step}); switch again`);
   }
 
-  // Builds where direct_on says, then switches once the system the build pushed reaches the cache.
+  // Builds where direct_on says, once no other build runs there, then switches once the system the build pushed reaches the cache.
   private async advance_build(job: Job, waiting: SwitchWait): Promise<void> {
     if (waiting.step_job_id === null) {
-      const launched = await this.launch("build", this.build_operation(), job.trigger, false);
+      const host = this.host_name(this.agent_for("build"));
+      const blocker = this.build_blocker(host);
+      if (blocker !== null) return this.store.set_progress(job.id, `Waiting to build on ${host}: ${blocker}`);
+      starting_builds.add(host);
+      const launched = await this.launch("build", this.build_operation(), job.trigger, false).finally(() => starting_builds.delete(host));
       if (launched.job_id === null) return this.end_wait(job, `Could not start the build: ${launched.error}`);
       this.save_wait({ ...waiting, step_job_id: launched.job_id });
       const where = this.host_name(this.store.job(launched.job_id)!.agent);
@@ -845,6 +856,13 @@ export class Deployment {
         this.store.add_event(this.id, this.now(), "error", `Could not start the ${job_noun(job.kind)}: ${error}`);
       });
     }
+  }
+
+  // Why a switch cannot start its build on the host now, or null when nothing else builds there.
+  private build_blocker(host: string): string | null {
+    if (starting_builds.has(host)) return "another switch is starting its build there";
+    const other = this.store.running_jobs(system_build_kinds).find((candidate) => this.host_name(candidate.agent) === host);
+    return other === undefined ? null : `job #${other.id} of ${other.deployment_id} is building there`;
   }
 
   // The build a switch still building first follows, while it runs.
