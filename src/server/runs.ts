@@ -4,7 +4,7 @@
 
 import { follow_run, type Followed, type RunSink } from "@x-tech-laboratories/x-libs/server/runs";
 
-import type { AgentPool, LongRun } from "./agents/agent.ts";
+import { StoppedBeforeStart, type AgentPool, type LongRun } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
 import type { Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
@@ -53,7 +53,10 @@ export async function stop_job(store: Store, agents: AgentPool, job_id: number, 
   const refuse = (message: string): StopOutcome => ({ ok: false, message, job_id });
   if (job.state !== "running") return refuse(`Job #${job_id} has already ended`);
   if (job.run_id === null) return refuse(`Job #${job_id} has no run to stop`);
-  if (agents.is_starting(job.run_id)) return refuse(`Job #${job_id} is still waking its host; stop it once it has started`);
+  if (agents.call_off(job.run_id, by)) {
+    store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind}) before its host woke`);
+    return { ok: true, message: `Stopped job #${job_id} before it started`, job_id };
+  }
   let run: LongRun;
   try {
     run = await agents.stop(job.agent, job.run_id, by);
@@ -81,7 +84,8 @@ export async function start_run(
   return { waking: null };
 }
 
-// Shows a job as waking its host until its run starts, and fails it with why when the run never does.
+// Shows a job as waking its host until its run starts, and fails it with why when the run never does; a job stopped
+// while it waited fails as stopped, and stop_job has already noted that in the history.
 export function track_wake(
   store: Store, job_id: number, host: string, waking: Promise<void>, now: () => number, on_failure: (error: string) => void = () => {},
 ): void {
@@ -89,6 +93,10 @@ export function track_wake(
   waking.catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     store.append_output(job_id, `${message}\n`);
+    if (error instanceof StoppedBeforeStart) {
+      store.finish_job(job_id, "failed", null, `Stopped by ${error.by}`, now());
+      return;
+    }
     store.finish_job(job_id, "failed", null, "The job could not be started", now());
     on_failure(message);
   });
