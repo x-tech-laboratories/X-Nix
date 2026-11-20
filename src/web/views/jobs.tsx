@@ -2,19 +2,21 @@
 // The Builds tab beside the list is builds.tsx.
 
 import { Badge, StateBadge, type Tone } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { FollowingOutput } from "@x-tech-laboratories/x-libs/web/react/following";
 import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { ProgressBar } from "@x-tech-laboratories/x-libs/web/react/progress";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { duration } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useMemo, useState } from "react";
 import { plan_tree, type PlannedPath, type PlannedState, type PlanRow } from "../../shared/build_plan.ts";
-import { api, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
+import { api, type ActionOutcome, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { JobBadge } from "../ui.tsx";
-import { job_owner_link, JobsTable, live } from "./shared.tsx";
+import { error_toast, job_owner_link, JobsTable, live } from "./shared.tsx";
 
 // The tabs over the job history: every job, or the finished builds with what they made.
 export function JobsTabs({ active }: { active: "jobs" | "builds" }) {
@@ -56,10 +58,27 @@ export function JobView({ id }: { id: number }) {
     if (state !== undefined) set_finished(state !== "running");
   }, [state]);
 
+  const stop = async () => {
+    try {
+      toast((await api<ActionOutcome>(`/api/jobs/${id}/stop`, "POST")).message);
+    } catch (error) {
+      error_toast(error);
+    }
+    await job.reload(true);
+  };
+
   return (
     <div className="page">
       <Crumbs items={[["Jobs", link(["jobs"])], [`Job ${id}`, null]]} />
-      <PageHeading title={`Job ${id}`} />
+      <PageHeading title={`Job ${id}`} actions={state === "running" && <button className="danger" onClick={() => confirm_dialog({
+        title: `Stop job ${id}`,
+        message: job.data?.kind === "switch"
+          ? `Stop job ${id}? A switch stopped while it activates can leave ${job.data.deployment_id} part-way between systems.`
+          : `Stop job ${id}? Its processes on ${job.data?.agent ?? "this server"} are ended, and the job fails as stopped.`,
+        confirm_label: "Stop",
+        danger: true,
+        run: stop,
+      })}>Stop</button>} />
       <Stack>
         <Loaded resource={job}>
           {(found) => {

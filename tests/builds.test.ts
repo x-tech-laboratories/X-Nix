@@ -37,6 +37,7 @@ const local_agent: Agent = {
   run: (operation, options) => run_operation(operation, options),
   start: async () => { throw new Error("not used"); },
   poll: async () => { throw new Error("not used"); },
+  stop: async () => { throw new Error("not used"); },
   forget: async () => {},
 };
 

@@ -136,6 +136,14 @@ interface FakeRun {
   output: string;
   exit_code: number | null;
   alive: boolean;
+  // Whether it was asked to stop while it ran.
+  stopped: boolean;
+}
+
+function run_state(run: FakeRun): LongRun["state"] {
+  if (run.alive) return "running";
+  if (run.stopped) return "stopped";
+  return run.exit_code === null ? "lost" : "exited";
 }
 
 export class FakeAgent implements Agent {
@@ -169,7 +177,7 @@ export class FakeAgent implements Agent {
   async start(run_id: string, operation: Operation, options: { stdin?: string | null } = {}): Promise<LongRun> {
     if (this.start_error !== null) throw this.start_error;
     const stdin = options.stdin ?? null;
-    this.runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true });
+    this.runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true, stopped: false });
     return { run_id, pid: 4242, started_epoch: clock.now, state: "running", exit_code: null };
   }
 
@@ -177,8 +185,15 @@ export class FakeAgent implements Agent {
     if (this.poll_error !== null) throw this.poll_error;
     const run = this.runs.find((candidate) => candidate.run_id === run_id);
     if (run === undefined) throw new AgentError(`No run named '${run_id}'.`);
-    const state = run.alive ? "running" : run.exit_code === null ? "lost" : "exited";
-    return { state, exit_code: run.exit_code, alive: run.alive, size: run.output.length, new_output: run.output.slice(offset), next_offset: run.output.length };
+    return { state: run_state(run), exit_code: run.exit_code, alive: run.alive, size: run.output.length, new_output: run.output.slice(offset), next_offset: run.output.length };
+  }
+
+  // Ends a running run as a SIGTERM would, and answers with its state.
+  async stop(run_id: string): Promise<LongRun> {
+    const run = this.runs.find((candidate) => candidate.run_id === run_id);
+    if (run === undefined) throw new AgentError(`No run named '${run_id}'.`);
+    if (run.alive) Object.assign(run, { alive: false, stopped: true, exit_code: 143 });
+    return { run_id, pid: 4242, started_epoch: clock.now, state: run_state(run), exit_code: run.exit_code };
   }
 
   async forget(): Promise<void> {}

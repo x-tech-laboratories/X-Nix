@@ -23,6 +23,14 @@ A job's page shows:
 
 Long jobs keep running if the X-Nix server or the agent restarts, and the page picks them up again.
 
+### Stopping a job
+
+**Stop** on a running job's page (admins only) ends its processes on its host: they are asked to stop, and killed if
+they have not within a few seconds. The job then fails as stopped by whoever pressed it, and the owner's history notes
+it. A job still waking its host cannot be stopped until it has started. Stopping a switch while it activates can leave
+the host part-way between systems; with `magic_rollback`, a guarded switch's watchdog still rolls it back once
+no confirmation arrives.
+
 ### Stalled jobs
 
 A job on an agent that prints nothing for five minutes notes, in its output, what it is still running and any file lock
