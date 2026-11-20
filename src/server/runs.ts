@@ -69,6 +69,47 @@ export async function stop_job(store: Store, agents: AgentPool, job_id: number, 
   return { ok: true, message: `Stopped job #${job_id}`, job_id };
 }
 
+// ── A host's runs ────────────────────────────────────────────────────────────
+
+// A long run on a host's agent, with the job that follows it, or null for a run no job knows, such as one left behind.
+export interface AgentRunView extends LongRun {
+  job: Pick<Job, "id" | "deployment_id" | "kind" | "state"> | null;
+}
+
+// Every long run a host's agent holds, newest first; reaching the agent does not wake its host.
+export async function agent_runs(store: Store, agents: AgentPool, host: string): Promise<AgentRunView[]> {
+  const runs = await agents.get(host).runs();
+  return runs.sort((a, b) => b.started_epoch - a.started_epoch).map((run) => {
+    const job = store.job_by_run(run.run_id);
+    return { ...run, job: job === null ? null : { id: job.id, deployment_id: job.deployment_id, kind: job.kind, state: job.state } };
+  });
+}
+
+// Stops one run on a host: as stop_job when a running job follows it, else at once on the agent.
+export async function stop_agent_run(store: Store, agents: AgentPool, host: string, run_id: string, by: string, now: () => number): Promise<StopOutcome> {
+  const job = store.job_by_run(run_id);
+  if (job !== null && job.state === "running") return stop_job(store, agents, job.id, by, now);
+  try {
+    const run = await agents.get(host).stop(run_id);
+    if (run.state !== "stopped") return { ok: false, message: `The run ${run_id} had already ended`, job_id: null };
+  } catch (error) {
+    return { ok: false, message: `Could not stop the run ${run_id}: ${error instanceof Error ? error.message : String(error)}`, job_id: null };
+  }
+  return { ok: true, message: `Stopped the run ${run_id}`, job_id: null };
+}
+
+// Removes an ended run's folder from a host; one a running job still follows is left for the job to finish.
+export async function forget_agent_run(store: Store, agents: AgentPool, host: string, run_id: string): Promise<StopOutcome> {
+  const job = store.job_by_run(run_id);
+  if (job !== null && job.state === "running") return { ok: false, message: `Job #${job.id} still follows the run ${run_id}`, job_id: job.id };
+  try {
+    await agents.get(host).forget(run_id);
+  } catch (error) {
+    return { ok: false, message: `Could not remove the run ${run_id}: ${error instanceof Error ? error.message : String(error)}`, job_id: null };
+  }
+  return { ok: true, message: `Removed the run ${run_id}`, job_id: null };
+}
+
 // ── Starting ─────────────────────────────────────────────────────────────────
 
 // Starts a job's long run, kept awake on a host that sleeps, at once or after a wake it answers with.

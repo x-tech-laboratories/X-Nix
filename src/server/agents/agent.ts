@@ -15,8 +15,9 @@ export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared
 // ── Agent ────────────────────────────────────────────────────────────────────
 
 // The part of an X-Libs agent X-Nix uses: run performs an operation to its end and never rejects, start begins a long
-// run that outlives the agent, poll reads its output past an offset, stop ends a long run, and forget removes an ended one.
-export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "stop" | "forget">;
+// run that outlives the agent, poll reads its output past an offset, stop ends a long run, forget removes an ended one,
+// and runs lists every long run the agent holds.
+export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "stop" | "forget" | "runs">;
 
 const wake_command_timeout_in_seconds = 30;
 
@@ -47,6 +48,10 @@ class MissingAgent implements Agent {
   }
 
   async forget(): Promise<void> {}
+
+  async runs(): Promise<LongRun[]> {
+    throw new AgentError(this.message, true);
+  }
 }
 
 // The agents by host name; the server's own host is served by its built-in agent.
