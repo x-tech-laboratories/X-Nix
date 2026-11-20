@@ -60,6 +60,14 @@ exactly as written.
 A job's page shows what it asked the agent to do, and its output shows each program as it starts. Long jobs keep running
 if the agent restarts or loses its connection, and the server follows them again once the agent is back.
 
+### Runs on the agent
+
+Each long job runs in a folder on its agent, which the server removes once it has read the job's end. The **Runs**
+section of a host's Machine tab (and `list_host_runs` over MCP) lists every run the agent still holds, with the job that
+follows it. A run with no job was left behind, such as by a job whose history was lost; **Stop** ends one still running
+and **Remove** deletes an ended one's folder. Stopping a run a job follows stops that job, as Stop on its page does. Reading
+the list does not wake a sleeping host.
+
 ## Pull mode
 
 Pull mode lets a host keep deploying from Git while the X-Nix server is down. Once the server has been unreachable for

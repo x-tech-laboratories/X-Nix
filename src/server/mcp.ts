@@ -46,6 +46,16 @@ export const routes: Record<string, RouteToolSpec> = {
     description: "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine.",
     params: [host, { name: "action", schema: one_of(host_action_ids) }],
   },
+  list_host_runs: {
+    route: "GET /api/hosts/:name/runs",
+    description: "Lists the long runs a host's agent holds, newest first, each with the job following it; job null marks one left behind that nothing follows.",
+    params: [host],
+  },
+  run_host_run_action: {
+    route: "POST /api/hosts/:name/runs/:run_id/:action",
+    description: "Acts on one run from list_host_runs: stop ends it (as stop_job when a running job follows it), forget removes an ended run's folder.",
+    params: [host, { name: "run_id", schema: text }, { name: "action", schema: one_of(["stop", "forget"]) }],
+  },
   set_next_boot: {
     route: "POST /api/hosts/:name/next-boot",
     description: "Sets the boot entry a host starts into once, from the entries get_host lists, and reboots into it now if reboot is true.",

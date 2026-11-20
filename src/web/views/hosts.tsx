@@ -14,7 +14,7 @@ import { current_route, link } from "@x-tech-laboratories/x-libs/web/router";
 import { toggled, with_range } from "@x-tech-laboratories/x-libs/web/selection";
 import { useState } from "react";
 import {
-  api, type ActionOutcome, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Job, type ProvisionedAgent, type Provisioning,
+  api, type ActionOutcome, type AgentRun, type Deployment, type EventRow, type Fleet, type FleetActionId, type FleetOutcome, type Host, type Job, type ProvisionedAgent, type Provisioning,
   type Sample, type Status,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
@@ -217,6 +217,8 @@ function StoreUsed({ host, samples }: { host: Host; samples: Sample[] }) {
 interface MachineData {
   events: EventRow[];
   provisioning: Provisioning;
+  // The runs the host's agent holds, or why they could not be read.
+  runs: AgentRun[] | string;
 }
 
 // What the shown tab reads besides the host and its deployment.
@@ -230,11 +232,12 @@ async function load_contents(tab: HostTab, host: Host, deployment: Deployment | 
   if (tab === "system") return { tab, system: deployment === null ? null : await load_system(deployment) };
   if (tab === "store") return { tab, jobs: await load_store(host) };
   if (tab === "boot") return { tab, jobs: await load_boot(host) };
-  const [events, provisioning] = await Promise.all([
+  const [events, provisioning, runs] = await Promise.all([
     api<EventRow[]>(`/api/hosts/${encodeURIComponent(host.name)}/events`),
     api<Provisioning>("/api/provisioning"),
+    api<AgentRun[]>(`/api/hosts/${encodeURIComponent(host.name)}/runs`).catch((error: Error) => error.message),
   ]);
-  return { tab, machine: { events, provisioning } };
+  return { tab, machine: { events, provisioning, runs } };
 }
 
 // One host's page, on the tab asked for or the first it has: the System when it runs a deployment.
@@ -315,8 +318,46 @@ function MachineTab({ host, data, refresh }: { host: Host; data: MachineData; re
     <Section title="Details" tools={made && <button className="danger" onClick={() => forget_key(made, refresh)}>Forget the key</button>}>
       <Details host={host} made={made} />
     </Section>
+    <Section title="Runs">
+      {typeof data.runs === "string"
+        ? <Empty title="The agent's runs could not be read." hint={data.runs} />
+        : data.runs.length === 0 ? <Empty title="The agent holds no runs." /> : <AgentRunsTable host={host} runs={data.runs} refresh={refresh} />}
+    </Section>
     <Section title="Events">{data.events.length === 0 ? <Empty title="No events yet." /> : <EventsList events={data.events} />}</Section>
   </>;
+}
+
+// The long runs on the host's agent: those a job follows link to it, and one nothing follows can be stopped or removed.
+function AgentRunsTable({ host, runs, refresh }: { host: Host; runs: AgentRun[]; refresh: () => void }) {
+  const act = async (run: AgentRun, action: "stop" | "forget") => {
+    try {
+      toast((await api<ActionOutcome>(`/api/hosts/${encodeURIComponent(host.name)}/runs/${encodeURIComponent(run.run_id)}/${action}`, "POST")).message);
+    } catch (error) {
+      error_toast(error);
+    }
+    refresh();
+  };
+  const followed = (run: AgentRun) => run.job !== null && run.job.state === "running";
+  return (
+    <DataTable<AgentRun> caption="Runs on the agent" rows={runs} row_key={(run) => run.run_id} columns={[
+      { label: "Run", cell: (run) => <code>{run.run_id}</code> },
+      { label: "State", cell: (run) => (run.exit_code === null ? run.state : `${run.state}, status ${run.exit_code}`) },
+      { label: "Started", cell: (run) => <Age epoch={run.started_epoch} /> },
+      { label: "Job", cell: (run) => (run.job === null ? <span className="muted">none: left behind</span> : <a href={link(["jobs", String(run.job.id)])}>#{run.job.id} {run.job.kind}, {run.job.state}</a>) },
+      { label: "Actions", cell: (run) => (
+        <div className="row-actions">
+          {run.state === "running" && <button className="danger" onClick={() => confirm_dialog({
+            title: `Stop the run ${run.run_id}`,
+            message: followed(run) ? `Stop job #${run.job!.id} by ending this run on ${host.display_name}?` : `End this run's processes on ${host.display_name}?`,
+            confirm_label: "Stop",
+            danger: true,
+            run: () => act(run, "stop"),
+          })}>Stop</button>}
+          {run.state !== "running" && <button disabled={followed(run)} title={followed(run) ? "A running job still follows it" : undefined} onClick={() => void act(run, "forget")}>Remove</button>}
+        </div>
+      ) },
+    ]} />
+  );
 }
 
 function Details({ host, made }: { host: Host; made: ProvisionedAgent | null }) {

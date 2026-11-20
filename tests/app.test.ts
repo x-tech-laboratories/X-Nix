@@ -9,6 +9,7 @@ import { cache_settings, flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
 import type { Host } from "../src/server/host.ts";
 import { Poller } from "../src/server/poller.ts";
+import type { AgentRunView } from "../src/server/runs.ts";
 import { clock, FakeAgent, generations_result, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -156,6 +157,40 @@ describe("/api/jobs/:id/stop", () => {
 
     expect(refused.statusCode).toBe(409);
     expect(harness.store.job(job_id)?.error).not.toBe("Stopped by admin");
+  });
+});
+
+describe("/api/hosts/:name/runs", () => {
+  it("lists the agent's runs with the job following each, and stops or removes one nothing follows", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [harness.host], harness.agents);
+    const { job_id } = (await inject("POST", "/api/deployments/host-deploy/actions/build")).json<{ job_id: number }>();
+    await harness.agent.start("left-behind", { kind: "probe" });
+
+    const runs = (await inject("GET", "/api/hosts/host/runs")).json<AgentRunView[]>();
+    const followed = runs.find((run) => run.job !== null)!;
+
+    expect(runs).toHaveLength(2);
+    expect(followed.job).toMatchObject({ id: job_id, kind: "build", state: "running" });
+    expect(runs.find((run) => run.run_id === "left-behind")!.job).toBeNull();
+    expect((await inject("POST", `/api/hosts/host/runs/${followed.run_id}/forget`)).statusCode).toBe(409);
+    expect((await inject("POST", "/api/hosts/host/runs/left-behind/forget")).statusCode).toBe(409);
+    expect((await inject("POST", "/api/hosts/host/runs/left-behind/stop")).json()).toMatchObject({ ok: true, job_id: null });
+    expect((await inject("POST", "/api/hosts/host/runs/left-behind/forget")).statusCode).toBe(200);
+    expect((await harness.agent.runs()).map((run) => run.run_id)).toEqual([followed.run_id]);
+    expect((await inject("POST", "/api/hosts/host/runs/left-behind/explode")).statusCode).toBe(404);
+  });
+
+  it("stops a run a job follows as that job, so it fails as stopped", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [harness.host], harness.agents);
+    const { job_id } = (await inject("POST", "/api/deployments/host-deploy/actions/build")).json<{ job_id: number }>();
+
+    const stopped = await inject("POST", `/api/hosts/host/runs/${harness.agent.last_run("build")!.run_id}/stop`);
+    await harness.deployment.cycle();
+
+    expect(stopped.json()).toMatchObject({ ok: true, job_id });
+    expect(harness.store.job(job_id)).toMatchObject({ state: "failed", error: "Stopped by admin" });
   });
 });
 

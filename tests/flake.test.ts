@@ -180,11 +180,11 @@ describe("the input check", () => {
     agent.end(agent.last_run("flake update")!, "error: cannot write lock\n", 1);
     await flake.cycle();
     await flake.cycle();
-    expect(agent.runs).toHaveLength(1);
+    expect(agent.long_runs).toHaveLength(1);
 
     agent.answers.unshift(["remote_heads", heads("b".repeat(40))]);
     await flake.cycle();
-    expect(agent.runs).toHaveLength(2);
+    expect(agent.long_runs).toHaveLength(2);
   });
 
   it("watches only watch_inputs, and nothing with input_check_interval null", async () => {

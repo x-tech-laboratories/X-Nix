@@ -41,6 +41,8 @@ A token is sent as `Authorization: Bearer xn_…`. A read-only token can only ma
 | `POST /api/hosts/:name/actions/:action`   | `collect` or `reboot`.                                   |
 | `POST /api/hosts/:name/next-boot`         | `{ entry, reboot? }`: sets the one-shot next boot.       |
 | `GET /api/hosts/:name/events`             | The host's events.                                       |
+| `GET /api/hosts/:name/runs`               | The agent's long runs, each with the job following it.  |
+| `POST /api/hosts/:name/runs/:run_id/:action` | `stop` ends a run (as its job's stop when one follows it); `forget` removes an ended one. |
 
 ### Flakes
 
