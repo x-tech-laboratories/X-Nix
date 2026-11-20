@@ -20,7 +20,8 @@ The Hosts table shows each host's NixOS version, when it last switched, its pin,
 
 No more than `parallel` deployments run at once; the page may lower it for one run. Each deployment's part is an
 ordinary job, which names the fleet run as its trigger, and the run keeps who started it. The run keeps going if the X-Nix server restarts, and Stop
-ends it after the jobs already running.
+ends it after the jobs already running. **Stop running jobs** also stops those jobs, as [Stop on a job](/user/jobs-and-builds/#stopping-a-job)
+does; their deployments read as skipped, and the run as stopped.
 
 ## Staged rollouts
 
