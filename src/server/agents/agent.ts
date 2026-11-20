@@ -119,6 +119,13 @@ export class AgentPool {
     return this.get(name);
   }
 
+  // Sends a host's wake packet now, without waiting for its agent to dial in; rejects with why it could not be sent.
+  async wake(host: string): Promise<void> {
+    const settings = this.wake_settings.get(host);
+    if (settings === undefined) throw new Error(`${host} has no wake-on-LAN settings`);
+    await (settings.via === null ? this.send_wake(settings) : this.send_through(settings.via, settings));
+  }
+
   // Sends the packet from another host's agent on the sleeping host's network.
   private async send_through(via: string, settings: WakeSettings): Promise<void> {
     const result = await this.get(via).run(wake_operation(settings), { timeout_in_seconds: wake_command_timeout_in_seconds });
