@@ -165,6 +165,13 @@ export const routes: Record<string, RouteToolSpec> = {
     ],
   },
   get_job: { route: "GET /api/jobs/:id", description: "Shows one job with its command and output.", params: [{ name: "id", schema: whole }] },
+  stop_job: {
+    route: "POST /api/jobs/:id/stop",
+    description:
+      "Stops a running job by ending its processes on its host, and answers once they have ended; the job then fails as stopped. " +
+      "A switch stopped during activation can leave the host part-way between systems, so check the deployment afterwards.",
+    params: [{ name: "id", schema: whole }],
+  },
   list_samples: {
     route: "GET /api/samples",
     description: "Lists readings over time, comma-separated metrics from " + metric_names.join(", ") + ", for one owner or everyone.",

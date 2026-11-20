@@ -4,7 +4,7 @@
 
 import { follow_run, type Followed, type RunSink } from "@x-tech-laboratories/x-libs/server/runs";
 
-import type { AgentPool } from "./agents/agent.ts";
+import type { AgentPool, LongRun } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
 import type { Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
@@ -17,7 +17,8 @@ export type { Followed };
 export type Translate = (job: Job, chunk: string, ended: boolean) => string;
 
 // Copies the run's new output into the job and finishes the job once the run has ended; `describe` names a failing exit
-// code its owner knows better, such as a timeout, and `translate` rewrites output such as nix's structured log.
+// code its owner knows better, such as a timeout, and `translate` rewrites output such as nix's structured log. A run
+// someone stopped fails as stopped by them, whatever its exit code.
 export async function follow(
   store: Store, agents: AgentPool, job: Job, now: () => number, describe: (exit_code: number) => string | null = () => null, translate: Translate | null = null,
 ): Promise<Followed> {
@@ -25,11 +26,47 @@ export async function follow(
   if (agents.is_starting(job.run_id)) return { outcome: "running", error: "" };
   const sink: RunSink = {
     append_output: (text, next_offset) => store.append_output(job.id, text, next_offset ?? null),
-    finish: (state, exit_code, error) => store.finish_job(job.id, state, exit_code, error, now()),
+    finish: (state, exit_code, error) => {
+      const by = agents.stopped_by(job.run_id!, true);
+      if (by === null) store.finish_job(job.id, state, exit_code, error, now());
+      else store.finish_job(job.id, "failed", exit_code, `Stopped by ${by}`, now());
+    },
   };
   return follow_run(agents.get(job.agent), job.run_id!, job.output_offset, sink, {
     describe, translate: translate === null ? undefined : (chunk, ended) => translate(job, chunk, ended),
   });
+}
+
+// ── Stopping ─────────────────────────────────────────────────────────────────
+
+export interface StopOutcome {
+  ok: boolean;
+  message: string;
+  job_id: number | null;
+}
+
+// Stops a running job's long run on its agent, waiting for its processes to end; the job's owner finishes it on its
+// next cycle, so whatever the owner does after a job, such as reading a switch's verdict, still happens.
+export async function stop_job(store: Store, agents: AgentPool, job_id: number, by: string, now: () => number): Promise<StopOutcome> {
+  const job = store.job(job_id);
+  if (job === null) return { ok: false, message: "No such job", job_id: null };
+  const refuse = (message: string): StopOutcome => ({ ok: false, message, job_id });
+  if (job.state !== "running") return refuse(`Job #${job_id} has already ended`);
+  if (job.run_id === null) return refuse(`Job #${job_id} has no run to stop`);
+  if (agents.is_starting(job.run_id)) return refuse(`Job #${job_id} is still waking its host; stop it once it has started`);
+  let run: LongRun;
+  try {
+    run = await agents.stop(job.agent, job.run_id, by);
+  } catch (error) {
+    return refuse(`Could not stop job #${job_id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // A run that ended on its own before the stop reached it keeps its own outcome.
+  if (run.state !== "stopped") {
+    agents.stopped_by(job.run_id, true);
+    return refuse(`Job #${job_id} had already ended before it could be stopped`);
+  }
+  store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind})`);
+  return { ok: true, message: `Stopped job #${job_id}`, job_id };
 }
 
 // ── Starting ─────────────────────────────────────────────────────────────────

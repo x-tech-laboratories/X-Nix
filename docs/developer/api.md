@@ -108,6 +108,7 @@ Registered only when the server has a provisioner.
 | ---------------------------------------- | ------------------------------------------------------------------------ |
 | `GET /api/jobs`                          | `?deployment=&kind=&evaluations=1&since=&limit=`: jobs without output.   |
 | `GET /api/jobs/:id`                      | One job with its output.                                                 |
+| `POST /api/jobs/:id/stop`                | Ends a running job's run on its agent; the job fails as stopped.         |
 | `GET /api/samples`                       | `?owner=&metrics=a,b&since=`: chart readings.                            |
 | `GET /api/builds`                        | `?owner=&target=&limit=`: build history and the targets that have one.   |
 | `GET /api/builds/:id/products/:index`    | Downloads a product file in pieces through the agent that built it.      |

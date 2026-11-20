@@ -15,8 +15,8 @@ export type { LongRun, LongRunPoll, LongRunState, RunResult } from "../../shared
 // ── Agent ────────────────────────────────────────────────────────────────────
 
 // The part of an X-Libs agent X-Nix uses: run performs an operation to its end and never rejects, start begins a long
-// run that outlives the agent, poll reads its output past an offset, and forget removes an ended one.
-export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "forget">;
+// run that outlives the agent, poll reads its output past an offset, stop ends a long run, and forget removes an ended one.
+export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "stop" | "forget">;
 
 const wake_command_timeout_in_seconds = 30;
 
@@ -42,6 +42,10 @@ class MissingAgent implements Agent {
     throw new AgentError(this.message, true);
   }
 
+  async stop(): Promise<LongRun> {
+    throw new AgentError(this.message, true);
+  }
+
   async forget(): Promise<void> {}
 }
 
@@ -56,6 +60,8 @@ export class AgentPool {
   private readonly waiting = new Map<string, Set<() => void>>();
   // The long runs waiting on their host to wake before they start.
   private readonly starting = new Set<string>();
+  // Who stopped each long run, until the job following it has finished.
+  private readonly stopped = new Map<string, string>();
 
   constructor(own_host: string, own_agent: Agent, send_wake: SendWake = send_magic_packet) {
     this.own_host = own_host;
@@ -150,5 +156,23 @@ export class AgentPool {
   // Whether a long run waits on its host to wake before it starts.
   is_starting(run_id: string | null): boolean {
     return run_id !== null && this.starting.has(run_id);
+  }
+
+  // Stops a long run on a host, remembering who stopped it for the job that follows it.
+  async stop(host: string | null, run_id: string, by: string): Promise<LongRun> {
+    this.stopped.set(run_id, by);
+    try {
+      return await this.get(host).stop(run_id);
+    } catch (error) {
+      this.stopped.delete(run_id);
+      throw error;
+    }
+  }
+
+  // Who stopped a long run, or null when nobody did; once read for a finished job it is forgotten.
+  stopped_by(run_id: string, forget = false): string | null {
+    const by = this.stopped.get(run_id) ?? null;
+    if (forget) this.stopped.delete(run_id);
+    return by;
   }
 }

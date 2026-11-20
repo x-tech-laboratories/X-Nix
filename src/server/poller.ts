@@ -59,11 +59,14 @@ export class Poller {
     this.cycles.soon(watched);
   }
 
+  // Polls whatever owns a job soon, by the owner's id; nothing when no watched thing has it.
+  soon_for(owner_id: string): void {
+    const owner = this.watched().find((watched) => watched.id === owner_id);
+    if (owner !== undefined) this.soon(owner);
+  }
+
   // Polls whatever owns each new job soon, as a cache whose build a deployment started would otherwise wait a whole interval.
   follow_new_jobs(store: Store): () => void {
-    return store.on_job_created((owner_id) => {
-      const owner = this.watched().find((watched) => watched.id === owner_id);
-      if (owner !== undefined) this.soon(owner);
-    });
+    return store.on_job_created((owner_id) => this.soon_for(owner_id));
   }
 }

@@ -25,6 +25,7 @@ function fake_agent(name: string, operations: Operation[] = [], exit_code = 0): 
       return { run_id, pid: 1, started_epoch: 0 } as never;
     },
     poll: async () => ({ alive: false, exit_code: 0, new_output: "", offset: 0 }) as never,
+    stop: async () => { throw new Error("not used"); },
     forget: async () => {},
   };
 }

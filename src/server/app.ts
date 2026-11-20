@@ -31,6 +31,7 @@ import { agent_snippet, media_formats, parse_install_request, type MediaFormat }
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import { metric_names, sample_retention_in_seconds, type BuildRecord, type EventRow, type Job, type JobKind, type Metric, type Sample, type Store } from "./store.ts";
 import { register_mcp } from "./mcp.ts";
+import { stop_job } from "./runs.ts";
 import { register_webhook_route, type Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -799,6 +800,15 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (request, reply) => {
     const job = store.job(Number(request.params.id));
     return job ?? reply.code(404).send({ error: "No such job" });
+  });
+
+  // Stops a running job's processes on its host; its owner finishes it as stopped on its next cycle.
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/stop", async (request, reply) => {
+    if (options.agents === undefined) return reply.code(503).send({ error: "No agents to stop the job through" });
+    const outcome = await stop_job(store, options.agents, Number(request.params.id), started_by(request.viewer), () => Math.floor(Date.now() / 1000));
+    const job = outcome.job_id === null ? null : store.job(outcome.job_id);
+    if (job !== null) poller.soon_for(job.deployment_id);
+    return reply.code(outcome.ok ? 200 : outcome.job_id === null ? 404 : 409).send(outcome);
   });
 
   // ── Samples ──────────────────────────────────────────────────────────────

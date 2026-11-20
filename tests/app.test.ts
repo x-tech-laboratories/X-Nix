@@ -19,9 +19,9 @@ const accounts = new Map([["admin", hash_password(password)], ["operator", hash_
 let app: FastifyInstance | null = null;
 
 // The app, and a request helper carrying a logged-in session.
-async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = [], hosts: Host[] = []) {
+async function start_app(harness: Harness = make_deployment(), caches: Cache[] = [], flakes: Flake[] = [], hosts: Host[] = [], agents?: AgentPool) {
   const poller = new Poller([harness.deployment], null, caches, [], flakes, hosts);
-  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller });
+  app = await build_app({ serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller, agents });
   const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
   const cookie = String(login.headers["set-cookie"]).split(";")[0];
   const server = app;
@@ -123,6 +123,39 @@ describe("/api/deployments", () => {
 
     expect((await inject("GET", "/api/deployments/nowhere")).statusCode).toBe(404);
     expect((await inject("POST", "/api/deployments/host-deploy/actions/explode")).statusCode).toBe(404);
+  });
+});
+
+// ── Jobs ─────────────────────────────────────────────────────────────────────
+
+describe("/api/jobs/:id/stop", () => {
+  it("stops a running job's run, and the job fails as stopped by whoever asked", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [], harness.agents);
+    const { job_id } = (await inject("POST", "/api/deployments/host-deploy/actions/build")).json<{ job_id: number }>();
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+    await harness.deployment.cycle();
+
+    expect(stopped.statusCode).toBe(200);
+    expect(harness.agent.last_run("build")?.stopped).toBe(true);
+    expect(harness.store.job(job_id)).toMatchObject({ state: "failed", exit_code: 143, error: "Stopped by admin" });
+    expect(harness.store.events("host-deploy").map((event) => event.message)).toContain(`admin stopped job #${job_id} (build)`);
+    expect((await inject("POST", `/api/jobs/${job_id}/stop`)).statusCode).toBe(409);
+    expect((await inject("POST", "/api/jobs/999/stop")).statusCode).toBe(404);
+  });
+
+  it("leaves a run that ended on its own with its own outcome", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [], harness.agents);
+    const { job_id } = (await inject("POST", "/api/deployments/host-deploy/actions/build")).json<{ job_id: number }>();
+    harness.agent.end(harness.agent.last_run("build")!, "", 0);
+
+    const refused = await inject("POST", `/api/jobs/${job_id}/stop`);
+    await harness.deployment.cycle();
+
+    expect(refused.statusCode).toBe(409);
+    expect(harness.store.job(job_id)?.error).not.toBe("Stopped by admin");
   });
 });
 
