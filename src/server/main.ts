@@ -28,6 +28,7 @@ import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
+import { stop_job } from "./runs.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
 import { nix_string } from "../shared/operations.ts";
@@ -118,7 +119,10 @@ const checked_attributes = (flake: Flake) => [...new Set([
 const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated, checked_attributes }));
 const poller = new Poller(deployments, null, caches, [provisioner], flakes, [...hosts.values()]);
 poller.follow_new_jobs(store);
-const fleet = new Fleet(poller.deployments, { store, settings: config.fleet, poke: (deployment) => poller.soon(deployment) });
+const fleet = new Fleet(poller.deployments, {
+  store, settings: config.fleet, poke: (deployment) => poller.soon(deployment),
+  stop_job: (job_id, by) => stop_job(store, agents, job_id, by, () => Math.floor(Date.now() / 1000)),
+});
 // A job running well past its time is noted in its owner's history and sent to the notification channels.
 const overdue_jobs = new OverdueJobs(store, new Notifier(config.notifications));
 const webhook = webhook_secret_file ? new Webhook({

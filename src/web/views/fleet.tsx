@@ -1,6 +1,7 @@
 // The fleet runs: the table of them on the Hosts page, and one fleet run followed host by host.
 
 import { StackedBarChart, type Stack as ChartStack } from "@x-tech-laboratories/x-libs/web/react/charts";
+import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Crumbs, Facts, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable, type TableColumn } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -40,9 +41,9 @@ export function RunsTable({ runs }: { runs: FleetRun[] }) {
 export function FleetRunView({ id }: { id: number }) {
   const run = use_resource(() => api<FleetRun>(`/api/fleet/runs/${id}`), [id], live);
 
-  const post = async (action: "stop" | "approve") => {
+  const post = async (action: "stop" | "approve", body?: object) => {
     try {
-      toast((await api<FleetOutcome>(`/api/fleet/runs/${id}/${action}`, "POST")).message);
+      toast((await api<FleetOutcome>(`/api/fleet/runs/${id}/${action}`, "POST", body)).message);
     } catch (error) {
       error_toast(error);
     }
@@ -53,9 +54,16 @@ export function FleetRunView({ id }: { id: number }) {
   return (
     <div className="page">
       <Crumbs items={[["Hosts", link(["hosts"])], [`Run ${id}`, null]]} />
-      <PageHeading title={`Fleet run ${id}`} actions={shown && shown.state === "running" && !shown.stop_requested && <>
-        {shown.gate && !shown.gate.approved && <button className="accent solid" onClick={() => void post("approve")}>Approve next stage</button>}
-        <button className="danger" onClick={() => void post("stop")}>Stop</button>
+      <PageHeading title={`Fleet run ${id}`} actions={shown && shown.state === "running" && <>
+        {!shown.stop_requested && shown.gate && !shown.gate.approved && <button className="accent solid" onClick={() => void post("approve")}>Approve next stage</button>}
+        {!shown.stop_requested && <button className="danger" onClick={() => void post("stop")}>Stop</button>}
+        {shown.hosts.some((host) => host.state === "running") && <button className="danger" onClick={() => confirm_dialog({
+          title: `Stop fleet run ${id} and its jobs`,
+          message: `Stop fleet run ${id} and the jobs still running in it? A switch stopped while it activates can leave its host part-way between systems.`,
+          confirm_label: "Stop jobs",
+          danger: true,
+          run: () => post("stop", { jobs: true }),
+        })}>Stop running jobs</button>}
       </>} />
       <Stack>
         <Loaded resource={run}>

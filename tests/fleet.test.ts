@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError, deployment_settings, fleet_settings, parse_config } from "../src/server/config.ts";
 import { Fleet, selector_matches, type FleetRun } from "../src/server/fleet.ts";
 import { pinned_flake } from "../src/server/nixos/flake.ts";
+import { stop_job } from "../src/server/runs.ts";
 import { Store } from "../src/server/store.ts";
 import { clock, collect, current_closure, FakeAgent, make_deployment, result, type Harness } from "./fake_agent.ts";
 
@@ -175,6 +176,36 @@ describe("a fleet run", () => {
     await end_job(harnesses.get("web-1")!, agent, 0, "build");
     await fleet.advance();
     expect(fleet.run(run!.id)!.state).toBe("stopped");
+  });
+
+  it("stops the jobs still running when asked, reading their hosts as skipped", async () => {
+    const { harnesses, store, agent } = make_fleet([{ id: "web-1" }, { id: "web-2" }, { id: "web-3" }]);
+    const deployments = new Map([...harnesses].map(([id, harness]) => [id, harness.deployment]));
+    const agents = harnesses.get("web-1")!.agents;
+    const fleet = new Fleet(deployments, {
+      store, settings: fleet_settings({ parallel: 2 }), now: () => clock.now, stop_job: (job_id, by) => stop_job(store, agents, job_id, by, () => clock.now),
+    });
+    const { run } = await fleet.start({ action: "build", selector: "*" });
+
+    const outcome = await fleet.stop(run!.id, { jobs: true, by: "admin" });
+    for (const harness of harnesses.values()) await harness.deployment.cycle();
+    await fleet.advance();
+
+    expect(outcome).toMatchObject({ ok: true, message: `Fleet run #${run!.id} is stopping, with its running jobs` });
+    expect(run_of(agent, "web-1", "build")!.stopped).toBe(true);
+    expect(run_of(agent, "web-3", "build")).toBeUndefined();
+    const stopped = fleet.run(run!.id)!;
+    expect(states(stopped)).toEqual({ "web-1": "skipped", "web-2": "skipped", "web-3": "skipped" });
+    expect(stopped.hosts[0]!.message).toBe("Stopped by admin");
+    expect(stopped.state).toBe("stopped");
+  });
+
+  it("refuses to stop jobs without a way to stop them", async () => {
+    const { fleet } = make_fleet([{ id: "web-1" }]);
+    const { run } = await fleet.start({ action: "build", selector: "*" });
+
+    expect(await fleet.stop(run!.id, { jobs: true })).toMatchObject({ ok: false, message: "This server cannot stop jobs" });
+    expect(fleet.run(run!.id)!.stop_requested).toBe(false);
   });
 });
 

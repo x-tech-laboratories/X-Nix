@@ -440,7 +440,11 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const { store, poller } = options;
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
-  const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
+  const { agents } = options;
+  const fleet = options.fleet ?? new Fleet(poller.deployments, {
+    store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment),
+    stop_job: agents === undefined ? undefined : (job_id, by) => stop_job(store, agents, job_id, by, () => Math.floor(Date.now() / 1000)),
+  });
   await register_auth(app, options.accounts, options.store.sql);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
@@ -651,8 +655,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     return run ?? reply.code(404).send({ error: "No such fleet run" });
   });
 
-  app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/stop", async (request, reply) => {
-    const outcome = await fleet.stop(Number(request.params.id));
+  // Skips the hosts not yet started, and with `jobs` true also stops the jobs of those running.
+  app.post<{ Params: { id: string }; Body: { jobs?: unknown } | undefined }>("/api/fleet/runs/:id/stop", async (request, reply) => {
+    const outcome = await fleet.stop(Number(request.params.id), { jobs: request.body?.jobs === true, by: started_by(request.viewer) });
     return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
   });
 
