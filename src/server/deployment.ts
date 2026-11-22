@@ -89,6 +89,8 @@ export interface Evaluation {
   held_build?: number;
   // A switch set for the next boot, and the system running when it was, until the host runs another; absent when none waits.
   deferred_switch?: { reason: string; running: string | null };
+  // The units that failed to start in the system a switch kept, until the host runs another; running is that system once read.
+  units_failed?: { units: string; running: string | null };
 }
 
 // What a switch waits on: a build on another host, or the system it built reaching the cache.
@@ -465,6 +467,13 @@ export class Deployment {
     if (evaluation.deferred_switch !== undefined) {
       raise(this.settings.reboot_status);
       messages.push({ level: level_of_status[this.settings.reboot_status], text: `Waiting on a reboot: ${evaluation.deferred_switch.reason}` });
+    }
+    const failed = evaluation.units_failed;
+    if (failed !== undefined && failed.running === null) failed.running = fields.current;
+    if (failed !== undefined && failed.running !== fields.current) delete evaluation.units_failed;
+    if (evaluation.units_failed !== undefined) {
+      raise("warning");
+      messages.push({ level: "warning", text: `Some units failed to start after the last switch: ${evaluation.units_failed.units}` });
     }
     const reboot = reboot_required(fields.booted_parts, fields.current_parts);
     if (reboot === true) {
@@ -1117,7 +1126,13 @@ export class Deployment {
       return { level: "error", text: `${noun} refused: ${verdict.refused}` };
     }
     const outcome = verdict.outcome;
-    if (outcome === null) return null;
+    // A system kept although some of its units failed is still a switch that worked, with a warning naming them.
+    const kept_with_failures = (): { level: EventLevel; text: string } | null => {
+      if (verdict.units_failed === null || finished.state !== "succeeded") return null;
+      this.store.save_evaluation(this.id, { ...this.evaluation(), units_failed: { units: verdict.units_failed, running: null } });
+      return { level: "warning", text: `${noun} kept, but some units failed to start: ${verdict.units_failed}` };
+    };
+    if (outcome === null) return kept_with_failures();
     if (outcome.kind === "rolled-back") {
       fail(`Rolled back to the previous system: ${outcome.reason}`);
       return { level: "error", text: `${noun} rolled back to the previous system: ${outcome.reason}` };
@@ -1135,7 +1150,7 @@ export class Deployment {
       fail(outcome.reason || "The watchdog never reported an outcome");
       return { level: "error", text: `${noun} ended without a word from its watchdog: ${outcome.reason}` };
     }
-    return null;
+    return kept_with_failures();
   }
 
   // Confirms a guarded switch awaiting confirmation once its HTTP checks pass, or tells its watchdog to roll back.

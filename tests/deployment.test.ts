@@ -1155,6 +1155,27 @@ describe("safer switches", () => {
     expect(harness.deployment.reading()!.messages.map((message) => message.text)).toContain("Waiting on a reboot: The new system changes kernel, so it starts at the next boot");
   });
 
+  it("keeps a switch whose units partly failed as succeeded, warning with them until the host runs another system", async () => {
+    const harness = make_deployment();
+    await collect(harness);
+    await harness.deployment.act("switch");
+    const output = "warning: the following units failed: borgmatic.service\n@@x-nix-switch units-failed\n@@x-nix-switch outcome confirmed X-Nix confirmed the switch\n";
+    harness.agent.end(harness.agent.last_run('"kind":"switch"')!, output, 0);
+
+    await cycle(harness);
+    await collect(harness, { probe: probe({ current: target_closure }) });
+
+    expect(harness.store.jobs()[0]).toMatchObject({ kind: "switch", state: "succeeded" });
+    expect(harness.store.events(harness.deployment.id).map((event) => event.message)).toContain("Switch kept, but some units failed to start: borgmatic.service");
+    const warning = "Some units failed to start after the last switch: borgmatic.service";
+    expect(harness.deployment.reading()!.messages.map((message) => message.text)).toContain(warning);
+    expect(harness.deployment.reading()!.status).not.toBe("ok");
+
+    harness.deployment.request_evaluation();
+    await collect(harness, { probe: probe({ current: newer_closure }) });
+    expect(harness.deployment.reading()!.messages.map((message) => message.text)).not.toContain(warning);
+  });
+
   it("records a refusal by a pre-switch check", async () => {
     const harness = make_deployment({ pre_switch_checks: ["test -d /boot"] });
     await harness.deployment.act("boot");
