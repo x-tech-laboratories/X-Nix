@@ -13,16 +13,17 @@ shows up without a reload.
 ![The Overview](/assets/screenshots/overview.png)
 
 The Overview opens with a donut each for the hosts, flakes and caches by status, how the latest job of each went with
-the number running now, the deployments in sync, those that need a reboot, and the agents connected. **Needs
-attention** lists each host that is not well with why: drifting, agent offline, evaluation failed, reboot needed, a job
-overdue.
+the number running now, the deployments in sync, those that need a reboot, and the agents connected.
+
+Below them, the jobs of the **Last 24 hours** or the **Last 7 days**, whichever you pick, show how they ended, how many
+started each hour or day, and each owner's jobs on a timeline; the page remembers the choice.
+
+**Needs attention** lists each host that is not well with why: drifting, agent offline, evaluation failed, reboot
+needed, a job overdue.
 
 **What builds what** maps the fleet from left to right: each flake, the caches that build from it, and the hosts they
-deploy to, each with its status. A line from a flake straight to a host means the host builds for itself.
-
-Below it, the jobs of the **Last 24 hours** or the **Last 7 days**, whichever you pick, show how they ended, how many
-started each hour or day, and each owner's jobs on a timeline; the page remembers the choice. **Running now** lists the
-jobs still running.
+deploy to, each with its status. A line from a flake straight to a host means the host builds for itself. **Running
+now** lists the jobs still running.
 
 ## Flakes
 

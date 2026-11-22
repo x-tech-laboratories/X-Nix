@@ -1,6 +1,6 @@
-// The Overview: hosts, flakes, caches, jobs, deployments, reboots and agents by status, the hosts that need attention and
-// why, a map of which flakes build which caches and hosts, the last day or week of jobs by hour or day and by owner, and the
-// jobs running now. Each host's own state is on the Hosts page, which every row here links to.
+// The Overview: hosts, flakes, caches, jobs, deployments, reboots and agents by status, the last day or week of jobs by
+// hour or day and by owner, the hosts that need attention and why, a map of which flakes build which caches and hosts, and
+// the jobs running now. Each host's own state is on the Hosts page, which every row here links to.
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { Donut } from "@x-tech-laboratories/x-libs/web/react/charts";
@@ -46,18 +46,6 @@ export function OverviewView() {
           <AgentsDonut rows={found} />
         </>}</Loaded>
       </div>
-      <Section title="Needs attention">
-        <Stack>
-          <Loaded resource={rows}>
-            {(found) => {
-              if (found.length === 0) return <Empty title="No hosts yet." hint="Name each NixOS host and its flake under deployments in the config file." />;
-              const attention = found.filter((row) => reasons(row).length > 0 || troubled.has(row_status(row) ?? "online"));
-              return attention.length === 0 ? <Empty title="Nothing needs attention." /> : <AttentionTable rows={attention} />;
-            }}
-          </Loaded>
-        </Stack>
-      </Section>
-      <MapSection />
       <Section title={periods[period].label} tools={<Segmented<Period> label="Period" value={period} on_change={set_period}
         choices={(Object.keys(periods) as Period[]).map((value) => ({ value, label: periods[value].label }))} />}>
         <Stack>
@@ -72,6 +60,18 @@ export function OverviewView() {
           </Loaded>
         </Stack>
       </Section>
+      <Section title="Needs attention">
+        <Stack>
+          <Loaded resource={rows}>
+            {(found) => {
+              if (found.length === 0) return <Empty title="No hosts yet." hint="Name each NixOS host and its flake under deployments in the config file." />;
+              const attention = found.filter((row) => reasons(row).length > 0 || troubled.has(row_status(row) ?? "online"));
+              return attention.length === 0 ? <Empty title="Nothing needs attention." /> : <AttentionTable rows={attention} />;
+            }}
+          </Loaded>
+        </Stack>
+      </Section>
+      <MapSection />
       <Section title="Running now">
         <Stack>
           <Loaded resource={latest}>
