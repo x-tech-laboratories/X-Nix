@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-22
 
+- docs: drop the screenshot of the old Users page
 - docs(changelog): note installing the screen-off command under a fixed name
 - docs(wake): install the Phosh screen-off command under a fixed name the server can name
 - feat(wake): turn a woken host's screen back off with screen_off, and hold off only sleep during a job
