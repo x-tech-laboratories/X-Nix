@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vitest/config";
+import { defineConfig } from "vite";
 
 const server_port = Number(process.env.PORT ?? 7720);
 
@@ -15,10 +15,5 @@ export default defineConfig({
     proxy: {
       "/api": `http://127.0.0.1:${server_port}`,
     },
-  },
-  test: {
-    // Tests live in tests/, outside the web page's root.
-    root: import.meta.dirname,
-    include: ["tests/**/*.test.ts"],
   },
 });
