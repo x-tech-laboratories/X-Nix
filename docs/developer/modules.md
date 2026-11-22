@@ -260,7 +260,7 @@ flowchart TB
 
 | View             | Route                               | Shows                                                    |
 | ---------------- | ----------------------------------- | -------------------------------------------------------- |
-| `overview.tsx`   | `#/`                                | Counts, status donut, needs attention, the flow map.     |
+| `overview.tsx`   | `#/`                                | Status donuts, needs attention, the flow map, job charts. |
 | `map.tsx`        | inside the Overview                 | Flakes → caches → hosts, through X-Libs' `flow_map`.     |
 | `hosts.tsx`      | `#/hosts`, `#/hosts/<name>/<tab>`   | The hosts table, fleet selection, one host's header and tabs. |
 | `system.tsx`     | `#/hosts/<name>/system`             | Drift, details, the diff, pin, jobs, events, generations. |

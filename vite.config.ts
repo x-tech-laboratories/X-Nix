@@ -11,9 +11,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    // The dev page reaches the API through the separately running server.
+    // The dev page reaches the API through the separately running server; the pattern leaves the page's own api.ts alone.
     proxy: {
-      "/api": `http://127.0.0.1:${server_port}`,
+      "^/api/": `http://127.0.0.1:${server_port}`,
     },
   },
   test: {

@@ -92,6 +92,9 @@ export function remote_heads_operation(remotes: InputRemote[]): RemoteHeadsOpera
   return { kind: "remote_heads", remotes: remotes.map((remote) => ({ url: remote.url, refs: refs_to_ask(remote.ref) })) };
 }
 
+// The branch a github: flake's update lands on when it opens a pull request; each update replaces it.
+export const update_branch = "x-nix/flake-update";
+
 // Updates every input of the lock, refetching each branch it follows rather than trusting nix's cached lookup of it,
 // which may be up to an hour old; with attributes to check, the new lock is written or pushed only once they pass.
 export function update_operation(settings: FlakeSettings, attributes: string[] = []): Operation {
@@ -110,6 +113,7 @@ export function update_operation(settings: FlakeSettings, attributes: string[] =
   return with_access_tokens(settings, {
     kind: "github_update", nix: nix(settings), ssh_url: repository.ssh_url, branch: repository.branch, ssh_key: settings.push_ssh_key!,
     author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message, check,
+    pull_request: settings.land_update === "pull_request" ? { repository: repository.name, head: update_branch, token_file: settings.access_tokens_file! } : null,
   });
 }
 

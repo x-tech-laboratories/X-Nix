@@ -90,6 +90,42 @@ describe("a switch on the agent", () => {
     expect(ran.map((argv) => argv[0])).toEqual(["/bin/sh", "nixos-rebuild", "/bin/sh"]);
   });
 
+  it("keeps a system whose activation only failed to start some units, naming them", async () => {
+    const failed = { exit_code: 4, stdout: "warning: the following units failed: borgmatic.service, nginx.service\n" };
+    const { context, output } = fake_context((argv) => (argv[0] === "nixos-rebuild" ? failed : {}));
+
+    const status = await switch_system(context, plain_switch());
+
+    expect(status).toBe(0);
+    expect(switch_verdict(output()).units_failed).toBe("borgmatic.service, nginx.service");
+  });
+
+  it("leaves a guarded switch with failed units to its health checks, keeping it when they pass", async () => {
+    const watched = watch({ token: token(), require_sudo: false, activation_timeout: 1, confirm_window: 1, health_commands: ["true"] });
+    const { context, output } = fake_context((argv) => (argv[0] === "nixos-rebuild" ? { exit_code: 4 } : {}));
+
+    const status = await switch_system(context, plain_switch({ watch: watched }));
+
+    const verdict = switch_verdict(output());
+    expect([verdict.activated, verdict.awaiting_confirmation, verdict.units_failed]).toEqual([true, true, "units it did not name"]);
+    expect(verdict.outcome?.kind).toBe("kept");
+    expect(status).toBe(0);
+  }, 20_000);
+
+  it("still rolls back a switch with failed units whose health check fails", async () => {
+    const watched = watch({ token: token(), require_sudo: false, health_commands: ["curl -f localhost"], health_timeout: 0 });
+    const { context, output } = fake_context((argv) => {
+      if (argv[0] === "nixos-rebuild") return { exit_code: 4 };
+      return argv[2] === "curl -f localhost" ? { exit_code: 1, stdout: "nginx is down\n" } : {};
+    });
+
+    await switch_system(context, plain_switch({ watch: watched }));
+
+    const verdict = switch_verdict(output());
+    expect(verdict.awaiting_confirmation).toBe(false);
+    expect(verdict.outcome?.reason).toContain("Health check 1 (curl -f localhost) failed with status 1: nginx is down");
+  }, 20_000);
+
   it("fetches from the cache before its watchdog starts, so a slow download leaves the activation its whole time", async () => {
     const watched = watch({ token: token(), require_sudo: false, activation_timeout: 1, confirm_window: 1 });
     const { context, ran, output } = fake_context();
