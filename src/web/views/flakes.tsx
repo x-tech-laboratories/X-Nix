@@ -114,9 +114,9 @@ export function FlakeView({ id }: { id: string }) {
             <Section title="Findings"><MessagesList messages={found.reading?.messages ?? []} /></Section>
             <Section title="Details"><Details flake={found} /></Section>
             <Section title="Used by"><UsedBy flake={found} /></Section>
-            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <><InputAges flake={found} /><InputsTable flake={found} /></>}</Section>
             <Section title="Jobs">{jobs.length === 0 ? <Empty title="No updates yet." /> : <JobsTable jobs={jobs} show_deployment={false} />}</Section>
             <Section title="Events">{events.length === 0 ? <Empty title="No events yet." /> : <EventsList events={events} />}</Section>
+            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <><InputAges flake={found} /><InputsTable flake={found} /></>}</Section>
           </>}
         </Loaded>
       </Stack>
