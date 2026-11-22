@@ -90,6 +90,7 @@ services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-acce
 | `watch_inputs`         | every input                   | The inputs that the check and the push webhook watch, by name. |
 | `access_tokens_file`   | none                          | A nix.conf file on the flake's host holding `access-tokens`. |
 | `push_ssh_key`         | none                          | The key a `github:` flake's update pushes with.            |
+| `commit_signing_key`   | none                          | An SSH private key file a `github:` flake's update commit is signed with, so an agent's pull mode with `allowedSignersFile` can deploy it. |
 | `commit_author`        | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
 | `commit_message`       | `chore(flake): update inputs` | The update commit's message.                               |
 | `check_update`         | `evaluate`                    | What an update does to everything naming the flake before it writes the lock: `evaluate`, `build` or `none`. |

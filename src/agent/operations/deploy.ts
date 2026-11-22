@@ -144,7 +144,8 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
     }
     const message = [operation.message, "", ...updated_inputs(updated)].join("\n");
     const identity = ["-c", `user.name=${operation.author_name}`, "-c", `user.email=${operation.author_email}`];
-    const committed = await git(["-C", repository, ...identity, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
+    const signing = operation.signing_key == null ? [] : ["-c", "gpg.format=ssh", "-c", `user.signingkey=${operation.signing_key}`, "-c", "commit.gpgsign=true"];
+    const committed = await git(["-C", repository, ...identity, ...signing, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
     if (committed.exit_code !== 0) return committed.exit_code;
     if (operation.pull_request != null) return await land_as_pull_request(context, operation.pull_request, repository, git, message, fetcher);
     const pushed = await git(["-C", repository, "push", "origin", "HEAD"]);

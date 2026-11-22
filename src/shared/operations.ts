@@ -244,6 +244,8 @@ export interface GithubUpdateOperation extends NixSettings {
   check?: UpdateCheck | null;
   // Lands the commit as a pull request rather than on the branch; absent or null pushes to the branch.
   pull_request?: UpdatePullRequest | null;
+  // An SSH private key file the commit is signed with; absent or null leaves it unsigned.
+  signing_key?: string | null;
 }
 
 // Where an update's pull request goes, and the nix.conf whose github.com access token opens it.
