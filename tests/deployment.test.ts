@@ -301,6 +301,39 @@ describe("actions", () => {
     expect((await harness.deployment.act("switch")).ok).toBe(true);
   });
 
+  it("builds and switches a remote flake at the commit it evaluated, so a branch that moves meanwhile changes neither", async () => {
+    const harness = make_deployment({ flake: "github:owner/config/main", configuration: "laptop", magic_rollback: true });
+    const revision = "a".repeat(40);
+    await collect(harness, { metadata: metadata({ revision }) });
+
+    await harness.deployment.act("switch");
+
+    const command = shown_command(harness.deployment.running_job()!.command);
+    expect(command).toContain(`build --no-link`);
+    expect(command).toContain(`'github:owner/config?rev=${revision}#nixosConfigurations."laptop".config.system.build.toplevel'`);
+    expect(command).toContain(`nixos-rebuild switch --flake 'github:owner/config?rev=${revision}#laptop'`);
+    expect(command).not.toContain("github:owner/config/main");
+  });
+
+  it("switches a remote flake as it is when nothing has been evaluated yet", async () => {
+    const harness = make_deployment({ flake: "github:owner/config" });
+
+    await harness.deployment.act("switch");
+
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain("nixos-rebuild switch --flake github:owner/config ");
+  });
+
+  it("switches a local checkout as it is on disk, uncommitted changes included", async () => {
+    const harness = make_deployment();
+    await collect(harness, { metadata: metadata({ revision: "a".repeat(40) }) });
+
+    await harness.deployment.act("switch");
+
+    const command = shown_command(harness.deployment.running_job()!.command);
+    expect(command).toContain("nixos-rebuild switch --flake /etc/nixos ");
+    expect(command).not.toContain("rev=");
+  });
+
   it("refuses a second job while one runs, reboot included", async () => {
     const harness = make_deployment();
     await harness.deployment.act("switch");

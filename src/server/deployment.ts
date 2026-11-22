@@ -44,7 +44,7 @@ import {
   confirm_operation, generations_operation, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, switch_verdict, watch_token,
   type Generation,
 } from "./nixos/switch.ts";
-import { is_pin, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
+import { is_pin, local_path, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
 import { parse_probe, probe_operation, reboot_required, type ProbeFields } from "./nixos/probe.ts";
 import { overdue_text } from "./overdue.ts";
 import { build_translation, tend_build } from "./live_builds.ts";
@@ -922,7 +922,18 @@ export class Deployment {
   private operation_for(kind: JobAction): Operation {
     if (kind === "build") return this.build_operation();
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
-    return switch_job_operation(this.effective_settings(), kind, randomBytes(8).toString("hex"));
+    return switch_job_operation(this.switch_settings(), kind, randomBytes(8).toString("hex"));
+  }
+
+  // The settings with a remote flake fixed at the commit last evaluated, so a switch's build and its nixos-rebuild read
+  // the same system even when the branch moves between them; otherwise nixos-rebuild builds the newer one inside the
+  // activation_timeout that only the activation should use.
+  private switch_settings(): DeploymentSettings {
+    const settings = this.effective_settings();
+    const revision = this.evaluation().flake_revision;
+    if (revision === null || !/^[0-9a-f]{40}$/.test(revision) || local_path(settings.flake) !== null) return settings;
+    const flake = pinned_flake(settings.flake, revision);
+    return flake === null ? settings : { ...settings, flake };
   }
 
   // ── Jobs ─────────────────────────────────────────────────────────────────
