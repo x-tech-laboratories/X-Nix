@@ -49,10 +49,12 @@ class MissingAgent implements Agent {
   async forget(): Promise<void> {}
 }
 
-// The agents by host name; the server's own host is served by its built-in agent.
+// The agents by host name; the server's own host is served by its built-in agent, or by its own agent dialling in.
 export class AgentPool {
   private readonly agents = new Map<string, Agent>();
   readonly own_host: string;
+  // Whether the server works on its own host itself rather than through an agent there.
+  readonly has_own_agent: boolean;
   private readonly send_wake: SendWake;
   private wake_settings = new Map<string, WakeSettings>();
   private kept_awake = new Set<string>();
@@ -63,9 +65,10 @@ export class AgentPool {
   // Who stopped each long run, until the job following it has finished.
   private readonly stopped = new Map<string, string>();
 
-  constructor(own_host: string, own_agent: Agent, send_wake: SendWake = send_magic_packet) {
+  constructor(own_host: string, own_agent: Agent | null, send_wake: SendWake = send_magic_packet) {
     this.own_host = own_host;
-    this.agents.set(own_host, own_agent);
+    this.has_own_agent = own_agent !== null;
+    if (own_agent !== null) this.agents.set(own_host, own_agent);
     this.send_wake = send_wake;
   }
 
@@ -81,7 +84,7 @@ export class AgentPool {
   }
 
   remove(host: string): void {
-    if (host !== this.own_host) this.agents.delete(host);
+    if (host !== this.own_host || !this.has_own_agent) this.agents.delete(host);
   }
 
   // The agent for a host, or the server's own when no host is named.

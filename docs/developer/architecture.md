@@ -62,8 +62,10 @@ flowchart LR
 | Runner             | the agent's user | One long run; outlives the agent.        | The agent, in its own process group. |
 | Watchdog           | the agent's user, rolling back with `sudo -n` | One guarded switch; outlives the run. | The switch, in its own session. |
 
-The server's own machine has no agent process: the server holds a `LocalAgent` from X-Libs that performs operations in
-the same way, so the code never has to tell the two apart.
+The server's own machine runs an agent like any other, dialling in over `ws://127.0.0.1`, so the process that answers
+the web runs nothing as root and its unit is sandboxed. With `X_NIX_LOCAL_AGENT=yes` (`localAgent`) the server holds a
+`LocalAgent` from X-Libs for its own machine instead, which performs operations in the same way, so the code never has
+to tell the two apart; `AgentPool.has_own_agent` says which it is.
 
 `KillMode = "process"` in the module means a restart of either service stops only the main process; runners and
 watchdogs carry on, and the server follows their output again from where it stopped.

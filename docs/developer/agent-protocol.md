@@ -25,8 +25,9 @@ Raise `protocol_version` when an agent and a server of different versions could 
 4. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
    name; on failure the socket closes with one of X-Libs' `close_codes`.
 
-The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host never connects:
-it is served by the in-process `LocalAgent`, which implements the same `Agent` interface.
+The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host connects the same
+way over `ws://127.0.0.1`, unless `localAgent` has the in-process `LocalAgent` serve it, which implements the same
+`Agent` interface.
 
 ## Requests
 

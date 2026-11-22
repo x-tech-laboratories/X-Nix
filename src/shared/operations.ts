@@ -347,6 +347,8 @@ export interface InstallOperation {
   agent_key_path: string | null;
   generate_hardware_config: boolean;
   stop_after_partitioning: boolean;
+  // The target's SSH host key line, which it must prove it holds before anything is sent to it; absent or null trusts whatever answers.
+  host_key?: string | null;
   extra_args: string[];
 }
 
@@ -429,17 +431,21 @@ export function show_argv(argv: Argv): string {
 
 // ── Switch folders ───────────────────────────────────────────────────────────
 
-const watch_folder_parent = "/tmp";
+// The variable naming where switch folders go, set by the agent to a folder of its own state that no other user can reach.
+export const switch_folders_variable = "X_NIX_SWITCH_FOLDERS";
+
+// Where switches kept their folders before they moved into the agent's state, and where they go when it names none.
+export const shared_watch_folder_parent = "/tmp";
 export const watch_folder_prefix = "x-nix-switch-";
 
-// The folder the watchdog and X-Nix share for one switch.
-export function watch_folder(token: string): string {
+// The folder the watchdog and X-Nix share for one switch, under the given parent.
+export function watch_folder(token: string, parent = watch_folders_parent()): string {
   if (!/^[a-f0-9]+$/.test(token)) throw new Error(`'${token}' is not a switch token`);
-  return `${watch_folder_parent}/${watch_folder_prefix}${token}`;
+  return `${parent}/${watch_folder_prefix}${token}`;
 }
 
 export function watch_folders_parent(): string {
-  return watch_folder_parent;
+  return process.env[switch_folders_variable] || shared_watch_folder_parent;
 }
 
 // ── Markers ──────────────────────────────────────────────────────────────────

@@ -10,8 +10,8 @@ X-Nix has two roles:
 
 | Role     | Can                                                                                  |
 | -------- | ------------------------------------------------------------------------------------ |
-| `viewer` | Read everything, change nothing.                                                     |
-| `admin`  | Also update flakes, build, switch, roll back, reboot, provision, and manage users.   |
+| `viewer` | Read everything, change nothing, download nothing.                                   |
+| `admin`  | Also update flakes, build, switch, roll back, reboot, provision, download build products and install media, and manage users. |
 
 **Admins from the password file.** Each line of the file `passwordHashFile` (`X_NIX_PASSWORD_HASH_FILE`) names is a user:
 `name:scrypt$...`. `npm run hash-password -- <name> [file]` adds the user or changes their password, asking at a

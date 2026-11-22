@@ -30,7 +30,7 @@ import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
-import { nix_string } from "../shared/operations.ts";
+import { nix_string, switch_folders_variable } from "../shared/operations.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,10 @@ const settings = read_server_config({
     server_name: { variable: "X_NIX_SERVER_NAME", help: "what the page calls this machine", placeholder: "<name>", default: hostname() },
     webhook_secret_file: { variable: "X_NIX_WEBHOOK_SECRET_FILE", help: "the push webhook's shared secret; the webhook is off without it", placeholder: "<file>" },
     webhook_debounce: { variable: "X_NIX_WEBHOOK_DEBOUNCE", help: "how long after the last push an evaluation starts", placeholder: "<duration>", default: "10s" },
+    local_agent: {
+      variable: "X_NIX_LOCAL_AGENT", help: "yes to work on this machine from the server itself, which needs sudo rules, rather than through its own agent",
+      placeholder: "<yes|no>", default: "no",
+    },
   },
 });
 const { host, port } = settings;
@@ -54,6 +58,8 @@ const server_name = settings.values.server_name || hostname();
 const accounts = load_accounts();
 const webhook_secret_file = settings.values.webhook_secret_file;
 const webhook_debounce = parse_duration(settings.values.webhook_debounce || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
+const local_agent_setting = (settings.values.local_agent || "no").toLowerCase();
+if (local_agent_setting !== "yes" && local_agent_setting !== "no") throw new Error("X_NIX_LOCAL_AGENT must be yes or no");
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -74,8 +80,10 @@ const backup_schedule = json_backup_schedule(join(state_directory, "backup-sched
 const automatic_backups = keep_backing_up(backups, backup_schedule.get);
 // No feature keeps option lists under the state folder, so any left there go.
 await rm(join(state_directory, "options"), { recursive: true, force: true });
-// The server's own host is served by the built-in agent, whose long runs keep their output under the state folder.
-const local_agent = new LocalAgent(join(state_directory, "agent"), { runner: operation_runner });
+// The server's own host is served by the built-in agent, whose long runs keep their output under the state folder, or
+// by an agent of its own, so the server that answers the web needs no sudo.
+if (local_agent_setting === "yes") process.env[switch_folders_variable] ||= join(resolve(state_directory), "agent", "switches");
+const local_agent = local_agent_setting === "yes" ? new LocalAgent(join(state_directory, "agent"), { runner: operation_runner }) : null;
 const agents = new AgentPool(server_name, local_agent);
 agents.set_wake(config.wake_on_lan, config.keep_awake);
 // Every other host's agent dials in, and joins the pool once it proves its declared key.

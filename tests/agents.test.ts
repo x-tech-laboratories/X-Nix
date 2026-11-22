@@ -220,6 +220,47 @@ describe("agent hub", () => {
   });
 });
 
+describe("server without a built-in agent", () => {
+  let app: FastifyInstance;
+  let agent: RunningAgent | null = null;
+
+  afterEach(async () => {
+    await agent?.stop();
+    agent = null;
+    await app.close();
+  });
+
+  it("reaches its own host through that host's agent once it dials in, and loses it when it goes", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "x-nix-own-"));
+    const key = make_key(folder, "heimdall");
+    const pool = new AgentPool("heimdall", null);
+    const hub = create_hub(pool, null);
+    hub.set_agent_keys(new Map([["heimdall", key.public_line]]));
+    app = fastify();
+    await register_agent_route(app, hub);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    const url = `ws://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}/api/agent`;
+
+    expect(pool.has_own_agent).toBe(false);
+    expect((await pool.get(null).run(shell("echo hi"), { timeout_in_seconds: 5 })).stderr).toBe("No agent named 'heimdall' is connected");
+
+    const joined = new Promise<void>((resolve) => hub.on("connect", (status) => status.host === "heimdall" && resolve()));
+    agent = start_agent({
+      url, key_file: key.private_file, state_directory: join(folder, "agent"), host: "heimdall", agent_version: "test",
+      backoff_initial_in_milliseconds: 50, backoff_longest_in_milliseconds: 200, log: () => {},
+    });
+    await joined;
+    expect((await pool.get(null).run({ kind: "programs", steps: [{ argv: ["echo", "own host"] }] }, { timeout_in_seconds: 5 })).stdout).toBe("own host");
+
+    const gone = new Promise((resolve) => hub.once("disconnect", resolve));
+    await agent.stop();
+    agent = null;
+    await gone;
+    expect((await pool.get(null).run(shell("echo hi"), { timeout_in_seconds: 5 })).exit_code).toBe(-1);
+  });
+});
+
 // A command line for a test, run by sh as a person's own command would be.
 function shell(command: string): Operation {
   return { kind: "programs", steps: [{ argv: ["/bin/sh", "-c", command] }] };
