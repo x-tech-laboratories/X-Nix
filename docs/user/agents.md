@@ -48,6 +48,9 @@ without step 2, until you declare it.
 | `host`        | the hostname   | The name the agent logs in as, which must be the host's id in the server's config. |
 | `path`        | none           | Extra programs on the PATH of the commands the agent runs.           |
 | `sudoRules`   | `true`         | Install the sudo rules the agent needs; see [Installing](/user/installing/#what-runs-as-root). |
+| `runUnits.enable` | `true`    | Run each job as a transient systemd unit, `x-nix-run-<run id>.service`, so stopping it stops every process it started. |
+| `runUnits.slice` | `nix-work.slice` | The slice those units share, and with it the slice's memory and CPU limits. |
+| `runUnits.properties` | the agent's scheduling | Further unit properties; by default the agent unit's `Nice`, `CPUSchedulingPolicy`, `IOSchedulingClass`, `IOSchedulingPriority`, `OOMScoreAdjust` and `UMask`. |
 | `pull.*`      |                | Pull mode, below.                                                    |
 
 ## What the agent runs

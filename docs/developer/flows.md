@@ -80,7 +80,7 @@ sequenceDiagram
     end
     runs->>agent: start(run_id, operation, stdin)
     agent->>folder: write operation.json
-    agent->>runner: spawn in its own process group
+    agent->>runner: systemd-run as x-nix-run-<run id>.service
     runner->>folder: append everything to out
     owner->>owner: store.create_job(run_id)
     loop every job_poll, from the owner's cycle

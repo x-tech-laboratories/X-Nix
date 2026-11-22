@@ -33,6 +33,19 @@ let
     allowed_signers = if cfg.pull.allowedSignersFile == null then null else toString cfg.pull.allowedSignersFile;
     allow_unsigned = cfg.pull.allowUnsigned;
   };
+
+  # The agent's own scheduling, which each run's unit is given too unless runUnits.properties says otherwise.
+  inherited_properties = [
+    "Nice"
+    "CPUSchedulingPolicy"
+    "IOSchedulingClass"
+    "IOSchedulingPriority"
+    "OOMScoreAdjust"
+    "UMask"
+  ];
+
+  run_unit_file = json.generate "x-nix-agent-run-unit.json" { inherit (cfg.runUnits) slice properties; };
+
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
 in
@@ -84,6 +97,30 @@ in
       the NOPASSWD sudo rules for every command the agent runs under `sudo -n` on this host, pull
       mode's switch included, as README.md lists; turn them off only to write your own
     '' // { default = true; };
+
+    runUnits = {
+      enable = mkEnableOption ''
+        running each long run as a transient systemd unit, `x-nix-run-<run id>.service`, so stopping
+        a job stops every process it started; off, runs are process groups of the agent's
+      '' // { default = true; };
+
+      slice = mkOption {
+        type = types.nullOr types.str;
+        default = "nix-work.slice";
+        description = "The slice the runs' units go in, whose limits they share; null for systemd's default, system.slice.";
+      };
+
+      properties = mkOption {
+        type = types.attrsOf types.str;
+        default = lib.mapAttrs (_: toString) (
+          lib.filterAttrs (
+            name: _: builtins.elem name inherited_properties
+          ) config.systemd.services.x-nix-agent.serviceConfig
+        );
+        defaultText = literalExpression "the agent unit's Nice, CPUSchedulingPolicy, IOSchedulingClass, IOSchedulingPriority, OOMScoreAdjust and UMask";
+        description = "Further properties of each run's unit, such as `OOMScoreAdjust`; a unit inherits none of the agent's.";
+      };
+    };
 
     pull = {
       enable = mkEnableOption ''
@@ -226,7 +263,8 @@ in
         # Node keeps its own CA list, so the system bundle, which holds security.pki.certificates, is added to it.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
       }
-      // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; };
+      // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
+      // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
 
       # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
       serviceConfig = {
@@ -238,7 +276,7 @@ in
         LoadCredential = [ "key:${cfg.keyFile}" ];
         Restart = "always";
         RestartSec = "5s";
-        # A restart stops only the agent, so a running switch carries on and is followed again from its output.
+        # A restart stops only the agent, so a switch run by a runner of an older agent, inside this unit, is not killed mid-activation.
         KillMode = "process";
         UMask = "0077";
       };
