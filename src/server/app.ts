@@ -8,7 +8,7 @@ import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
 import { register_backup_routes, type BackupRoutesOptions } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
-import { register_error_replies, send_error } from "@x-tech-laboratories/x-libs/server/replies";
+import { register_error_replies, register_lenient_json_body, send_error } from "@x-tech-laboratories/x-libs/server/replies";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
@@ -440,6 +440,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const { store, poller } = options;
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
+  // An empty body counts as no arguments, and one that is not JSON is refused before any route takes it for empty.
+  register_lenient_json_body(app, { refuse_bad_json: "json" });
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
   await register_auth(app, options.accounts, options.store.sql);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);

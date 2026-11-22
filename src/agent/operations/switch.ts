@@ -12,12 +12,14 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { descendants, lock_file_id, lock_holders, read_locks, read_processes, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
+
 import {
   is_store_path, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
   type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import { person_command, run_steps, type Context } from "../programs.ts";
-import { descendants, lock_file_id, lock_holders, nix_database_lock, read_locks, read_processes, show_holders, type ProcessInfo } from "../waits.ts";
+import { nix_database_lock } from "../stalls.ts";
 import { system_profile, watch_files, write_whole } from "../watchdog.ts";
 import { link_target, real } from "./reads.ts";
 

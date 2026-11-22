@@ -8,11 +8,12 @@ import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/rea
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useState } from "react";
 import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type GenerationSize, type Job } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { DiffView, drift_state, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
+import { DiffView, drift_state, error_toast, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
 
