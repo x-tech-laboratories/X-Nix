@@ -85,8 +85,12 @@ export interface Evaluation {
   last_diff: ClosureDiff | null;
   // A switch waiting on what it depends on before its run starts; absent when none waits.
   switch_wait?: SwitchWait;
+  // The Build job held until no other system builds on its host; absent when none is held.
+  held_build?: number;
   // A switch set for the next boot, and the system running when it was, until the host runs another; absent when none waits.
   deferred_switch?: { reason: string; running: string | null };
+  // The units that failed to start in the system a switch kept, until the host runs another; running is that system once read.
+  units_failed?: { units: string; running: string | null };
 }
 
 // What a switch waits on: a build on another host, or the system it built reaching the cache.
@@ -174,10 +178,10 @@ const push_wait_in_seconds = 900;
 // How long one health check's URL may take to answer.
 const http_check_timeout_in_milliseconds = 10_000;
 
-// The jobs that build a whole system, of which a switch starts its build only when none runs on that host: a fleet's
-// systems drift together when their flake changes, and building them all at once on one host runs it out of memory.
+// The jobs that build a whole system, of which a Build or a switch's build starts only when none runs on that host: a
+// fleet's systems drift together when their flake changes, and building them all at once on one host runs it out of memory.
 const system_build_kinds: JobKind[] = ["build", "build-target", "build-all"];
-// The hosts a switch is starting a build on, held from before its run starts until its job exists.
+// The hosts a build is starting on, held from before its run starts until its job names the run.
 const starting_builds = new Set<string>();
 
 // ── Schedules ────────────────────────────────────────────────────────────────
@@ -464,6 +468,13 @@ export class Deployment {
       raise(this.settings.reboot_status);
       messages.push({ level: level_of_status[this.settings.reboot_status], text: `Waiting on a reboot: ${evaluation.deferred_switch.reason}` });
     }
+    const failed = evaluation.units_failed;
+    if (failed !== undefined && failed.running === null) failed.running = fields.current;
+    if (failed !== undefined && failed.running !== fields.current) delete evaluation.units_failed;
+    if (evaluation.units_failed !== undefined) {
+      raise("warning");
+      messages.push({ level: "warning", text: `Some units failed to start after the last switch: ${evaluation.units_failed.units}` });
+    }
     const reboot = reboot_required(fields.booted_parts, fields.current_parts);
     if (reboot === true) {
       raise(this.settings.reboot_status);
@@ -662,8 +673,16 @@ export class Deployment {
   }
 
   private async launch_scheduled(kind: ScheduledKind, slot: number): Promise<void> {
+    const held = this.hold_build("schedule");
+    if (held !== null) {
+      const evaluation = this.evaluation();
+      evaluation.scheduled = { ...evaluation.scheduled, [kind]: slot };
+      this.store.save_evaluation(this.id, evaluation);
+      this.store.add_event(this.id, this.now(), "info", `Scheduled ${kind} waits: ${held.blocker}`);
+      return;
+    }
     const operation = this.operation_for(kind);
-    const launched = await this.launch(kind, operation, "schedule", false);
+    const launched = await this.launch_guarded(kind, operation, "schedule", false);
     // A host that never answered started nothing, so a later cycle may try again.
     if (launched.unreachable) {
       this.store.add_event(this.id, this.now(), "warning", `Could not start the scheduled ${kind}: ${launched.error}`);
@@ -693,7 +712,11 @@ export class Deployment {
         const waiting = await this.wait_for_dependencies(action, operation, trigger, building);
         if (waiting !== null) return waiting;
       }
-      const launched = await this.launch(action, operation, trigger, true);
+      if (action === "build") {
+        const held = this.hold_build(trigger);
+        if (held !== null) return { ok: true, message: `Build waits: ${held.blocker}; it starts once that ends`, job_id: held.job_id };
+      }
+      const launched = await this.launch_guarded(action, operation, trigger, true);
       if (launched.job_id === null) {
         const job_id = this.record_failed_launch(action, operation, trigger, launched.error);
         return { ok: false, message: `Could not start the ${job_noun(action)}: ${launched.error}`, job_id };
@@ -786,8 +809,7 @@ export class Deployment {
       const host = this.host_name(this.agent_for("build"));
       const blocker = this.build_blocker(host);
       if (blocker !== null) return this.store.set_progress(job.id, `Waiting to build on ${host}: ${blocker}`);
-      starting_builds.add(host);
-      const launched = await this.launch("build", this.build_operation(), job.trigger, false).finally(() => starting_builds.delete(host));
+      const launched = await this.launch_guarded("build", this.build_operation(), job.trigger, false);
       if (launched.job_id === null) return this.end_wait(job, `Could not start the build: ${launched.error}`);
       this.save_wait({ ...waiting, step_job_id: launched.job_id });
       const where = this.host_name(this.store.job(launched.job_id)!.agent);
@@ -858,11 +880,78 @@ export class Deployment {
     }
   }
 
-  // Why a switch cannot start its build on the host now, or null when nothing else builds there.
+  // Why a build cannot start on the host now, or null when nothing else builds there; a held Build has no run yet, so it builds nothing.
   private build_blocker(host: string): string | null {
-    if (starting_builds.has(host)) return "another switch is starting its build there";
-    const other = this.store.running_jobs(system_build_kinds).find((candidate) => this.host_name(candidate.agent) === host);
+    if (starting_builds.has(host)) return "another build is starting there";
+    const other = this.store.running_jobs(system_build_kinds).find((candidate) => candidate.run_id !== null && this.host_name(candidate.agent) === host);
     return other === undefined ? null : `job #${other.id} of ${other.deployment_id} is building there`;
+  }
+
+  // ── Held builds ──────────────────────────────────────────────────────────
+
+  // Keeps a Build as a job without a run while another system builds on its host, answering null when it can start now.
+  private hold_build(trigger: string): { job_id: number; blocker: string } | null {
+    const agent = this.agent_for("build");
+    const host = this.host_name(agent);
+    const blocker = this.build_blocker(host);
+    if (blocker === null) return null;
+    const job_id = this.store.create_job({
+      deployment_id: this.id, kind: "build", command: JSON.stringify(this.build_operation()), agent, run_id: null, trigger, started_epoch: this.now(),
+    });
+    this.store.set_progress(job_id, `Waiting to build on ${host}: ${blocker}`);
+    const evaluation = this.evaluation();
+    evaluation.held_build = job_id;
+    this.store.save_evaluation(this.id, evaluation);
+    return { job_id, blocker };
+  }
+
+  // Starts a held Build's run once nothing else builds on its host, building what the deployment builds by then.
+  private async advance_held_build(job: Job): Promise<void> {
+    const host = this.host_name(job.agent);
+    const blocker = this.build_blocker(host);
+    if (blocker !== null) return this.store.set_progress(job.id, `Waiting to build on ${host}: ${blocker}`);
+    const operation = this.build_operation();
+    const run_id = `${this.id}-build-${this.now()}-${randomBytes(3).toString("hex")}`;
+    starting_builds.add(host);
+    let waking: Promise<void> | null;
+    try {
+      ({ waking } = await start_run(this.agents, job.agent, run_id, operation));
+    } catch (error) {
+      this.release_held_build();
+      this.store.append_output(job.id, `${(error as Error).message}\n`);
+      this.store.finish_job(job.id, "failed", null, "The job could not be started", this.now());
+      this.store.add_event(this.id, this.now(), "error", `Could not start the build: ${(error as Error).message}`);
+      return;
+    } finally {
+      starting_builds.delete(host);
+    }
+    this.release_held_build();
+    this.store.set_command(job.id, JSON.stringify(operation));
+    this.store.set_run_id(job.id, run_id);
+    this.store.set_progress(job.id, `Building on ${host}`);
+    this.store.add_event(this.id, this.now(), "info", `${job.trigger === "schedule" ? "Scheduled build" : "Build"} started`);
+    if (waking !== null) {
+      track_wake(this.store, job.id, host, waking, this.now, (error) => this.store.add_event(this.id, this.now(), "error", `Could not start the build: ${error}`));
+    }
+  }
+
+  // Ends a held Build before its run starts, answering null when the job is not one.
+  stop_held_build(job_id: number, by: string): Promise<{ ok: boolean; message: string; job_id: number } | null> {
+    return this.serial(async () => {
+      if (this.evaluation().held_build !== job_id || this.store.job(job_id)?.state !== "running") return null;
+      this.release_held_build();
+      const reason = `${by} stopped it before it started`;
+      this.store.append_output(job_id, `${reason}\n`);
+      this.store.finish_job(job_id, "failed", null, reason, this.now());
+      this.store.add_event(this.id, this.now(), "warning", `${by} stopped job #${job_id} (build) before it started`);
+      return { ok: true, message: `Stopped job #${job_id}`, job_id };
+    });
+  }
+
+  private release_held_build(): void {
+    const evaluation = this.evaluation();
+    delete evaluation.held_build;
+    this.store.save_evaluation(this.id, evaluation);
   }
 
   // The build a switch still building first follows, while it runs.
@@ -963,6 +1052,16 @@ export class Deployment {
     return { job_id, error: "", unreachable: false };
   }
 
+  // Launches a job, holding a build's host from other builds until its job names the run.
+  private async launch_guarded(
+    kind: JobKind, operation: Operation, trigger: string, announce: boolean,
+  ): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
+    if (kind !== "build") return this.launch(kind, operation, trigger, announce);
+    const host = this.host_name(this.agent_for("build"));
+    starting_builds.add(host);
+    return this.launch(kind, operation, trigger, announce).finally(() => starting_builds.delete(host));
+  }
+
   // Keeps a job that could not start in the history, with why.
   private record_failed_launch(kind: JobKind, operation: Operation, trigger: string, error: string): number {
     const job_id = this.store.create_job({ deployment_id: this.id, kind, command: JSON.stringify(operation), agent: this.agent_for(kind), run_id: null, trigger, started_epoch: this.now() });
@@ -981,6 +1080,7 @@ export class Deployment {
     // A switch waiting on what it depends on has no run of its own to follow yet.
     const waiting = this.evaluation().switch_wait;
     if (waiting?.job_id === job.id) return this.advance_wait(job, waiting);
+    if (this.evaluation().held_build === job.id) return this.advance_held_build(job);
     const followed = await this.follow(job);
     if (followed.outcome === "unreachable") {
       this.store.add_event(this.id, this.now(), "warning", `Could not poll the running ${job.kind}: ${followed.error}`);
@@ -1026,7 +1126,13 @@ export class Deployment {
       return { level: "error", text: `${noun} refused: ${verdict.refused}` };
     }
     const outcome = verdict.outcome;
-    if (outcome === null) return null;
+    // A system kept although some of its units failed is still a switch that worked, with a warning naming them.
+    const kept_with_failures = (): { level: EventLevel; text: string } | null => {
+      if (verdict.units_failed === null || finished.state !== "succeeded") return null;
+      this.store.save_evaluation(this.id, { ...this.evaluation(), units_failed: { units: verdict.units_failed, running: null } });
+      return { level: "warning", text: `${noun} kept, but some units failed to start: ${verdict.units_failed}` };
+    };
+    if (outcome === null) return kept_with_failures();
     if (outcome.kind === "rolled-back") {
       fail(`Rolled back to the previous system: ${outcome.reason}`);
       return { level: "error", text: `${noun} rolled back to the previous system: ${outcome.reason}` };
@@ -1044,7 +1150,7 @@ export class Deployment {
       fail(outcome.reason || "The watchdog never reported an outcome");
       return { level: "error", text: `${noun} ended without a word from its watchdog: ${outcome.reason}` };
     }
-    return null;
+    return kept_with_failures();
   }
 
   // Confirms a guarded switch awaiting confirmation once its HTTP checks pass, or tells its watchdog to roll back.

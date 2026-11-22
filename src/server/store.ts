@@ -313,6 +313,11 @@ export class Store {
     this.run("UPDATE jobs SET command = ? WHERE id = ?", command, job_id);
   }
 
+  // For a held build, whose run gets its id only once it starts.
+  set_run_id(job_id: number, run_id: string): void {
+    this.run("UPDATE jobs SET run_id = ? WHERE id = ?", run_id, job_id);
+  }
+
   set_progress(job_id: number, progress: string): void {
     this.run("UPDATE jobs SET progress = ? WHERE id = ?", progress.slice(0, 200), job_id);
   }
