@@ -24,7 +24,9 @@ flake's host:
 - **A local checkout**, such as `/etc/nixos`, has its `flake.lock` written in place, under `sudo -n` when
   `require_sudo` is on.
 - **A `github:` flake with a `push_ssh_key`** is cloned, updated, committed with `commit_author` and `commit_message`,
-  and pushed back over SSH. github.com's host key comes from the system's known hosts.
+  and pushed back over SSH. github.com's host key comes from the system's known hosts. If the branch moved while the new
+  lock was being checked, the update puts its lock on the branch's new tip and pushes again, up to three times, as long
+  as the branch's own `flake.lock` is unchanged; a branch that changed its lock is left to the next update.
 
 With `land_update` set to `pull_request`, a `github:` flake's update pushes its commit to the `x-nix/flake-update` branch
 instead and opens a pull request from it to the branch the flake follows, so CI and a reviewer see the new lock before
