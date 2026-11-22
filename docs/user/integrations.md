@@ -17,7 +17,8 @@ A push:
 
 A `github:`, `gitlab:` or `sourcehut:` flake, or a `git+https://` or `git+ssh://` one, follows its repository. A flake
 naming no branch follows the default branch, and a pinned one follows nothing. Pushes to one deployment within
-`webhookDebounce` start one evaluation, and an address sending ten unsigned deliveries is turned away for five minutes.
+`webhookDebounce` start one evaluation, and an address sending ten unsigned deliveries is turned away for five minutes. A
+signed delivery sent again within a day, by the forge retrying or by anyone who caught it, is taken only once.
 
 - **GitHub**: Settings → Webhooks → Add webhook, payload URL `https://nix.example.org/api/webhook`, content type
   `application/json`, the secret file's contents as the secret, just the push event.

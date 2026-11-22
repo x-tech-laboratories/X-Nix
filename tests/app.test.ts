@@ -50,6 +50,34 @@ describe("/api/health", () => {
     expect(answer.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(answer.server_name).toBe("workstation");
   });
+
+  it("keeps the page to its own scripts and out of other sites' frames", async () => {
+    const { server } = await start_app();
+
+    const response = await server.inject({ method: "GET", url: "/api/health" });
+
+    expect(response.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+  });
+});
+
+describe("sign-in limits", () => {
+  it("has an admin without a second factor only read, and gives tokens the longest lifetime", async () => {
+    const harness = make_deployment();
+    const poller = new Poller([harness.deployment], null, [], [], [], []);
+    app = await build_app({
+      serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller,
+      sign_in: { session_seconds: 3600, remembered_seconds: 86400, token_days: 90, admin_second_factor: true },
+    });
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    expect((await app.inject({ method: "GET", url: "/api/deployments", headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/api/deployments/host-deploy/actions/reboot", headers })).json()).toEqual({
+      error: "Set up a second factor on your account page before making changes.",
+    });
+    expect((await app.inject({ method: "GET", url: "/api/me", headers })).json()).toMatchObject({ second_factor_needed: true, longest_token_days: 90 });
+  });
 });
 
 // ── Flakes ───────────────────────────────────────────────────────────────────

@@ -9,11 +9,12 @@ import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/
 import { register_backup_routes, type BackupRoutesOptions } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
 import { register_error_replies, register_lenient_json_body, send_error } from "@x-tech-laboratories/x-libs/server/replies";
+import { register_security_headers } from "@x-tech-laboratories/x-libs/server/security_headers";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
 import { agent_statuses, type Hub } from "./agents/hub.ts";
-import { register_auth, started_by, type Accounts } from "./auth.ts";
+import { register_auth, started_by, type Accounts, type SignInSettings } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
@@ -43,6 +44,8 @@ export interface app_options {
   server_name?: string;
   // Each user who may log in, with their password's hash.
   accounts: Accounts;
+  // How long sign-ins last and whether admins need a second factor; nothing ends and nobody needs one unless set.
+  sign_in?: SignInSettings;
   store: Store;
   poller: Poller;
   // The other hosts' agents; none dial in without it.
@@ -439,11 +442,13 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
+  // Every answer keeps the page to its own scripts and out of other sites' frames.
+  register_security_headers(app);
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
   // An empty body counts as no arguments, and one that is not JSON is refused before any route takes it for empty.
   register_lenient_json_body(app, { refuse_bad_json: "json" });
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
-  await register_auth(app, options.accounts, options.store.sql);
+  await register_auth(app, options.accounts, options.store.sql, options.sign_in);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
   register_change_feed(app, store, options.hub);

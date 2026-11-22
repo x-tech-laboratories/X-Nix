@@ -212,6 +212,32 @@ in
       description = "Extra entries on the PATH of the commands X-Nix runs, such as a wrapper named by rebuild_bin.";
     };
 
+    signIn = {
+      sessionLifetime = mkOption {
+        type = types.str;
+        default = "12h";
+        description = "How long a sign-in lasts without \"Keep me signed in\".";
+      };
+
+      rememberedLifetime = mkOption {
+        type = types.str;
+        default = "30d";
+        description = "How long a sign-in with \"Keep me signed in\" lasts.";
+      };
+
+      tokenLifetime = mkOption {
+        type = types.str;
+        default = "90d";
+        description = "The longest a new token lasts, in whole days, and how long one lasts unless made shorter; `never` for no limit.";
+      };
+
+      adminSecondFactor = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Have each admin set up a second factor on their account page before they can change anything; until then they only read.";
+      };
+    };
+
     localAgent = mkOption {
       type = types.bool;
       default = false;
@@ -297,6 +323,10 @@ in
         X_NIX_STATE_DIR = "/var/lib/x-nix";
         X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
         X_NIX_LOCAL_AGENT = if cfg.localAgent then "yes" else "no";
+        X_NIX_SESSION_LIFETIME = cfg.signIn.sessionLifetime;
+        X_NIX_REMEMBERED_LIFETIME = cfg.signIn.rememberedLifetime;
+        X_NIX_TOKEN_LIFETIME = cfg.signIn.tokenLifetime;
+        X_NIX_ADMIN_SECOND_FACTOR = if cfg.signIn.adminSecondFactor then "yes" else "no";
       }
       // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
       // lib.optionalAttrs (cfg.webhookSecretFile != null) {
