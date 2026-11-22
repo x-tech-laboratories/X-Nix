@@ -17,7 +17,7 @@ import { AgentPool } from "./agents/agent.ts";
 import { create_hub } from "./agents/hub.ts";
 import { Cache } from "./cache.ts";
 import { build_app } from "./app.ts";
-import { load_accounts } from "./auth.ts";
+import { load_accounts, type SignInSettings } from "./auth.ts";
 import { load_config, parse_config, type Config } from "./config.ts";
 import { Deployment } from "./deployment.ts";
 import { Flake } from "./flake.ts";
@@ -44,6 +44,10 @@ const settings = read_server_config({
     server_name: { variable: "X_NIX_SERVER_NAME", help: "what the page calls this machine", placeholder: "<name>", default: hostname() },
     webhook_secret_file: { variable: "X_NIX_WEBHOOK_SECRET_FILE", help: "the push webhook's shared secret; the webhook is off without it", placeholder: "<file>" },
     webhook_debounce: { variable: "X_NIX_WEBHOOK_DEBOUNCE", help: "how long after the last push an evaluation starts", placeholder: "<duration>", default: "10s" },
+    session_lifetime: { variable: "X_NIX_SESSION_LIFETIME", help: "how long a sign-in lasts without keep me signed in", placeholder: "<duration>", default: "12h" },
+    remembered_lifetime: { variable: "X_NIX_REMEMBERED_LIFETIME", help: "how long a kept sign-in lasts", placeholder: "<duration>", default: "30d" },
+    token_lifetime: { variable: "X_NIX_TOKEN_LIFETIME", help: "the longest a token lasts, in whole days, or never", placeholder: "<duration|never>", default: "90d" },
+    admin_second_factor: { variable: "X_NIX_ADMIN_SECOND_FACTOR", help: "yes to have admins set up a second factor before they change anything", placeholder: "<yes|no>", default: "yes" },
     local_agent: {
       variable: "X_NIX_LOCAL_AGENT", help: "yes to work on this machine from the server itself, which needs sudo rules, rather than through its own agent",
       placeholder: "<yes|no>", default: "no",
@@ -58,8 +62,19 @@ const server_name = settings.values.server_name || hostname();
 const accounts = load_accounts();
 const webhook_secret_file = settings.values.webhook_secret_file;
 const webhook_debounce = parse_duration(settings.values.webhook_debounce || "10s", "X_NIX_WEBHOOK_DEBOUNCE");
-const local_agent_setting = (settings.values.local_agent || "no").toLowerCase();
-if (local_agent_setting !== "yes" && local_agent_setting !== "no") throw new Error("X_NIX_LOCAL_AGENT must be yes or no");
+const yes_or_no = (value: string | undefined, fallback: string, variable: string) => {
+  const answer = (value || fallback).toLowerCase();
+  if (answer !== "yes" && answer !== "no") throw new Error(`${variable} must be yes or no`);
+  return answer === "yes";
+};
+const token_lifetime = settings.values.token_lifetime || "90d";
+const sign_in: SignInSettings = {
+  session_seconds: parse_duration(settings.values.session_lifetime || "12h", "X_NIX_SESSION_LIFETIME"),
+  remembered_seconds: parse_duration(settings.values.remembered_lifetime || "30d", "X_NIX_REMEMBERED_LIFETIME"),
+  token_days: token_lifetime === "never" ? null : Math.max(1, Math.round(parse_duration(token_lifetime, "X_NIX_TOKEN_LIFETIME") / 86400)),
+  admin_second_factor: yes_or_no(settings.values.admin_second_factor, "yes", "X_NIX_ADMIN_SECOND_FACTOR"),
+};
+const local_agent_setting = yes_or_no(settings.values.local_agent, "no", "X_NIX_LOCAL_AGENT") ? "yes" : "no";
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -135,7 +150,7 @@ const webhook = webhook_secret_file ? new Webhook({
   update: (flake, inputs) => void flake.update(`push to ${inputs}`).then((outcome) => outcome.ok && poller.soon(flake)),
 }) : undefined;
 const app = await build_app({
-  serve_web: is_production, logger: true, server_name, accounts, store, poller, hub, provisioner, agents, fleet, webhook,
+  serve_web: is_production, logger: true, server_name, accounts, sign_in, store, poller, hub, provisioner, agents, fleet, webhook,
   backups: { backups, schedule: backup_schedule, on_schedule_change: () => void automatic_backups.check() },
 });
 
