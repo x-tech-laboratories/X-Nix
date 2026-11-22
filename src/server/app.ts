@@ -804,8 +804,12 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // Stops a running job's processes on its host; its owner finishes it as stopped on its next cycle.
   app.post<{ Params: { id: string } }>("/api/jobs/:id/stop", async (request, reply) => {
+    const id = Number(request.params.id);
+    const owner = poller.deployments.get(store.job(id)?.deployment_id ?? "");
+    const held = await owner?.stop_held_build(id, started_by(request.viewer));
+    if (held != null) return held;
     if (options.agents === undefined) return reply.code(503).send({ error: "No agents to stop the job through" });
-    const outcome = await stop_job(store, options.agents, Number(request.params.id), started_by(request.viewer), () => Math.floor(Date.now() / 1000));
+    const outcome = await stop_job(store, options.agents, id, started_by(request.viewer), () => Math.floor(Date.now() / 1000));
     const job = outcome.job_id === null ? null : store.job(outcome.job_id);
     if (job !== null) poller.soon_for(job.deployment_id);
     return reply.code(outcome.ok ? 200 : outcome.job_id === null ? 404 : 409).send(outcome);
