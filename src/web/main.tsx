@@ -4,7 +4,7 @@ import "@x-tech-laboratories/halon/halon-tokens.css";
 import "@x-tech-laboratories/halon/halon.css";
 import "./app.css";
 import { follow_changes } from "@x-tech-laboratories/x-libs/web/events";
-import { AccountView, UsersView } from "@x-tech-laboratories/x-libs/web/react/accounts";
+import { AccountView } from "@x-tech-laboratories/x-libs/web/react/accounts";
 import { Shell, use_route, type ShellSection } from "@x-tech-laboratories/x-libs/web/react/shell";
 import { SignInForm, use_account } from "@x-tech-laboratories/x-libs/web/react/sign_in";
 import type { Route } from "@x-tech-laboratories/x-libs/web/router";
@@ -34,7 +34,6 @@ const sections: ShellSection[] = [
   { id: "hosts", label: "Hosts", href: "#/hosts" },
   { id: "jobs", label: "Jobs", href: "#/jobs" },
   { id: "provision", label: "Provision", href: "#/provision" },
-  { id: "users", label: "Users", href: "#/users" },
 ];
 
 const role_text = { viewer: "Reads everything; changes nothing.", admin: "Also builds, deploys, reboots and manages users." };
@@ -86,9 +85,9 @@ function page_for({ parts, query }: Route, me: Me): Page {
   if ((section === "store" || section === "boot") && id) return host_page(id, section);
   if (section === "store" || section === "boot") return hosts;
   if (section === "account") return { title: "Your account", view: <AccountView client={accounts} role_text={role_text} /> };
-  if (section === "users") return { title: "Users", view: <UsersView client={accounts} me={me} role_text={role_text} /> };
   if (section === "provision") return { title: "Provision", view: <ProvisionView /> };
-  if (section === "settings" || section === "backups") return { title: "Settings", view: <SettingsView me={me} theme={theme} /> };
+  // Users and backups had pages of their own and now live on Settings.
+  if (section === "settings" || section === "backups" || section === "users") return { title: "Settings", view: <SettingsView me={me} theme={theme} role_text={role_text} /> };
   return { title: "Overview", view: <OverviewView /> };
 }
 
@@ -109,9 +108,8 @@ function App() {
   }, [logged_in]);
 
   const shown = me ? page_for(route, me) : null;
-  const shown_sections = sections.filter((section) => section.id !== "users" || me?.role === "admin");
   const place = sidebar_place(route);
-  const folding_sections = use_sidebar_sections(shown_sections, Boolean(me));
+  const folding_sections = use_sidebar_sections(sections, Boolean(me));
   const view_key = `${route.parts.join("/")}?${route.query}`;
 
   useEffect(() => {
@@ -130,7 +128,7 @@ function App() {
       theme={theme}
       user={me?.name ?? null}
       user_href="#/account"
-      settings={{ href: "#/settings", active: route.parts[0] === "settings" || route.parts[0] === "backups" }}
+      settings={{ href: "#/settings", active: route.parts[0] === "settings" || route.parts[0] === "backups" || route.parts[0] === "users" }}
       on_logout={() => void sign_out()}
       view_key={view_key}
     >
