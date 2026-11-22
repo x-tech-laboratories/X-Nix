@@ -92,7 +92,8 @@ switches `github:owner/repo?rev=<commit>` (or `?ref=<tag>`), or for a git flake 
 (or `?ref=refs/tags/<tag>`); a plain checkout such as `/etc/nixos` is read as `git+file://`. A `path:` or tarball flake
 cannot be pinned.
 
-The deployment's page shows the pin, sets another, follows the branch head again, or goes back to the settings' `pin`.
+The deployment's page shows the pin and sets another once its field is left or Enter is pressed; emptying the field follows
+the branch head again, as does its button, and another button goes back to the settings' `pin`.
 The flake's Update still moves the branch, and a pinned deployment ignores pushes.
 
 ## Generations and rollback
