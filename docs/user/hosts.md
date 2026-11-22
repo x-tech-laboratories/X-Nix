@@ -108,21 +108,27 @@ the host runs that command first, right after holding off sleep, so the screen g
 runs only when the job itself woke the host, never on a host that was already awake, and a failure is shown in the job's
 output while the job runs anyway. It needs `keep_awake`. A download, Reboot and Set next boot wake the host without it.
 
-On a Phosh phone, a small script run as the phone's user can turn the display off without unlocking it:
+On a Phosh phone, a small command run as the phone's user can turn the display off without unlocking it. Install it
+under a fixed name, since the server and the phone build different store paths:
 
 ```nix
 let
-  screen_off = pkgs.writeShellScript "screen-off" ''
+  screen_off = pkgs.writeShellScriptBin "screen-off" ''
     export XDG_RUNTIME_DIR=/run/user/1000
     exec ${pkgs.systemd}/bin/busctl --user set-property org.gnome.Mutter.DisplayConfig \
       /org/gnome/Mutter/DisplayConfig org.gnome.Mutter.DisplayConfig PowerSaveMode i 3
   '';
 in {
-  security.sudo.extraRules = [{ users = [ "x-nix-agent" ]; runAs = "phone-user"; commands = [{ command = "${screen_off}"; options = [ "NOPASSWD" ]; }]; }];
+  environment.systemPackages = [ screen_off ];
+  security.sudo.extraRules = [{
+    users = [ "x-nix-agent" ];
+    runAs = "phone-user";
+    commands = [{ command = "/run/current-system/sw/bin/screen-off"; options = [ "NOPASSWD" ]; }];
+  }];
 }
 ```
 
-and on the server, `wake_on_lan.screen_off = "sudo -n -u phone-user ${screen_off}"`.
+and on the server, `wake_on_lan.screen_off = "sudo -n -u phone-user /run/current-system/sw/bin/screen-off"`.
 
 ## Settings
 
