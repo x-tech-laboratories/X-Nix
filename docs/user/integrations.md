@@ -52,7 +52,7 @@ X-Monitor's.
 
 ## Backups
 
-X-Nix's database holds the users added on the Users page, their sessions and tokens, and every job, event, build and
+X-Nix's database holds the users added under Settings → Users, their sessions and tokens, and every job, event, build and
 reading. It is backed up once a day into `<state dir>/backups`, keeping the last 14 daily copies. Under **Backups** on
 the Settings page, an admin changes that schedule, backs up by hand, restores, or deletes a backup.
 

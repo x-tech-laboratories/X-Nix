@@ -1,6 +1,7 @@
 // The Settings page: the theme kept in this browser, what the server runs, how AI clients reach it, and its backups.
 
 import type { Me } from "@x-tech-laboratories/x-libs/web/accounts";
+import { users_settings } from "@x-tech-laboratories/x-libs/web/react/accounts";
 import { BackupSettings } from "@x-tech-laboratories/x-libs/web/react/backup_settings";
 import { Segmented } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { Facts, PageHeading, SettingRow, SettingsPage, type SettingsCategory } from "@x-tech-laboratories/x-libs/web/react/layout";
@@ -8,7 +9,7 @@ import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/stat
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import type { Theme, ThemeChoice } from "@x-tech-laboratories/x-libs/web/theme";
 import { useEffect, useState } from "react";
-import { api, backups, type Health } from "../api.ts";
+import { accounts, api, backups, type Health } from "../api.ts";
 
 const theme_choices: { value: Theme; label: string }[] = [
   { value: "system", label: "System" },
@@ -55,7 +56,7 @@ function AiClients() {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 // A restore restarts the server, so the page loads again once it answers.
-export function SettingsView({ me, theme }: { me: Me; theme: ThemeChoice }) {
+export function SettingsView({ me, theme, role_text }: { me: Me; theme: ThemeChoice; role_text: Record<string, string> }) {
   const categories: SettingsCategory[] = [
     { heading: "General", sections: [{ id: "appearance", heading: "Appearance", content: <ThemeSetting theme={theme} /> }] },
     {
@@ -74,6 +75,9 @@ export function SettingsView({ me, theme }: { me: Me; theme: ThemeChoice }) {
       ],
     },
   ];
+  // Users and every user's tokens, for an admin alone; users_settings gives anyone else nothing.
+  const account_sections = users_settings({ client: accounts, me, role_text });
+  if (account_sections.length > 0) categories.push({ heading: "Accounts", sections: account_sections });
 
   return (
     <>

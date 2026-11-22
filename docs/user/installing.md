@@ -35,7 +35,7 @@ npm run hash-password -- admin x-nix-passwords   # asks for the password, never 
 ```
 
 Keep the file as a secret, such as with sops-nix, and point `passwordHashFile` at it. More users, who need no file entry,
-are added later on the Users page; see [Users and access](/user/users-and-access/).
+are added later under Settings → Users; see [Users and access](/user/users-and-access/).
 
 ## 3. Run the server
 

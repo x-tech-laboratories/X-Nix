@@ -18,9 +18,8 @@ X-Nix has two roles:
 terminal or reading stdin. Removing a user is deleting their line. A line holding only a hash signs in as `admin`. The
 file is read at start, so a change takes a restart, and only the file changes these users' passwords.
 
-**Users from the page.** An admin adds more users on the Users page, as a viewer or an admin.
-
-![The Users page](/assets/screenshots/users.png)
+**Users from Settings.** An admin adds more users under **Settings → Users**, as a viewer or an admin, and sees every
+user's tokens under **Settings → Tokens**.
 
 ## Signing in
 
