@@ -5,7 +5,7 @@
 A web portal for managing NixOS deployments: drift against the flake, updates, builds, switches,
 the Nix store, the Attic cache and boot entries.
 
-![The Overview: hosts by status, what needs attention, and which flakes build which caches and hosts](docs/public/assets/screenshots/overview.png)
+![The Overview: hosts, flakes, caches, jobs, deployments, reboots and agents by status, the last week of jobs, what needs attention, and which flakes build which caches and hosts](docs/public/assets/screenshots/overview.png)
 
 **[Read the documentation](https://x-tech-laboratories.github.io/X-Nix/)**: the
 [user guide](https://x-tech-laboratories.github.io/X-Nix/user/) for installing and using X-Nix, and the
