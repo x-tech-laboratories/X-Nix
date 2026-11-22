@@ -241,7 +241,7 @@ sequenceDiagram
         run-->>server: refused: Pre-switch check n failed
     end
     run->>host: fetch_steps: nix build from the cache (not timed)
-    run->>wd: start in /tmp/<watch folder> with the previous system
+    run->>wd: start in <state>/switches/<watch folder> with the previous system
     run->>host: activate (switch-to-configuration or nixos-rebuild)
     run->>host: post_switch (status ignored)
     alt activation failed

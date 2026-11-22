@@ -1,0 +1,1398 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for server/fleet.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="../theme.js"></script>
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        
+        <label class="theme-select quiet">
+            Theme
+            <select id="themeSelect" autocomplete="off">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="legacy">Legacy</option>
+            </select>
+        </label>
+
+        <h1><a href="../index.html">All files</a> / <a href="index.html">server</a> fleet.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">88.03% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>228/259</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">83.19% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>203/244</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">84.48% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>49/58</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">92.97% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>172/185</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a>
+<a name='L213'></a><a href='#L213'>213</a>
+<a name='L214'></a><a href='#L214'>214</a>
+<a name='L215'></a><a href='#L215'>215</a>
+<a name='L216'></a><a href='#L216'>216</a>
+<a name='L217'></a><a href='#L217'>217</a>
+<a name='L218'></a><a href='#L218'>218</a>
+<a name='L219'></a><a href='#L219'>219</a>
+<a name='L220'></a><a href='#L220'>220</a>
+<a name='L221'></a><a href='#L221'>221</a>
+<a name='L222'></a><a href='#L222'>222</a>
+<a name='L223'></a><a href='#L223'>223</a>
+<a name='L224'></a><a href='#L224'>224</a>
+<a name='L225'></a><a href='#L225'>225</a>
+<a name='L226'></a><a href='#L226'>226</a>
+<a name='L227'></a><a href='#L227'>227</a>
+<a name='L228'></a><a href='#L228'>228</a>
+<a name='L229'></a><a href='#L229'>229</a>
+<a name='L230'></a><a href='#L230'>230</a>
+<a name='L231'></a><a href='#L231'>231</a>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a>
+<a name='L234'></a><a href='#L234'>234</a>
+<a name='L235'></a><a href='#L235'>235</a>
+<a name='L236'></a><a href='#L236'>236</a>
+<a name='L237'></a><a href='#L237'>237</a>
+<a name='L238'></a><a href='#L238'>238</a>
+<a name='L239'></a><a href='#L239'>239</a>
+<a name='L240'></a><a href='#L240'>240</a>
+<a name='L241'></a><a href='#L241'>241</a>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a>
+<a name='L249'></a><a href='#L249'>249</a>
+<a name='L250'></a><a href='#L250'>250</a>
+<a name='L251'></a><a href='#L251'>251</a>
+<a name='L252'></a><a href='#L252'>252</a>
+<a name='L253'></a><a href='#L253'>253</a>
+<a name='L254'></a><a href='#L254'>254</a>
+<a name='L255'></a><a href='#L255'>255</a>
+<a name='L256'></a><a href='#L256'>256</a>
+<a name='L257'></a><a href='#L257'>257</a>
+<a name='L258'></a><a href='#L258'>258</a>
+<a name='L259'></a><a href='#L259'>259</a>
+<a name='L260'></a><a href='#L260'>260</a>
+<a name='L261'></a><a href='#L261'>261</a>
+<a name='L262'></a><a href='#L262'>262</a>
+<a name='L263'></a><a href='#L263'>263</a>
+<a name='L264'></a><a href='#L264'>264</a>
+<a name='L265'></a><a href='#L265'>265</a>
+<a name='L266'></a><a href='#L266'>266</a>
+<a name='L267'></a><a href='#L267'>267</a>
+<a name='L268'></a><a href='#L268'>268</a>
+<a name='L269'></a><a href='#L269'>269</a>
+<a name='L270'></a><a href='#L270'>270</a>
+<a name='L271'></a><a href='#L271'>271</a>
+<a name='L272'></a><a href='#L272'>272</a>
+<a name='L273'></a><a href='#L273'>273</a>
+<a name='L274'></a><a href='#L274'>274</a>
+<a name='L275'></a><a href='#L275'>275</a>
+<a name='L276'></a><a href='#L276'>276</a>
+<a name='L277'></a><a href='#L277'>277</a>
+<a name='L278'></a><a href='#L278'>278</a>
+<a name='L279'></a><a href='#L279'>279</a>
+<a name='L280'></a><a href='#L280'>280</a>
+<a name='L281'></a><a href='#L281'>281</a>
+<a name='L282'></a><a href='#L282'>282</a>
+<a name='L283'></a><a href='#L283'>283</a>
+<a name='L284'></a><a href='#L284'>284</a>
+<a name='L285'></a><a href='#L285'>285</a>
+<a name='L286'></a><a href='#L286'>286</a>
+<a name='L287'></a><a href='#L287'>287</a>
+<a name='L288'></a><a href='#L288'>288</a>
+<a name='L289'></a><a href='#L289'>289</a>
+<a name='L290'></a><a href='#L290'>290</a>
+<a name='L291'></a><a href='#L291'>291</a>
+<a name='L292'></a><a href='#L292'>292</a>
+<a name='L293'></a><a href='#L293'>293</a>
+<a name='L294'></a><a href='#L294'>294</a>
+<a name='L295'></a><a href='#L295'>295</a>
+<a name='L296'></a><a href='#L296'>296</a>
+<a name='L297'></a><a href='#L297'>297</a>
+<a name='L298'></a><a href='#L298'>298</a>
+<a name='L299'></a><a href='#L299'>299</a>
+<a name='L300'></a><a href='#L300'>300</a>
+<a name='L301'></a><a href='#L301'>301</a>
+<a name='L302'></a><a href='#L302'>302</a>
+<a name='L303'></a><a href='#L303'>303</a>
+<a name='L304'></a><a href='#L304'>304</a>
+<a name='L305'></a><a href='#L305'>305</a>
+<a name='L306'></a><a href='#L306'>306</a>
+<a name='L307'></a><a href='#L307'>307</a>
+<a name='L308'></a><a href='#L308'>308</a>
+<a name='L309'></a><a href='#L309'>309</a>
+<a name='L310'></a><a href='#L310'>310</a>
+<a name='L311'></a><a href='#L311'>311</a>
+<a name='L312'></a><a href='#L312'>312</a>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a>
+<a name='L325'></a><a href='#L325'>325</a>
+<a name='L326'></a><a href='#L326'>326</a>
+<a name='L327'></a><a href='#L327'>327</a>
+<a name='L328'></a><a href='#L328'>328</a>
+<a name='L329'></a><a href='#L329'>329</a>
+<a name='L330'></a><a href='#L330'>330</a>
+<a name='L331'></a><a href='#L331'>331</a>
+<a name='L332'></a><a href='#L332'>332</a>
+<a name='L333'></a><a href='#L333'>333</a>
+<a name='L334'></a><a href='#L334'>334</a>
+<a name='L335'></a><a href='#L335'>335</a>
+<a name='L336'></a><a href='#L336'>336</a>
+<a name='L337'></a><a href='#L337'>337</a>
+<a name='L338'></a><a href='#L338'>338</a>
+<a name='L339'></a><a href='#L339'>339</a>
+<a name='L340'></a><a href='#L340'>340</a>
+<a name='L341'></a><a href='#L341'>341</a>
+<a name='L342'></a><a href='#L342'>342</a>
+<a name='L343'></a><a href='#L343'>343</a>
+<a name='L344'></a><a href='#L344'>344</a>
+<a name='L345'></a><a href='#L345'>345</a>
+<a name='L346'></a><a href='#L346'>346</a>
+<a name='L347'></a><a href='#L347'>347</a>
+<a name='L348'></a><a href='#L348'>348</a>
+<a name='L349'></a><a href='#L349'>349</a>
+<a name='L350'></a><a href='#L350'>350</a>
+<a name='L351'></a><a href='#L351'>351</a>
+<a name='L352'></a><a href='#L352'>352</a>
+<a name='L353'></a><a href='#L353'>353</a>
+<a name='L354'></a><a href='#L354'>354</a>
+<a name='L355'></a><a href='#L355'>355</a>
+<a name='L356'></a><a href='#L356'>356</a>
+<a name='L357'></a><a href='#L357'>357</a>
+<a name='L358'></a><a href='#L358'>358</a>
+<a name='L359'></a><a href='#L359'>359</a>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a>
+<a name='L374'></a><a href='#L374'>374</a>
+<a name='L375'></a><a href='#L375'>375</a>
+<a name='L376'></a><a href='#L376'>376</a>
+<a name='L377'></a><a href='#L377'>377</a>
+<a name='L378'></a><a href='#L378'>378</a>
+<a name='L379'></a><a href='#L379'>379</a>
+<a name='L380'></a><a href='#L380'>380</a>
+<a name='L381'></a><a href='#L381'>381</a>
+<a name='L382'></a><a href='#L382'>382</a>
+<a name='L383'></a><a href='#L383'>383</a>
+<a name='L384'></a><a href='#L384'>384</a>
+<a name='L385'></a><a href='#L385'>385</a>
+<a name='L386'></a><a href='#L386'>386</a>
+<a name='L387'></a><a href='#L387'>387</a>
+<a name='L388'></a><a href='#L388'>388</a>
+<a name='L389'></a><a href='#L389'>389</a>
+<a name='L390'></a><a href='#L390'>390</a>
+<a name='L391'></a><a href='#L391'>391</a>
+<a name='L392'></a><a href='#L392'>392</a>
+<a name='L393'></a><a href='#L393'>393</a>
+<a name='L394'></a><a href='#L394'>394</a>
+<a name='L395'></a><a href='#L395'>395</a>
+<a name='L396'></a><a href='#L396'>396</a>
+<a name='L397'></a><a href='#L397'>397</a>
+<a name='L398'></a><a href='#L398'>398</a>
+<a name='L399'></a><a href='#L399'>399</a>
+<a name='L400'></a><a href='#L400'>400</a>
+<a name='L401'></a><a href='#L401'>401</a>
+<a name='L402'></a><a href='#L402'>402</a>
+<a name='L403'></a><a href='#L403'>403</a>
+<a name='L404'></a><a href='#L404'>404</a>
+<a name='L405'></a><a href='#L405'>405</a>
+<a name='L406'></a><a href='#L406'>406</a>
+<a name='L407'></a><a href='#L407'>407</a>
+<a name='L408'></a><a href='#L408'>408</a>
+<a name='L409'></a><a href='#L409'>409</a>
+<a name='L410'></a><a href='#L410'>410</a>
+<a name='L411'></a><a href='#L411'>411</a>
+<a name='L412'></a><a href='#L412'>412</a>
+<a name='L413'></a><a href='#L413'>413</a>
+<a name='L414'></a><a href='#L414'>414</a>
+<a name='L415'></a><a href='#L415'>415</a>
+<a name='L416'></a><a href='#L416'>416</a>
+<a name='L417'></a><a href='#L417'>417</a>
+<a name='L418'></a><a href='#L418'>418</a>
+<a name='L419'></a><a href='#L419'>419</a>
+<a name='L420'></a><a href='#L420'>420</a>
+<a name='L421'></a><a href='#L421'>421</a>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">37x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">39x</span>
+<span class="cline-any cline-yes">25x</span>
+<span class="cline-any cline-yes">25x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">39x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-yes">48x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">13x</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">32x</span>
+<span class="cline-any cline-yes">32x</span>
+<span class="cline-any cline-yes">32x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">69x</span>
+<span class="cline-any cline-yes">69x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">45x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">69x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">105x</span>
+<span class="cline-any cline-yes">58x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">51x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">21x</span>
+<span class="cline-any cline-yes">27x</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-yes">19x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">58x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">9x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Fleet runs: one action on many deployments at once, picked by name glob or @tag, with a cap on how many run together.
+//
+// A run is kept whole in the store and advanced every few seconds, so it carries on after a restart of the server. Each
+// deployment's part is an ordinary job, started with the fleet run named as its trigger and followed by the
+// deployment's own cycle; the run only reads how each job ended. A staged run goes through its stages in order, each
+// stage a selector such as "@canary": a staged switch waits for each host to read as in sync against a fresh evaluation
+// before the next starts, and the first failure stops the rollout. Between stages the run can hold: the finished stage
+// soaks, failing a host that turns failed or drifts, and the next waits for an admin's approval when the run needs one.
+&nbsp;
+// ── Imports ──────────────────────────────────────────────────────────────────
+&nbsp;
+import { format_duration, parse_duration } from "@x-tech-laboratories/x-libs/durations";
+&nbsp;
+import type { DeploymentSettings, FleetSettings } from "./config.ts";
+import type { Deployment } from "./deployment.ts";
+import { switch_verdict } from "./nixos/switch.ts";
+import type { Store } from "./store.ts";
+&nbsp;
+// ── Shapes ───────────────────────────────────────────────────────────────────
+&nbsp;
+export type FleetActionId = "build" | "switch" | "reboot";
+&nbsp;
+export const fleet_action_ids: FleetActionId[] = ["build", "switch", "reboot"];
+&nbsp;
+// Verifying is a switched host waiting to read as in sync before a staged rollout moves on.
+export type FleetHostState = "queued" | "running" | "verifying" | "succeeded" | "failed" | "skipped";
+&nbsp;
+export type FleetRunState = "running" | "succeeded" | "failed" | "stopped";
+&nbsp;
+export interface FleetHost {
+  deployment_id: string;
+  name: string;
+  // The index of the stage the host belongs to; every host is in stage 0 of a run that is not staged.
+  stage: number;
+  state: FleetHostState;
+  job_id: number | null;
+  message: string | null;
+  started_epoch: number | null;
+  // When the switch ended, from which the host must read as in sync.
+  verify_since_epoch: number | null;
+  finished_epoch: number | null;
+}
+&nbsp;
+// A finished stage the run holds at before the next: soaking until a time, and waiting for approval when the run needs it.
+export interface StageGate {
+  stage: number;
+  soak_until_epoch: number;
+  approved: boolean;
+  approved_by: string | null;
+}
+&nbsp;
+export interface FleetRun {
+  id: number;
+  action: FleetActionId;
+  // What picked the hosts, as a selector or the list of ids.
+  selector: string;
+  staged: boolean;
+  // The stage selectors in order, and a last stage for hosts no selector named when there are any.
+  stages: string[];
+  parallel: number;
+  state: FleetRunState;
+  current_stage: number;
+  stop_requested: boolean;
+  // How long each finished stage soaks, and whether the next needs approval; absent from runs started before either was kept.
+  soak?: number;
+  approve?: boolean;
+  // The finished stage the run holds at, or null while none does.
+  gate?: StageGate | null;
+  // Who started it; absent from runs started before it was kept.
+  started_by?: string;
+  started_epoch: number;
+  finished_epoch: number | null;
+  message: string | null;
+  hosts: FleetHost[];
+}
+&nbsp;
+export interface FleetRequest {
+  action?: unknown;
+  selector?: unknown;
+  ids?: unknown;
+  staged?: unknown;
+  stages?: unknown;
+  parallel?: unknown;
+  soak?: unknown;
+  approve?: unknown;
+}
+&nbsp;
+export interface FleetOutcome {
+  ok: boolean;
+  message: string;
+  run: FleetRun | null;
+}
+&nbsp;
+export interface FleetOptions {
+  store: Store;
+  settings: FleetSettings;
+  // Asks the deployment's cycle to come soon, so a started job or a switch's evaluation is followed quickly.
+  poke?: (deployment: Deployment) =&gt; void;
+  // The time in seconds, which tests set.
+  now?: () =&gt; number;
+}
+&nbsp;
+const advance_interval_in_milliseconds = 5000;
+&nbsp;
+const active_states = new Set&lt;FleetHostState&gt;(["running", "verifying"]);
+&nbsp;
+// ── Selectors ────────────────────────────────────────────────────────────────
+&nbsp;
+// The terms of a selector, split on spaces and commas, such as "web-* @canary".
+export function selector_terms(selector: string): string[] {
+  return selector.split(/[\s,]+/).filter(Boolean);
+}
+&nbsp;
+// Whether one term picks the deployment: @tag by its tags, anything else as a glob on its id or name.
+export function term_matches(term: string, settings: Pick&lt;DeploymentSettings, "id" | "name" | "tags"&gt;): boolean {
+  if (term.startsWith("@")) return settings.tags.includes(term.slice(1));
+  const pattern = new RegExp(`^${term.replace(/[.+^${}()|[\]\\]/g, "\\$&amp;").replaceAll("*", ".*").replaceAll("?", ".")}$`);
+  return pattern.test(settings.id) || pattern.test(settings.name);
+}
+&nbsp;
+export function selector_matches(selector: string, settings: Pick&lt;DeploymentSettings, "id" | "name" | "tags"&gt;): boolean {
+  return selector_terms(selector).some((term) =&gt; term_matches(term, settings));
+}
+&nbsp;
+// ── Fleet ────────────────────────────────────────────────────────────────────
+&nbsp;
+export class Fleet {
+  readonly settings: FleetSettings;
+  private readonly deployments: Map&lt;string, Deployment&gt;;
+  private readonly store: Store;
+  private readonly poke: (deployment: Deployment) =&gt; void;
+  private readonly now: () =&gt; number;
+  private timer: NodeJS.Timeout | undefined;
+  // Advances run one at a time.
+  private queue: Promise&lt;unknown&gt; = Promise.resolve();
+&nbsp;
+  constructor(deployments: Map&lt;string, Deployment&gt;, options: FleetOptions) {
+    this.deployments = deployments;
+    this.store = options.store;
+    this.settings = options.settings;
+    this.poke = options.poke ?? (() =&gt; {});
+    this.now = options.<span class="fstat-no" title="function not covered" ><span class="branch-1 cbranch-no" title="branch not covered" >now ?? (() =&gt; <span class="cstat-no" title="statement not covered" >M</span>ath.floor(Date.now() / 1000));</span></span>
+  }
+&nbsp;
+  // The deployments a selector picks, in the config's order.
+  select(selector: string): Deployment[] {
+    return [...this.deployments.values()].filter((deployment) =&gt; selector_matches(selector, deployment.settings));
+  }
+&nbsp;
+  // Every tag any deployment has, sorted.
+<span class="fstat-no" title="function not covered" >  tags(): string[] {</span>
+<span class="cstat-no" title="statement not covered" >    return [...new Set([...this.deployments.values()].<span class="fstat-no" title="function not covered" >flatMap((d</span>eployment) =&gt; <span class="cstat-no" title="statement not covered" >deployment.settings.tags)</span>)].sort();</span>
+  }
+&nbsp;
+<span class="fstat-no" title="function not covered" >  runs(l</span>imit = <span class="branch-0 cbranch-no" title="branch not covered" >20): FleetRun[] {</span>
+<span class="cstat-no" title="statement not covered" >    return this.store.fleet_runs&lt;FleetRun&gt;({ limit });</span>
+  }
+&nbsp;
+  run(id: number): FleetRun | null {
+    return this.store.fleet_run&lt;FleetRun&gt;(id);
+  }
+&nbsp;
+  // ── Starting ─────────────────────────────────────────────────────────────
+&nbsp;
+  // Checks the request, keeps the new run and starts its first hosts.
+  async start(request: FleetRequest, started_by = "manual"): Promise&lt;FleetOutcome&gt; {
+    const refuse = (message: string): FleetOutcome =&gt; ({ ok: false, message, run: null });
+    const action = request.action as FleetActionId;
+    if (!fleet_action_ids.includes(action)) return refuse(`No fleet action named '${String(request.action)}'`);
+    let picked: Deployment[];
+    let selector: string;
+    if (Array.isArray(request.ids)) {
+      const unknown = request.ids.find((id) =&gt; typeof id !== "string" || !this.deployments.has(id));
+      if (unknown !== undefined) return refuse(`No deployment named '${String(unknown)}'`);
+      const ids = new Set(request.ids as string[]);
+      picked = [...this.deployments.values()].filter((deployment) =&gt; ids.has(deployment.id));
+      selector = picked.map((deployment) =&gt; deployment.id).join(" ");
+    } else if (typeof request.selector === "string" &amp;&amp; request.selector.trim() !== "") {
+      selector = request.selector.trim();
+      picked = this.select(selector);
+    } else {
+      return refuse("Pick deployments with a selector such as \"web-* @canary\", or a list of ids");
+    }
+    if (picked.length === 0) return refuse(`No deployment matches ${selector}`);
+    const parallel = request.parallel === undefined || request.parallel === null ? this.settings.parallel : Number(request.parallel);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (!Number.isInteger(parallel) || parallel &lt; 1) <span class="cstat-no" title="statement not covered" >return refuse("`parallel` must be a whole number of at least 1");</span>
+    const staged = request.staged === true;
+    let stages: string[] = [];
+    if (staged) {
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (request.stages !== undefined &amp;&amp; request.stages !== null &amp;&amp; (!Array.isArray(request.stages) || !request.stages.every((stage) =&gt; typeof stage === "string"))) {
+<span class="cstat-no" title="statement not covered" >        return refuse("`stages` must be a list of selectors");</span>
+      }
+      stages = ((request.stages as string[] | undefined) ?? this.settings.stages).map((stage) =&gt; stage.trim()).filter(Boolean);
+    }
+    const soak = soak_of(request.soak, this.settings.soak);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (soak === null) <span class="cstat-no" title="statement not covered" >return refuse("`soak` must be a duration such as \"15m\", or a number of seconds");</span>
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (request.approve !== undefined &amp;&amp; <span class="branch-1 cbranch-no" title="branch not covered" >request.approve !== null &amp;&amp; <span class="branch-2 cbranch-no" title="branch not covered" >t</span>ypeof request.approve !== "boolean") <span class="cstat-no" title="statement not covered" >r</span>eturn refuse("`approve` must be true or false");</span>
+    const approve = (request.approve as boolean | null | undefined) ?? this.settings.approve_stages;
+&nbsp;
+    const now = this.now();
+    const hosts = picked.map((deployment, index): FleetHost =&gt; ({
+      deployment_id: deployment.id, name: deployment.settings.name, stage: staged ? stage_of(deployment, stages, index) : 0, state: "queued",
+      job_id: null, message: null, started_epoch: null, verify_since_epoch: null, finished_epoch: null,
+    }));
+    // With no stage selectors, every host is its own stage, one after another.
+    if (staged &amp;&amp; stages.length === 0) stages = picked.map((deployment) =&gt; deployment.id);
+    else if (staged &amp;&amp; hosts.some((host) =&gt; host.stage === stages.length)) stages = [...stages, "the rest"];
+    const run: Omit&lt;FleetRun, "id"&gt; = {
+      action, selector, staged, stages, parallel, state: "running", current_stage: Math.min(...hosts.map((host) =&gt; host.stage)), stop_requested: false,
+      soak: staged ? soak : 0, approve: staged &amp;&amp; approve, gate: null, started_by, started_epoch: now, finished_epoch: null, message: null, hosts,
+    };
+    const id = this.store.create_fleet_run("running", run);
+    for (const deployment of picked) this.store.add_event(deployment.id, now, "info", `Fleet run #${id} queued by ${started_by}: ${action}`);
+    await this.advance();
+    return { ok: true, message: `Fleet run #${id} started on ${picked.length} deployment${picked.length === 1 ? <span class="branch-0 cbranch-no" title="branch not covered" >"" : "</span>s"}`, run: this.run(id) };
+  }
+&nbsp;
+  // Skips every host not yet started; the run ends once those already running have.
+  stop(id: number): Promise&lt;FleetOutcome&gt; {
+    return this.serial(async () =&gt; {
+      const run = this.run(id);
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (run === null) <span class="cstat-no" title="statement not covered" >return { ok: false, message: `No fleet run #${id}`, run: null };</span>
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (run.state !== "running") <span class="cstat-no" title="statement not covered" >return { ok: false, message: `Fleet run #${id} has already ended`, run };</span>
+      run.stop_requested = true;
+      await this.advance_run(run);
+      return { ok: true, message: `Fleet run #${id} is stopping`, run: this.run(id) };
+    });
+  }
+&nbsp;
+  // Lets a run held for approval start its next stage, once any soak still running has passed.
+  approve(id: number, approved_by = "manual"): Promise&lt;FleetOutcome&gt; {
+    return this.serial(async () =&gt; {
+      const run = this.run(id);
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (run === null) <span class="cstat-no" title="statement not covered" >return { ok: false, message: `No fleet run #${id}`, run: null };</span>
+      const gate = run.gate ?? null;
+      if (run.state !== "running" || gate === null || gate.approved) return { ok: false, message: `Fleet run #${id} is not waiting for approval`, run };
+      run.gate = { ...gate, approved: true, approved_by };
+      for (const host of run.hosts) if (host.stage === gate.stage) this.store.add_event(host.deployment_id, this.now(), "info", `Fleet run #${id}: ${approved_by} approved the next stage`);
+      await this.advance_run(run);
+      return { ok: true, message: `Fleet run #${id} may start its next stage`, run: this.run(id) };
+    });
+  }
+&nbsp;
+  // ── Advancing ────────────────────────────────────────────────────────────
+&nbsp;
+<span class="fstat-no" title="function not covered" >  start_timer(): void {</span>
+<span class="cstat-no" title="statement not covered" >    this.timer = <span class="fstat-no" title="function not covered" >setInterval(() =&gt; <span class="cstat-no" title="statement not covered" >v</span>oid this.advance(), a</span>dvance_interval_in_milliseconds);</span>
+<span class="cstat-no" title="statement not covered" >    this.timer.unref();</span>
+  }
+&nbsp;
+<span class="fstat-no" title="function not covered" >  stop_timer(): void {</span>
+<span class="cstat-no" title="statement not covered" >    clearInterval(this.timer);</span>
+  }
+&nbsp;
+  // Moves every running fleet run along: notes the jobs that ended, then starts the next hosts.
+  advance(): Promise&lt;void&gt; {
+    return this.serial(async () =&gt; {
+      for (const run of this.store.fleet_runs&lt;FleetRun&gt;({ state: "running", limit: 1000 })) await this.advance_run(run);
+    });
+  }
+&nbsp;
+  private serial&lt;Answer&gt;(work: () =&gt; Promise&lt;Answer&gt;): Promise&lt;Answer&gt; {
+    const next = this.queue.then(work, work);
+    this.queue = next.<span class="fstat-no" title="function not covered" >catch(() =&gt; {</span>});
+    return next;
+  }
+&nbsp;
+  private async advance_run(run: FleetRun): Promise&lt;void&gt; {
+    const now = this.now();
+    for (const host of run.hosts) {
+      if (host.state === "running") this.follow_host(run, host, now);
+      if (host.state === "verifying") this.verify_host(host, now);
+    }
+    if (run.gate) this.watch_soak(run, run.gate, now);
+    const halted = run.stop_requested || (run.staged &amp;&amp; run.hosts.some((host) =&gt; host.state === "failed"));
+    if (halted) {
+      const reason = run.stop_requested ? "Stopped before it started" : "Skipped: an earlier stage failed";
+      for (const host of run.hosts) if (host.state === "queued") this.finish_host(host, "skipped", reason, now);
+    }
+    if (run.staged) run.current_stage = this.next_stage(run, now);
+&nbsp;
+    let active = run.hosts.filter((host) =&gt; active_states.has(host.state)).length;
+    for (const host of run.hosts) {
+      if (active &gt;= run.parallel || (run.staged &amp;&amp; run.hosts.some((candidate) =&gt; candidate.state === "failed"))) break;
+      if (host.state !== "queued" || host.stage !== run.current_stage) continue;
+      await this.start_host(run, host);
+      if (active_states.has(host.state)) active++;
+    }
+&nbsp;
+    if (!run.hosts.some((host) =&gt; host.state === "queued" || active_states.has(host.state))) this.finish_run(run, now);
+    this.store.save_fleet_run(run.id, run.state, run);
+  }
+&nbsp;
+  // The stage to work on: the current one until none of its hosts is left to finish and its gate opens, then the next that has hosts.
+  private next_stage(run: FleetRun, now: number): number {
+    const unfinished = (stage: number) =&gt; run.hosts.some((host) =&gt; host.stage === stage &amp;&amp; (host.state === "queued" || active_states.has(host.state)));
+    if (unfinished(run.current_stage)) return run.current_stage;
+    const later = run.hosts.filter((host) =&gt; host.stage &gt; run.current_stage &amp;&amp; host.state === "queued").map((host) =&gt; host.stage);
+    if (later.length === 0 || !this.gate_open(run, now)) return run.current_stage;
+    return Math.min(...later);
+  }
+&nbsp;
+  // Whether the finished current stage lets the next start: once it has soaked, and been approved when the run needs it.
+  private gate_open(run: FleetRun, now: number): boolean {
+    const soak = run.soak ?? <span class="branch-1 cbranch-no" title="branch not covered" >0;</span>
+    const approve = run.approve ?? <span class="branch-1 cbranch-no" title="branch not covered" >false;</span>
+    if (soak === 0 &amp;&amp; !approve) return true;
+    if (run.gate?.stage !== run.current_stage) {
+      run.gate = { stage: run.current_stage, soak_until_epoch: now + soak, approved: !approve, approved_by: null };
+    }
+    const gate = run.gate;
+    const next = run.current_stage + 2;
+    if (now &lt; gate.soak_until_epoch) {
+      run.message = `Stage ${run.current_stage + 1} is soaking for ${format_duration(gate.soak_until_epoch - now)} before stage ${next}`;
+      return false;
+    }
+    if (!gate.approved) {
+      run.message = `Stage ${next} waits for approval`;
+      return false;
+    }
+    run.gate = null;
+    run.message = null;
+    return true;
+  }
+&nbsp;
+  // Fails a host of the held stage whose status turns failed, or a switched host that drifts from the flake again.
+  private watch_soak(run: FleetRun, gate: StageGate, now: number): void {
+    for (const host of run.hosts) {
+      if (host.stage !== gate.stage || host.state !== "succeeded") continue;
+      const reading = this.deployments.get(host.deployment_id)?.reading() ?? <span class="branch-1 cbranch-no" title="branch not covered" >null;</span>
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (reading === null || reading.checked_epoch &lt; (host.finished_epoch ?? <span class="branch-1 cbranch-no" title="branch not covered" >now)) <span class="cstat-no" title="statement not covered" >c</span>ontinue;</span>
+      <span class="missing-if-branch" title="if path not taken" >I</span>if (reading.status === "failed") {
+        const reason = <span class="cstat-no" title="statement not covered" >reading.messages.<span class="fstat-no" title="function not covered" >find((m</span>essage) =&gt; <span class="cstat-no" title="statement not covered" >message.level === "error")</span>?.text;</span>
+<span class="cstat-no" title="statement not covered" >        this.finish_host(host, "failed", reason ? `Failed while its stage soaked: ${reason}` : "Failed while its stage soaked", now);</span>
+      } else if (run.action === "switch" &amp;&amp; reading.up_to_date === false) {
+        this.finish_host(host, "failed", "Drifted from the flake while its stage soaked", now);
+      }
+    }
+  }
+&nbsp;
+  private async start_host(run: FleetRun, host: FleetHost): Promise&lt;void&gt; {
+    const now = this.now();
+    const deployment = this.deployments.get(host.deployment_id);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (deployment === undefined) <span class="cstat-no" title="statement not covered" >return this.finish_host(host, "failed", "No longer in the config", now);</span>
+    host.started_epoch = now;
+    const outcome = await deployment.act(run.action, `fleet #${run.id}`);
+    host.job_id = outcome.job_id;
+    if (!outcome.ok) return this.finish_host(host, "failed", outcome.message, this.now());
+    // A reboot is a command that has already ended, not a job to follow.
+    if (run.action === "reboot") return this.finish_host(host, "succeeded", outcome.message, this.now());
+    host.state = "running";
+    host.message = outcome.message;
+    this.poke(deployment);
+  }
+&nbsp;
+  private follow_host(run: FleetRun, host: FleetHost, now: number): void {
+    const job = host.job_id === null ? <span class="branch-0 cbranch-no" title="branch not covered" >null : t</span>his.store.job(host.job_id);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (job === null) <span class="cstat-no" title="statement not covered" >return this.finish_host(host, "failed", "Its job is gone from the history", now);</span>
+    if (job.state === "running") {
+      host.message = job.progress;
+      return;
+    }
+    if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? <span class="branch-1 cbranch-no" title="branch not covered" >"The job failed", n</span>ow);
+    const outcome = run.action === "switch" ? switch_verdict(job.output).outcome : null;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (outcome?.kind === "deferred") <span class="cstat-no" title="statement not covered" >return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);</span>
+    if (!(run.staged &amp;&amp; run.action === "switch")) return this.finish_host(host, "succeeded", "Finished", now);
+    host.state = "verifying";
+    host.verify_since_epoch = job.finished_epoch ?? <span class="branch-1 cbranch-no" title="branch not covered" >now;</span>
+    host.message = "Switched; waiting for a fresh evaluation to read as in sync";
+    const deployment = this.deployments.get(host.deployment_id);
+    if (deployment !== undefined) {
+      deployment.request_evaluation();
+      this.poke(deployment);
+    }
+  }
+&nbsp;
+  // A switched host passes once an evaluation since the switch reads as in sync, and fails on drift or after sync_timeout.
+  private verify_host(host: FleetHost, now: number): void {
+    const deployment = this.deployments.get(host.deployment_id);
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (deployment === undefined) <span class="cstat-no" title="statement not covered" >return this.finish_host(host, "failed", "No longer in the config", now);</span>
+    const since = host.verify_since_epoch ?? <span class="branch-1 cbranch-no" title="branch not covered" >now;</span>
+    const evaluation = deployment.evaluation();
+    const reading = deployment.reading();
+    // An evaluation folded in the same second as the switch ended may have been judged against the old closure.
+    const fresh = evaluation.evaluated_epoch !== null &amp;&amp; evaluation.evaluated_epoch &gt; since &amp;&amp; deployment.running_evaluation() === null
+      &amp;&amp; reading !== null &amp;&amp; reading.checked_epoch &gt;= evaluation.evaluated_epoch;
+    <span class="missing-if-branch" title="if path not taken" >I</span>if (fresh &amp;&amp; evaluation.eval_error !== null) <span class="cstat-no" title="statement not covered" >return this.finish_host(host, "failed", `The evaluation after the switch failed: ${evaluation.eval_error}`, now);</span>
+    if (fresh &amp;&amp; reading.up_to_date === true) return this.finish_host(host, "succeeded", "Switched and in sync", now);
+    if (fresh &amp;&amp; reading.up_to_date === false) return this.finish_host(host, "failed", "Still drifting from the flake after the switch", now);
+    if (now - since &gt; this.settings.sync_timeout) {
+      return this.finish_host(host, "failed", `Did not read as in sync within ${format_duration(this.settings.sync_timeout)} of the switch`, now);
+    }
+  }
+&nbsp;
+  private finish_host(host: FleetHost, state: "succeeded" | "failed" | "skipped", message: string, now: number): void {
+    host.state = state;
+    host.message = message;
+    host.finished_epoch = now;
+  }
+&nbsp;
+  private finish_run(run: FleetRun, now: number): void {
+    const count = (state: FleetHostState) =&gt; run.hosts.filter((host) =&gt; host.state === state).length;
+    const failed = count("failed");
+    run.state = failed &gt; 0 ? "failed" : run.stop_requested &amp;&amp; count("skipped") &gt; 0 ? "stopped" : "succeeded";
+    run.finished_epoch = now;
+    run.message = [`${count("succeeded")} succeeded`, failed &gt; 0 &amp;&amp; `${failed} failed`, count("skipped") &gt; 0 &amp;&amp; `${count("skipped")} skipped`].filter(Boolean).join(", ");
+    for (const host of run.hosts) {
+      if (host.state === "skipped") continue;
+      const level = host.state === "failed" ? "error" : "info";
+      this.store.add_event(host.deployment_id, now, level, `Fleet run #${run.id} ${run.action}: ${host.message ?? <span class="branch-1 cbranch-no" title="branch not covered" >host.state}`)</span>;
+    }
+  }
+}
+&nbsp;
+// ── Helpers ──────────────────────────────────────────────────────────────────
+&nbsp;
+// A run's soak in seconds: a duration such as "15m", a number of seconds, the settings' when absent, or null when malformed.
+function soak_of(value: unknown, fallback: number): number | null {
+  <span class="missing-if-branch" title="else path not taken" >E</span>if (value === undefined || <span class="branch-1 cbranch-no" title="branch not covered" >value === null || <span class="branch-2 cbranch-no" title="branch not covered" >v</span>alue === "") r</span>eturn fallback;
+<span class="cstat-no" title="statement not covered" >  if (typeof value === "number") <span class="cstat-no" title="statement not covered" >return Number.isFinite(value) &amp;&amp; value &gt;= 0 ? Math.floor(value) : null;</span></span>
+<span class="cstat-no" title="statement not covered" >  if (typeof value !== "string") <span class="cstat-no" title="statement not covered" >return null;</span></span>
+<span class="cstat-no" title="statement not covered" >  try {</span>
+<span class="cstat-no" title="statement not covered" >    return parse_duration(value, "soak");</span>
+  } catch {
+<span class="cstat-no" title="statement not covered" >    return null;</span>
+  }
+}
+&nbsp;
+// The index of the first stage whose selector picks the deployment, or one past the last for a host no stage names.
+function stage_of(deployment: Deployment, stages: string[], index: number): number {
+  if (stages.length === 0) return index;
+  const found = stages.findIndex((stage) =&gt; selector_matches(stage, deployment.settings));
+  return found === -1 ? stages.length : found;
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://vitest.dev/" target="_blank" rel="noopener noreferrer">Vitest</a>
+                at 2026-11-22T03:29:32.275Z
+            </div>
+        <script src="../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
+    </body>
+</html>
+    

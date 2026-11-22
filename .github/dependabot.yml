@@ -13,3 +13,8 @@ updates:
     # Our own releases skip the default 3-day cooldown, which X-Libs outpaces several times a day.
     cooldown:
       exclude: ["@x-tech-laboratories/*"]
+  # Keeps the workflows' actions, pinned by commit, on their latest releases.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

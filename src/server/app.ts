@@ -141,7 +141,7 @@ export interface GcView {
 export interface HostView {
   name: string;
   display_name: string;
-  // Whether it is the server's own host, which needs no agent.
+  // Whether it is the server's own host served by the server itself, which needs no agent.
   own: boolean;
   agent_key: boolean;
   // Its agent's connection, or null when it is not connected.
@@ -350,7 +350,7 @@ const host_confirmations: Record<HostActionId, (name: string) => string> = {
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
 };
 
-function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: string): HostView {
+function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: string | null): HostView {
   const settings = host.settings;
   const deployments = [...poller.deployments.values()].filter((deployment) => deployment.host === host);
   const reading = deployments.map((deployment) => deployment.reading()).find((candidate) => candidate !== null) ?? null;
@@ -468,7 +468,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (host === null) void reply.code(404).send({ error: `No host named '${name}'` });
     return host;
   };
-  const view_of = (host: Host) => host_view(host, poller, options.hub, server_name);
+  // The server's own host counts as its own only when the server works on it itself rather than through its agent.
+  const view_of = (host: Host) => host_view(host, poller, options.hub, options.agents?.has_own_agent === false ? null : server_name);
 
   app.get("/api/hosts", async (): Promise<HostView[]> => [...poller.hosts.values()].map(view_of));
 

@@ -61,8 +61,8 @@ which the module's sudo rules allow. With sops-nix, a template renders it:
 
 ```nix
 sops.templates."nix-access-tokens".content = "access-tokens = github.com=${config.sops.placeholder.github-token}";
-# The user that runs on the flake's host: x-nix for the server's own host, x-nix-agent for an agent's.
-sops.templates."nix-access-tokens".owner = "x-nix";
+# The user that runs on the flake's host: x-nix-agent, or x-nix on the server's own host with localAgent on.
+sops.templates."nix-access-tokens".owner = "x-nix-agent";
 services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-access-tokens".path;
 ```
 

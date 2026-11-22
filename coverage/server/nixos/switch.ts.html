@@ -1,0 +1,714 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for server/nixos/switch.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../../prettify.css" />
+    <link rel="stylesheet" href="../../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="../../theme.js"></script>
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        
+        <label class="theme-select quiet">
+            Theme
+            <select id="themeSelect" autocomplete="off">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="legacy">Legacy</option>
+            </select>
+        </label>
+
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">server/nixos</a> switch.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">98.38% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>61/62</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">94.59% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>70/74</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>19/19</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>50/50</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">87x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">80x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">87x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">30x</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">90x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">73x</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-yes">15x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">97x</span>
+<span class="cline-any cline-yes">31x</span>
+<span class="cline-any cline-yes">31x</span>
+<span class="cline-any cline-yes">31x</span>
+<span class="cline-any cline-yes">97x</span>
+<span class="cline-any cline-yes">29x</span>
+<span class="cline-any cline-yes">22x</span>
+<span class="cline-any cline-yes">16x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">20x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">97x</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// Safer switches: checks before a switch, health checks after it, and a watchdog on the activated host that rolls it
+// back, plus the system profile's generations and a rollback to any of them.
+//
+// A switch activates either with nixos-rebuild or, when another host built the system, by fetching the store path it
+// pushed from the cache and running its switch-to-configuration, as one `switch` operation the switch agent performs (see
+// agent/operations/switch.ts). A guarded switch activates on the switch agent's own host, so it takes no target_host. It
+// runs the pre-switch checks and refuses on the first that fails, before anything changes. When the mode activates the
+// new system and magic_rollback or a health check is set, it starts a watchdog in a session of its own, so it outlives
+// the run, the agent and any lost connection, and activates. Once activated it runs the health commands every
+// health_period until they all pass or health_timeout passes, then prints a line asking X-Nix to confirm. X-Nix runs the
+// HTTP checks and confirms through the agent. The watchdog rolls back to the previous system when told to, when the
+// activation outlasts activation_timeout, or, with magic_rollback, when no confirmation arrives within confirm_timeout
+// (plus health_timeout when there are health checks). With defer_switch_on, a switch whose new system changes one of
+// those parts sets it for the next boot instead. The run ends by printing the watchdog's outcome on a marker line,
+// which the server reads to say why a switch was refused or rolled back. With inhibit_sleep, a sleep inhibitor on the
+// activated host lasts exactly as long as the run.
+&nbsp;
+// ── Imports ──────────────────────────────────────────────────────────────────
+&nbsp;
+import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+&nbsp;
+import type { DeploymentSettings } from "../config.ts";
+import { read_facts, type Generation } from "../../shared/facts.ts";
+import {
+  innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
+  type SwitchDefer, type SwitchOperation, type SwitchWatch,
+} from "../../shared/operations.ts";
+import {
+  cache_fetch_steps, cache_switch_steps, nix, post_switch_argv, rebuild_build_steps, rebuild_steps, sudo, system_profile, type SwitchMode,
+} from "./commands.ts";
+&nbsp;
+export type { Generation } from "../../shared/facts.ts";
+export { switch_mark } from "../../shared/operations.ts";
+&nbsp;
+// ── Shapes ───────────────────────────────────────────────────────────────────
+&nbsp;
+// What the marker lines of a switch's output say about how it went.
+export interface SwitchVerdict {
+  // Why a pre-switch check refused the switch, before anything changed.
+  refused: string | null;
+  activated: boolean;
+  awaiting_confirmation: boolean;
+  // The watchdog's last word: confirmed, kept, unchanged, rolled-back, rollback-failed or unknown, then its reason.
+  outcome: { kind: string; reason: string } | null;
+}
+&nbsp;
+// ── Deciding ─────────────────────────────────────────────────────────────────
+&nbsp;
+// Whether the mode activates the new system now, so its activation can be checked and rolled back.
+export function activates(mode: SwitchMode): boolean {
+  return mode === "switch" || mode === "test";
+}
+&nbsp;
+export function has_health_checks(settings: DeploymentSettings): boolean {
+  return settings.health_commands.length + settings.health_urls.length &gt; 0;
+}
+&nbsp;
+// Whether a switch in this mode runs under a watchdog on the host.
+export function watches(settings: DeploymentSettings, mode: SwitchMode): boolean {
+  return activates(mode) &amp;&amp; (settings.magic_rollback || has_health_checks(settings));
+}
+&nbsp;
+// How long the watchdog waits for a confirmation once the new system is active.
+export function confirm_window(settings: DeploymentSettings): number {
+  return settings.confirm_timeout + (has_health_checks(settings) ? settings.health_timeout : 0);
+}
+&nbsp;
+// The watch token a guarded switch's job names, or null for a plain switch.
+export function watch_token(command: string): string | null {
+  const operation = operation_of(command);
+  if (operation === null) return null;
+  const inner = innermost(operation);
+  return inner.kind === "switch" ? inner.watch?.token ?? null : null;
+}
+&nbsp;
+// ── Switch ───────────────────────────────────────────────────────────────────
+&nbsp;
+// The operation a switch job runs: the activation, with the checks and watchdog its settings ask for, kept awake with
+// inhibit_sleep.
+export function switch_job_operation(settings: DeploymentSettings, mode: SwitchMode, token: string, store_path: string | null = null): Operation {
+  const steps = store_path === null ? rebuild_steps(settings, mode) : cache_switch_steps(settings, store_path, mode);
+  const guarded = mode !== "dry-activate";
+  const watch = guarded &amp;&amp; watches(settings, mode) ? switch_watch(settings, mode, token) : null;
+  const defer = mode === "switch" ? switch_defer(settings, store_path) : null;
+  // A watched or deferrable nixos-rebuild builds first, so the build never uses up the activation's time and the new system can be compared.
+  const build_first = watch === null &amp;&amp; defer === null ? [] : rebuild_build_steps(settings);
+  const operation: SwitchOperation = {
+    kind: "switch",
+    mode,
+    activation_name: store_path === null ? `nixos-rebuild ${mode}` : `The ${mode} from the cache`,
+    fetch_steps: store_path === null ? build_first : cache_fetch_steps(settings, store_path),
+    steps,
+    post_switch: post_switch_argv(settings),
+    pre_switch_checks: guarded ? settings.pre_switch_checks : [],
+    watch,
+    defer,
+    // Only the switch agent's own host can be looked at, so a switch to target_host goes without.
+    ...(settings.close_nix_lock_holders &amp;&amp; settings.target_host === null ? { close_nix_lock_holders: { sudo: settings.require_sudo } } : {}),
+  };
+  return kept_awake(settings, operation);
+}
+&nbsp;
+// What sets a switch for the next boot instead, when the settings name parts and the switching host's own new system can be found
+// before it activates: fetched from the cache, or built here by nixos-rebuild.
+function switch_defer(settings: DeploymentSettings, store_path: string | null): SwitchDefer | null {
+  if (settings.defer_switch_on.length === 0 || settings.target_host !== null) return null;
+  if (store_path !== null) return { parts: settings.defer_switch_on, system: store_path, nix: nix(settings), boot_steps: cache_switch_steps(settings, store_path, "boot") };
+  <span class="missing-if-branch" title="if path not taken" >I</span>if (rebuild_build_steps(settings).length === 0) <span class="cstat-no" title="statement not covered" >return null;</span>
+  const installable = `${settings.flake}#nixosConfigurations.${JSON.stringify(settings.configuration)}.config.system.build.toplevel`;
+  return { parts: settings.defer_switch_on, system: installable, nix: nix(settings), boot_steps: rebuild_steps(settings, "boot") };
+}
+&nbsp;
+function switch_watch(settings: DeploymentSettings, mode: SwitchMode, token: string): SwitchWatch {
+  const window = confirm_window(settings);
+  return {
+    token,
+    rollback_mode: mode === "test" ? "test" : "switch",
+    require_sudo: settings.require_sudo,
+    activation_timeout: settings.activation_timeout,
+    confirm_window: window,
+    magic_rollback: settings.magic_rollback,
+    health_commands: settings.health_commands,
+    health_period: settings.health_period,
+    health_timeout: settings.health_timeout,
+    activation_reason: `The activation did not finish within ${format_duration(settings.activation_timeout)}`,
+    unconfirmed_reason: settings.magic_rollback
+      ? `X-Nix did not confirm it could still reach the host within ${format_duration(window)} of the activation`
+      : <span class="branch-1 cbranch-no" title="branch not covered" >`Nothing confirmed the switch within ${format_duration(window)}, and magic_rollback is off`,</span>
+  };
+}
+&nbsp;
+// What X-Nix asks the switch agent to confirm a guarded switch.
+export function confirm_operation(token: string): ConfirmSwitchOperation {
+  return { kind: "confirm_switch", token };
+}
+&nbsp;
+// What X-Nix asks the switch agent to tell the watchdog to roll back.
+export function rollback_signal_operation(token: string, reason: string): SignalRollbackOperation {
+  return { kind: "signal_rollback", token, reason };
+}
+&nbsp;
+// Reads the marker lines of a switch's output.
+export function switch_verdict(output: string): SwitchVerdict {
+  const verdict: SwitchVerdict = { refused: null, activated: false, awaiting_confirmation: false, outcome: null };
+  for (const line of output.split("\n")) {
+    if (!line.startsWith(`${switch_mark} `)) continue;
+    const words = line.slice(switch_mark.length + 1).trim();
+    const space = words.indexOf(" ");
+    const [kind, rest] = space === -1 ? [words, ""] : [words.slice(0, space), words.slice(space + 1)];
+    if (kind === "refused") verdict.refused = rest;
+    else if (kind === "activated") verdict.activated = true;
+    else if (kind === "awaiting-confirmation") verdict.awaiting_confirmation = true;
+    else if (kind === "outcome") {
+      const split = rest.indexOf(" ");
+      verdict.outcome = split === -1 ? <span class="branch-0 cbranch-no" title="branch not covered" >{ kind: rest, reason: "" } : {</span> kind: rest.slice(0, split), reason: rest.slice(split + 1) };
+    }
+  }
+  return verdict;
+}
+&nbsp;
+// ── Generations ──────────────────────────────────────────────────────────────
+&nbsp;
+export function generations_operation(): Operation {
+  return { kind: "generations" };
+}
+&nbsp;
+export function parse_generations(stdout: string): Generation[] {
+  const generations = read_facts&lt;Generation[]&gt;(stdout);
+  return Array.isArray(generations) ? generations.sort((first, second) =&gt; second.generation - first.generation) : [];
+}
+&nbsp;
+// Points the system profile at an earlier generation and activates it, on the host the switch activates, which is
+// reached over SSH as nixos-rebuild does when there is a target_host.
+export function rollback_operation(settings: DeploymentSettings, generation: number, reason: string): Operation {
+  if (!Number.isInteger(generation) || generation &lt; 1) throw new Error(`${generation} is not a generation number`);
+  const steps = [
+    ["nix-env", "-p", system_profile, "--switch-generation", String(generation)],
+    [`${system_profile}/bin/switch-to-configuration`, "switch"],
+  ].map((argv) =&gt; on_host(settings, argv, true));
+  return kept_awake(settings, { kind: "programs", note: `Rolling back to generation ${generation}: ${reason}`, steps });
+}
+&nbsp;
+// ── Where it runs ────────────────────────────────────────────────────────────
+&nbsp;
+// A program run where the switch activates: on this machine, under sudo when privileged and required, or over SSH on
+// target_host, which logs in as root, under sudo for root's own SSH setup.
+function on_host(settings: DeploymentSettings, argv: string[], privileged: boolean): Step {
+  if (settings.target_host === null) return { argv: privileged ? [...sudo(settings), ...argv] : <span class="branch-1 cbranch-no" title="branch not covered" >argv }</span>;
+  return { argv, ssh: { host: settings.target_host, sudo: settings.require_sudo } };
+}
+&nbsp;
+// ── Keeping the host awake ───────────────────────────────────────────────────
+&nbsp;
+// The program that holds off idle and sleep on the activated host until its stdin closes.
+export function inhibitor_step(settings: DeploymentSettings): Step {
+  return on_host(settings, ["systemd-inhibit", "--what=idle:sleep", "--mode=block", "--who=X-Nix", "--why=switching", "cat"], true);
+}
+&nbsp;
+// Runs the operation with inhibit_sleep's inhibitor held for exactly as long as it runs.
+export function kept_awake(settings: DeploymentSettings, operation: Operation): Operation {
+  if (!settings.inhibit_sleep) return operation;
+  const wrapped: KeptAwakeOperation = {
+    kind: "kept_awake", inhibitor: inhibitor_step(settings), warning: "Could not keep the host awake during the switch; switching anyway", operation,
+  };
+  return wrapped;
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://vitest.dev/" target="_blank" rel="noopener noreferrer">Vitest</a>
+                at 2026-11-22T03:29:32.275Z
+            </div>
+        <script src="../../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../../sorter.js"></script>
+        <script src="../../block-navigation.js"></script>
+    </body>
+</html>
+    

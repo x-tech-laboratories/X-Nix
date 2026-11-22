@@ -1,0 +1,729 @@
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <title>Code coverage report for server/mcp.ts</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <link rel="shortcut icon" type="image/x-icon" href="../favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="../theme.js"></script>
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+    
+<body>
+<div class='wrapper'>
+    <div class='pad1'>
+        
+        <label class="theme-select quiet">
+            Theme
+            <select id="themeSelect" autocomplete="off">
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="legacy">Legacy</option>
+            </select>
+        </label>
+
+        <h1><a href="../index.html">All files</a> / <a href="index.html">server</a> mcp.ts</h1>
+        <div class='clearfix'>
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Statements</span>
+                <span class='fraction'>14/14</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Branches</span>
+                <span class='fraction'>0/0</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Functions</span>
+                <span class='fraction'>3/3</span>
+            </div>
+        
+            
+            <div class='fl pad1y space-right2'>
+                <span class="strong">100% </span>
+                <span class="quiet">Lines</span>
+                <span class='fraction'>12/12</span>
+            </div>
+        
+            
+        </div>
+        <p class="quiet">
+            Press <em>n</em> or <em>j</em> to go to the next uncovered block, <em>b</em>, <em>p</em> or <em>k</em> for the previous block.
+        </p>
+        <template id="filterTemplate">
+            <div class="quiet">
+                Filter:
+                <input type="search" id="fileSearch">
+            </div>
+        </template>
+    </div>
+    <div class='status-line high'></div>
+    <pre><table class="coverage">
+<tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
+<a name='L2'></a><a href='#L2'>2</a>
+<a name='L3'></a><a href='#L3'>3</a>
+<a name='L4'></a><a href='#L4'>4</a>
+<a name='L5'></a><a href='#L5'>5</a>
+<a name='L6'></a><a href='#L6'>6</a>
+<a name='L7'></a><a href='#L7'>7</a>
+<a name='L8'></a><a href='#L8'>8</a>
+<a name='L9'></a><a href='#L9'>9</a>
+<a name='L10'></a><a href='#L10'>10</a>
+<a name='L11'></a><a href='#L11'>11</a>
+<a name='L12'></a><a href='#L12'>12</a>
+<a name='L13'></a><a href='#L13'>13</a>
+<a name='L14'></a><a href='#L14'>14</a>
+<a name='L15'></a><a href='#L15'>15</a>
+<a name='L16'></a><a href='#L16'>16</a>
+<a name='L17'></a><a href='#L17'>17</a>
+<a name='L18'></a><a href='#L18'>18</a>
+<a name='L19'></a><a href='#L19'>19</a>
+<a name='L20'></a><a href='#L20'>20</a>
+<a name='L21'></a><a href='#L21'>21</a>
+<a name='L22'></a><a href='#L22'>22</a>
+<a name='L23'></a><a href='#L23'>23</a>
+<a name='L24'></a><a href='#L24'>24</a>
+<a name='L25'></a><a href='#L25'>25</a>
+<a name='L26'></a><a href='#L26'>26</a>
+<a name='L27'></a><a href='#L27'>27</a>
+<a name='L28'></a><a href='#L28'>28</a>
+<a name='L29'></a><a href='#L29'>29</a>
+<a name='L30'></a><a href='#L30'>30</a>
+<a name='L31'></a><a href='#L31'>31</a>
+<a name='L32'></a><a href='#L32'>32</a>
+<a name='L33'></a><a href='#L33'>33</a>
+<a name='L34'></a><a href='#L34'>34</a>
+<a name='L35'></a><a href='#L35'>35</a>
+<a name='L36'></a><a href='#L36'>36</a>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a>
+<a name='L41'></a><a href='#L41'>41</a>
+<a name='L42'></a><a href='#L42'>42</a>
+<a name='L43'></a><a href='#L43'>43</a>
+<a name='L44'></a><a href='#L44'>44</a>
+<a name='L45'></a><a href='#L45'>45</a>
+<a name='L46'></a><a href='#L46'>46</a>
+<a name='L47'></a><a href='#L47'>47</a>
+<a name='L48'></a><a href='#L48'>48</a>
+<a name='L49'></a><a href='#L49'>49</a>
+<a name='L50'></a><a href='#L50'>50</a>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a>
+<a name='L65'></a><a href='#L65'>65</a>
+<a name='L66'></a><a href='#L66'>66</a>
+<a name='L67'></a><a href='#L67'>67</a>
+<a name='L68'></a><a href='#L68'>68</a>
+<a name='L69'></a><a href='#L69'>69</a>
+<a name='L70'></a><a href='#L70'>70</a>
+<a name='L71'></a><a href='#L71'>71</a>
+<a name='L72'></a><a href='#L72'>72</a>
+<a name='L73'></a><a href='#L73'>73</a>
+<a name='L74'></a><a href='#L74'>74</a>
+<a name='L75'></a><a href='#L75'>75</a>
+<a name='L76'></a><a href='#L76'>76</a>
+<a name='L77'></a><a href='#L77'>77</a>
+<a name='L78'></a><a href='#L78'>78</a>
+<a name='L79'></a><a href='#L79'>79</a>
+<a name='L80'></a><a href='#L80'>80</a>
+<a name='L81'></a><a href='#L81'>81</a>
+<a name='L82'></a><a href='#L82'>82</a>
+<a name='L83'></a><a href='#L83'>83</a>
+<a name='L84'></a><a href='#L84'>84</a>
+<a name='L85'></a><a href='#L85'>85</a>
+<a name='L86'></a><a href='#L86'>86</a>
+<a name='L87'></a><a href='#L87'>87</a>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a>
+<a name='L96'></a><a href='#L96'>96</a>
+<a name='L97'></a><a href='#L97'>97</a>
+<a name='L98'></a><a href='#L98'>98</a>
+<a name='L99'></a><a href='#L99'>99</a>
+<a name='L100'></a><a href='#L100'>100</a>
+<a name='L101'></a><a href='#L101'>101</a>
+<a name='L102'></a><a href='#L102'>102</a>
+<a name='L103'></a><a href='#L103'>103</a>
+<a name='L104'></a><a href='#L104'>104</a>
+<a name='L105'></a><a href='#L105'>105</a>
+<a name='L106'></a><a href='#L106'>106</a>
+<a name='L107'></a><a href='#L107'>107</a>
+<a name='L108'></a><a href='#L108'>108</a>
+<a name='L109'></a><a href='#L109'>109</a>
+<a name='L110'></a><a href='#L110'>110</a>
+<a name='L111'></a><a href='#L111'>111</a>
+<a name='L112'></a><a href='#L112'>112</a>
+<a name='L113'></a><a href='#L113'>113</a>
+<a name='L114'></a><a href='#L114'>114</a>
+<a name='L115'></a><a href='#L115'>115</a>
+<a name='L116'></a><a href='#L116'>116</a>
+<a name='L117'></a><a href='#L117'>117</a>
+<a name='L118'></a><a href='#L118'>118</a>
+<a name='L119'></a><a href='#L119'>119</a>
+<a name='L120'></a><a href='#L120'>120</a>
+<a name='L121'></a><a href='#L121'>121</a>
+<a name='L122'></a><a href='#L122'>122</a>
+<a name='L123'></a><a href='#L123'>123</a>
+<a name='L124'></a><a href='#L124'>124</a>
+<a name='L125'></a><a href='#L125'>125</a>
+<a name='L126'></a><a href='#L126'>126</a>
+<a name='L127'></a><a href='#L127'>127</a>
+<a name='L128'></a><a href='#L128'>128</a>
+<a name='L129'></a><a href='#L129'>129</a>
+<a name='L130'></a><a href='#L130'>130</a>
+<a name='L131'></a><a href='#L131'>131</a>
+<a name='L132'></a><a href='#L132'>132</a>
+<a name='L133'></a><a href='#L133'>133</a>
+<a name='L134'></a><a href='#L134'>134</a>
+<a name='L135'></a><a href='#L135'>135</a>
+<a name='L136'></a><a href='#L136'>136</a>
+<a name='L137'></a><a href='#L137'>137</a>
+<a name='L138'></a><a href='#L138'>138</a>
+<a name='L139'></a><a href='#L139'>139</a>
+<a name='L140'></a><a href='#L140'>140</a>
+<a name='L141'></a><a href='#L141'>141</a>
+<a name='L142'></a><a href='#L142'>142</a>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a>
+<a name='L146'></a><a href='#L146'>146</a>
+<a name='L147'></a><a href='#L147'>147</a>
+<a name='L148'></a><a href='#L148'>148</a>
+<a name='L149'></a><a href='#L149'>149</a>
+<a name='L150'></a><a href='#L150'>150</a>
+<a name='L151'></a><a href='#L151'>151</a>
+<a name='L152'></a><a href='#L152'>152</a>
+<a name='L153'></a><a href='#L153'>153</a>
+<a name='L154'></a><a href='#L154'>154</a>
+<a name='L155'></a><a href='#L155'>155</a>
+<a name='L156'></a><a href='#L156'>156</a>
+<a name='L157'></a><a href='#L157'>157</a>
+<a name='L158'></a><a href='#L158'>158</a>
+<a name='L159'></a><a href='#L159'>159</a>
+<a name='L160'></a><a href='#L160'>160</a>
+<a name='L161'></a><a href='#L161'>161</a>
+<a name='L162'></a><a href='#L162'>162</a>
+<a name='L163'></a><a href='#L163'>163</a>
+<a name='L164'></a><a href='#L164'>164</a>
+<a name='L165'></a><a href='#L165'>165</a>
+<a name='L166'></a><a href='#L166'>166</a>
+<a name='L167'></a><a href='#L167'>167</a>
+<a name='L168'></a><a href='#L168'>168</a>
+<a name='L169'></a><a href='#L169'>169</a>
+<a name='L170'></a><a href='#L170'>170</a>
+<a name='L171'></a><a href='#L171'>171</a>
+<a name='L172'></a><a href='#L172'>172</a>
+<a name='L173'></a><a href='#L173'>173</a>
+<a name='L174'></a><a href='#L174'>174</a>
+<a name='L175'></a><a href='#L175'>175</a>
+<a name='L176'></a><a href='#L176'>176</a>
+<a name='L177'></a><a href='#L177'>177</a>
+<a name='L178'></a><a href='#L178'>178</a>
+<a name='L179'></a><a href='#L179'>179</a>
+<a name='L180'></a><a href='#L180'>180</a>
+<a name='L181'></a><a href='#L181'>181</a>
+<a name='L182'></a><a href='#L182'>182</a>
+<a name='L183'></a><a href='#L183'>183</a>
+<a name='L184'></a><a href='#L184'>184</a>
+<a name='L185'></a><a href='#L185'>185</a>
+<a name='L186'></a><a href='#L186'>186</a>
+<a name='L187'></a><a href='#L187'>187</a>
+<a name='L188'></a><a href='#L188'>188</a>
+<a name='L189'></a><a href='#L189'>189</a>
+<a name='L190'></a><a href='#L190'>190</a>
+<a name='L191'></a><a href='#L191'>191</a>
+<a name='L192'></a><a href='#L192'>192</a>
+<a name='L193'></a><a href='#L193'>193</a>
+<a name='L194'></a><a href='#L194'>194</a>
+<a name='L195'></a><a href='#L195'>195</a>
+<a name='L196'></a><a href='#L196'>196</a>
+<a name='L197'></a><a href='#L197'>197</a>
+<a name='L198'></a><a href='#L198'>198</a>
+<a name='L199'></a><a href='#L199'>199</a>
+<a name='L200'></a><a href='#L200'>200</a>
+<a name='L201'></a><a href='#L201'>201</a>
+<a name='L202'></a><a href='#L202'>202</a>
+<a name='L203'></a><a href='#L203'>203</a>
+<a name='L204'></a><a href='#L204'>204</a>
+<a name='L205'></a><a href='#L205'>205</a>
+<a name='L206'></a><a href='#L206'>206</a>
+<a name='L207'></a><a href='#L207'>207</a>
+<a name='L208'></a><a href='#L208'>208</a>
+<a name='L209'></a><a href='#L209'>209</a>
+<a name='L210'></a><a href='#L210'>210</a>
+<a name='L211'></a><a href='#L211'>211</a>
+<a name='L212'></a><a href='#L212'>212</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">42x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">37x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// X-Nix's routes as MCP tools at /api/mcp, so an AI client can read the fleet and act on it as the signed-in caller.
+//
+// Each tool runs its route inside the app with the caller's own sign-in, so a viewer's token can read and only an
+// admin's can act. Installing onto a machine wipes its disks, so that is left to the page; so are file downloads and
+// the account routes, which X-Libs keeps from tokens.
+&nbsp;
+// ── Imports ──────────────────────────────────────────────────────────────────
+&nbsp;
+import type { JsonSchema, ParamSpec } from "@x-tech-laboratories/x-libs/api_spec";
+import { register_mcp_route, route_tools, type RouteToolSpec } from "@x-tech-laboratories/x-libs/server/mcp";
+import type { FastifyInstance } from "fastify";
+&nbsp;
+import { cache_action_ids } from "./cache.ts";
+import { action_ids } from "./deployment.ts";
+import { fleet_action_ids } from "./fleet.ts";
+import { host_action_ids } from "./host.ts";
+import { media_formats } from "./nixos/provision.ts";
+import { metric_names } from "./store.ts";
+&nbsp;
+// ── Arguments ────────────────────────────────────────────────────────────────
+&nbsp;
+const text: JsonSchema = { type: "string", minLength: 1 };
+const whole: JsonSchema = { type: "integer", minimum: 1 };
+const epoch: JsonSchema = { type: "integer", minimum: 0, description: "Unix time in seconds" };
+&nbsp;
+const one_of = (values: readonly string[]): JsonSchema =&gt; ({ type: "string", enum: [...values] });
+const host: ParamSpec = { name: "name", schema: { ...text, description: "The host's name, as list_hosts gives it" } };
+const flake: ParamSpec = { name: "id", schema: { ...text, description: "The flake's id, as list_flakes gives it" } };
+const deployment: ParamSpec = { name: "id", schema: { ...text, description: "The deployment's id, as list_deployments gives it" } };
+const cache: ParamSpec = { name: "id", schema: { ...text, description: "The cache's id, as list_caches gives it" } };
+const backup: ParamSpec = { name: "name", schema: { ...text, description: "The backup's name, as list_backups gives it" } };
+&nbsp;
+// ── Tools ────────────────────────────────────────────────────────────────────
+&nbsp;
+export const routes: Record&lt;string, RouteToolSpec&gt; = {
+  get_health: { route: "GET /api/health", description: "Shows the X-Nix version, the server's name and when it started.", params: [] },
+  get_me: { route: "GET /api/me", description: "Shows who the caller is signed in as and their role.", params: [] },
+  list_agents: { route: "GET /api/agents", description: "Lists each host with an agent key and whether its agent is connected now.", params: [] },
+&nbsp;
+  list_hosts: { route: "GET /api/hosts", description: "Lists the watched hosts with their status, Nix store usage and boot entries.", params: [] },
+  get_host: { route: "GET /api/hosts/:name", description: "Shows one host's status, Nix store usage and boot entries.", params: [host] },
+  list_host_events: { route: "GET /api/hosts/:name/events", description: "Lists the history of what happened on one host, newest first.", params: [host] },
+  refresh_host: { route: "POST /api/hosts/:name/refresh", description: "Reads a host's store and boot entries again now, and answers with the host.", params: [host] },
+  run_host_action: {
+    route: "POST /api/hosts/:name/actions/:action",
+    description: "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine.",
+    params: [host, { name: "action", schema: one_of(host_action_ids) }],
+  },
+  set_next_boot: {
+    route: "POST /api/hosts/:name/next-boot",
+    description: "Sets the boot entry a host starts into once, from the entries get_host lists, and reboots into it now if reboot is true.",
+    params: [host, { name: "entry", schema: text }, { name: "reboot", schema: { type: "boolean" }, optional: true }],
+  },
+&nbsp;
+  list_flakes: { route: "GET /api/flakes", description: "Lists the flakes the deployments build from, with their inputs, last update and why one cannot update.", params: [] },
+  get_flake: { route: "GET /api/flakes/:id", description: "Shows one flake with its inputs, last update and why it cannot update.", params: [flake] },
+  list_flake_events: { route: "GET /api/flakes/:id/events", description: "Lists the history of one flake, newest first.", params: [flake] },
+  refresh_flake: { route: "POST /api/flakes/:id/refresh", description: "Reads a flake's metadata again now, and answers with the flake.", params: [flake] },
+  update_flake: { route: "POST /api/flakes/:id/update", description: "Updates a flake's lock file and commits it, as its settings say.", params: [flake] },
+&nbsp;
+  list_deployments: {
+    route: "GET /api/deployments",
+    description: "Lists every deployment, a NixOS configuration on one host, with what it runs, what the flake would build and whether they differ.",
+    params: [],
+  },
+  get_deployment: { route: "GET /api/deployments/:id", description: "Shows one deployment: what it runs, what the flake would build and its pin.", params: [deployment] },
+  list_deployment_events: { route: "GET /api/deployments/:id/events", description: "Lists the history of one deployment, newest first.", params: [deployment] },
+  refresh_deployment: { route: "POST /api/deployments/:id/refresh", description: "Reads the host and evaluates the flake again now, and answers with the deployment.", params: [deployment] },
+  run_deployment_action: {
+    route: "POST /api/deployments/:id/actions/:action",
+    description:
+      "Runs an action on a deployment: build builds the new system, switch activates it now, boot makes it the default from the next boot, " +
+      "test activates it until the next boot, dry-activate shows what switch would change, and reboot restarts the host.",
+    params: [deployment, { name: "action", schema: one_of(action_ids) }],
+  },
+  pin_deployment: {
+    route: "POST /api/deployments/:id/pin",
+    description: "Fixes a deployment at a commit or tag; a null pin follows the branch head, and reset true goes back to the pin its settings give.",
+    params: [deployment, { name: "pin", schema: { type: ["string", "null"] }, optional: true }, { name: "reset", schema: { type: "boolean" }, optional: true }],
+  },
+  diff_deployment: {
+    route: "POST /api/deployments/:id/diff",
+    description: "Lists the packages a switch would add, remove and change; force true compares again even when nothing changed since the last diff.",
+    params: [deployment, { name: "force", schema: { type: "boolean" }, optional: true }],
+  },
+  list_generations: { route: "GET /api/deployments/:id/generations", description: "Lists the system generations on a deployment's host, marking the running one.", params: [deployment] },
+  list_generation_sizes: { route: "GET /api/deployments/:id/generations/sizes", description: "Gives the closure size of each system generation on a deployment's host.", params: [deployment] },
+  roll_back_deployment: {
+    route: "POST /api/deployments/:id/rollback",
+    description: "Activates an earlier system generation from list_generations, keeping the reason in the history.",
+    params: [deployment, { name: "generation", schema: whole }, { name: "reason", schema: { type: "string", maxLength: 200 }, optional: true }],
+  },
+  get_closure: {
+    route: "GET /api/deployments/:id/closure",
+    description: "Gives a closure's dependency graph: which is current for the running system or target for what the flake builds, unless a generation number is given.",
+    params: [deployment, { name: "which", schema: one_of(["current", "target"]), optional: true }, { name: "generation", schema: whole, optional: true }],
+  },
+&nbsp;
+  get_fleet: { route: "GET /api/fleet", description: "Shows the fleet settings, the tags deployments carry and the fleet runs so far.", params: [] },
+  select_deployments: {
+    route: "GET /api/fleet/select",
+    description: "Lists the deployment ids a selector picks, such as \"web-* @canary\": names with * wildcards, and @tag for a tag.",
+    params: [{ name: "selector", schema: text }],
+  },
+  start_fleet_run: {
+    route: "POST /api/fleet/runs",
+    description:
+      "Runs an action on many deployments, picked by a selector or a list of ids, so many at a time; staged goes through the stage selectors in order, " +
+      "stopping at the first failure, soaking each finished stage for soak (such as \"15m\") and waiting for approval before the next when approve is true.",
+    params: [
+      { name: "action", schema: one_of(fleet_action_ids) },
+      { name: "selector", schema: text, optional: true },
+      { name: "ids", schema: { type: "array", items: { type: "string" } }, optional: true },
+      { name: "staged", schema: { type: "boolean" }, optional: true },
+      { name: "stages", schema: { type: "array", items: { type: "string" } }, optional: true },
+      { name: "parallel", schema: whole, optional: true },
+      { name: "soak", schema: text, optional: true },
+      { name: "approve", schema: { type: "boolean" }, optional: true },
+    ],
+  },
+  get_fleet_run: { route: "GET /api/fleet/runs/:id", description: "Shows one fleet run and how far each deployment in it got.", params: [{ name: "id", schema: whole }] },
+  stop_fleet_run: { route: "POST /api/fleet/runs/:id/stop", description: "Stops a fleet run from starting any more deployments.", params: [{ name: "id", schema: whole }] },
+  approve_fleet_run: {
+    route: "POST /api/fleet/runs/:id/approve", description: "Lets a staged fleet run waiting for approval start its next stage.", params: [{ name: "id", schema: whole }],
+  },
+&nbsp;
+  list_caches: { route: "GET /api/caches", description: "Lists the binary caches with each target and whether it is built and pushed.", params: [] },
+  get_cache: { route: "GET /api/caches/:id", description: "Shows one binary cache with each target and whether it is built and pushed.", params: [cache] },
+  list_cache_events: { route: "GET /api/caches/:id/events", description: "Lists the history of one cache, newest first.", params: [cache] },
+  refresh_cache: { route: "POST /api/caches/:id/refresh", description: "Checks every target of a cache again now, and answers with the cache.", params: [cache] },
+  build_all_targets: { route: "POST /api/caches/:id/build-all", description: "Builds every target of a cache in one job and pushes them.", params: [cache] },
+  run_cache_action: {
+    route: "POST /api/caches/:id/targets/:name/:action",
+    description: "Runs an action on one target of a cache: build builds and pushes it, push only pushes what is built.",
+    params: [cache, { name: "name", schema: { ...text, description: "The target's name, as get_cache gives it" } }, { name: "action", schema: one_of(cache_action_ids) }],
+  },
+&nbsp;
+  get_provisioning: { route: "GET /api/provisioning", description: "Shows the installs, the install media built and the agent keys made for installed hosts.", params: [] },
+  build_media: {
+    route: "POST /api/provisioning/media",
+    description: "Builds install media for a deployment's flake and configuration, or for a flake and configuration named.",
+    params: [
+      { name: "format", schema: one_of(media_formats) },
+      { name: "deployment", schema: text, optional: true },
+      { name: "flake", schema: text, optional: true },
+      { name: "configuration", schema: text, optional: true },
+    ],
+  },
+  remove_media: { route: "POST /api/provisioning/media/:id/remove", description: "Removes built install media, by the id get_provisioning gives.", params: [{ name: "id", schema: whole }] },
+  forget_agent: {
+    route: "POST /api/provisioning/agents/:host/forget",
+    description: "Stops accepting the agent key X-Nix made for an installed host.",
+    params: [{ name: "host", schema: text }],
+  },
+&nbsp;
+  list_jobs: {
+    route: "GET /api/jobs",
+    description: "Lists jobs, newest first: builds, switches, updates and every other command run, with how each ended. evaluations 1 includes flake evaluations.",
+    params: [
+      { name: "deployment", schema: text, optional: true },
+      { name: "kind", schema: text, optional: true },
+      { name: "evaluations", schema: one_of(["1"]), optional: true },
+      { name: "since", schema: epoch, optional: true },
+      { name: "limit", schema: whole, optional: true },
+    ],
+  },
+  get_job: { route: "GET /api/jobs/:id", description: "Shows one job with its command and output.", params: [{ name: "id", schema: whole }] },
+  stop_job: {
+    route: "POST /api/jobs/:id/stop",
+    description:
+      "Stops a running job by ending its processes on its host, and answers once they have ended; the job then fails as stopped. " +
+      "A switch stopped during activation can leave the host part-way between systems, so check the deployment afterwards.",
+    params: [{ name: "id", schema: whole }],
+  },
+  list_samples: {
+    route: "GET /api/samples",
+    description: "Lists readings over time, comma-separated metrics from " + metric_names.join(", ") + ", for one owner or everyone.",
+    params: [{ name: "metrics", schema: text }, { name: "owner", schema: text, optional: true }, { name: "since", schema: epoch, optional: true }],
+  },
+  list_builds: {
+    route: "GET /api/builds",
+    description: "Lists finished builds, newest first, with their products, and every target built so far.",
+    params: [{ name: "owner", schema: text, optional: true }, { name: "target", schema: text, optional: true }, { name: "limit", schema: whole, optional: true }],
+  },
+&nbsp;
+  list_backups: { route: "GET /api/backups", description: "Lists the backups of the state database, which holds accounts, jobs and readings.", params: [] },
+  back_up_now: { route: "POST /api/backups", description: "Backs up the state database now, and answers with the new backup.", params: [] },
+  get_backup_schedule: { route: "GET /api/backups/schedule", description: "Shows whether the state database is backed up daily, and how many backups are kept.", params: [] },
+  set_backup_schedule: {
+    route: "PUT /api/backups/schedule",
+    description: "Turns the daily backup on or off and sets how many backups are kept.",
+    params: [{ name: "automatic", schema: { type: "boolean" } }, { name: "to_keep", schema: whole }],
+  },
+  restore_backup: {
+    route: "POST /api/backups/:name/restore",
+    description: "Replaces the state database with a backup, after backing up the current one, and restarts the server.",
+    params: [backup],
+  },
+  delete_backup: { route: "DELETE /api/backups/:name", description: "Deletes one backup.", params: [backup] },
+};
+&nbsp;
+const instructions =
+  "X-Nix watches NixOS machines. A host is a machine; a deployment is one NixOS configuration on a host, built from a flake; " +
+  "a cache is a binary cache it builds targets for. Look things up with the list_ and get_ tools first, then act by id. " +
+  "Actions start jobs and answer at once; follow one with get_job. Times are Unix seconds.";
+&nbsp;
+// ── Route ────────────────────────────────────────────────────────────────────
+&nbsp;
+export async function register_mcp(app: FastifyInstance, version: string): Promise&lt;void&gt; {
+  await app.register(async (scope) =&gt; register_mcp_route(scope, { name: "x-nix", version, instructions, ...route_tools(app, routes) }), { prefix: "/api" });
+}
+&nbsp;</pre></td></tr></table></pre>
+
+                <div class='push'></div><!-- for sticky footer -->
+            </div><!-- /wrapper -->
+            <div class='footer quiet pad2 space-top1 center small'>
+                Code coverage generated by
+                <a href="https://vitest.dev/" target="_blank" rel="noopener noreferrer">Vitest</a>
+                at 2026-11-22T03:29:32.275Z
+            </div>
+        <script src="../prettify.js"></script>
+        <script>
+            window.onload = function () {
+                prettyPrint();
+            };
+        </script>
+        <script src="../sorter.js"></script>
+        <script src="../block-navigation.js"></script>
+    </body>
+</html>
+    

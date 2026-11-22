@@ -203,6 +203,8 @@ describe("logging in", () => {
 
     expect((await server.inject({ method: "GET", url: "/api/deployments", headers })).statusCode).toBe(200);
     expect((await server.inject({ method: "POST", url: "/api/deployments/host-deploy/actions/reboot", headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "GET", url: "/api/builds/1/products/0", headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "GET", url: "/api/provisioning/media/1/download?path=nixos.iso", headers })).statusCode).toBe(403);
   });
 
   it("ends the session on signing out", async () => {

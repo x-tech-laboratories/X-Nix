@@ -7,7 +7,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { descendants, lock_file_id, lock_holders, read_locks, read_processes, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
 
 import {
-  is_store_path, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
+  is_store_path, shared_watch_folder_parent, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
   type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import { person_command, run_steps, type Context } from "../programs.ts";
@@ -210,6 +210,7 @@ async function health_checks(context: Context, watch: SwitchWatch, folder: strin
 // starts the watchdog in a session of its own.
 function start_watchdog(watch: SwitchWatch, folder: string): void {
   const parent = watch_folders_parent();
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
   for (const name of readdirSync(parent)) {
     if (!name.startsWith(watch_folder_prefix)) continue;
     try {
@@ -251,8 +252,16 @@ export async function changed_parts(context: Context, defer: SwitchDefer, runnin
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 
+// A switch's folder, or the one an older agent made for it in /tmp, which counts only when this user owns it.
+function existing_watch_folder(token: string): string {
+  const folder = watch_folder(token);
+  if (existsSync(folder)) return folder;
+  const shared = watch_folder(token, shared_watch_folder_parent);
+  return existsSync(shared) && lstatSync(shared).isDirectory() && lstatSync(shared).uid === process.getuid?.() ? shared : folder;
+}
+
 export async function confirm_switch(context: Context, operation: ConfirmSwitchOperation): Promise<number> {
-  const folder = watch_folder(operation.token);
+  const folder = existing_watch_folder(operation.token);
   if (!existsSync(folder)) {
     context.err.write(`${folder} is gone`);
     return 1;
@@ -262,7 +271,7 @@ export async function confirm_switch(context: Context, operation: ConfirmSwitchO
 }
 
 export async function signal_rollback(context: Context, operation: SignalRollbackOperation): Promise<number> {
-  const folder = watch_folder(operation.token);
+  const folder = existing_watch_folder(operation.token);
   if (!existsSync(folder)) {
     context.err.write(`${folder} is gone`);
     return 1;

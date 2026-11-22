@@ -9,11 +9,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev:server": "X_NIX_CONFIG=${X_NIX_CONFIG:-config.example.json} X_NIX_PASSWORD_HASH_FILE=${X_NIX_PASSWORD_HASH_FILE:-password.hash} node --watch src/server/main.ts",
+    "dev:server": "X_NIX_LOCAL_AGENT=${X_NIX_LOCAL_AGENT:-yes} X_NIX_CONFIG=${X_NIX_CONFIG:-config.example.json} X_NIX_PASSWORD_HASH_FILE=${X_NIX_PASSWORD_HASH_FILE:-password.hash} node --watch src/server/main.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production node src/server/main.ts",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "hash-password": "node src/server/hash_password.ts",
     "lint": "oxlint"
   },
@@ -36,9 +37,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
+    "@vitest/coverage-v8": "^5.1.1",
     "oxlint": "^1.89.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.1"
   }
 }

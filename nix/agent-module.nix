@@ -30,6 +30,8 @@ let
       ;
     rebuild_args = cfg.pull.rebuildArgs;
     require_sudo = cfg.pull.requireSudo;
+    allowed_signers = if cfg.pull.allowedSignersFile == null then null else toString cfg.pull.allowedSignersFile;
+    allow_unsigned = cfg.pull.allowUnsigned;
   };
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
@@ -86,8 +88,9 @@ in
     pull = {
       enable = mkEnableOption ''
         pull mode: once the server has been unreachable for `after`, the agent asks `remotes` every
-        `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own,
-        reporting each switch to the server once it is back
+        `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own once
+        its commit is signed by a key in `allowedSignersFile`, reporting each switch to the server
+        once it is back
       '';
 
       remotes = mkOption {
@@ -95,9 +98,9 @@ in
           types.submodule {
             options = {
               url = mkOption {
-                type = types.strMatching "(git\\+)?(https?|ssh|git|file)://.+";
+                type = types.strMatching "(git\\+)?(https|ssh|file)://.+";
                 example = "https://github.com/example/nixos-config";
-                description = "The flake's Git remote.";
+                description = "The flake's Git remote, over https://, ssh:// or file://, so it cannot be tampered with on the way.";
               };
               branch = mkOption {
                 type = types.str;
@@ -141,6 +144,28 @@ in
         default = true;
         description = "Run the switch under `sudo -n`.";
       };
+
+      allowedSignersFile = mkOption {
+        type = types.nullOr (types.either types.path types.str);
+        default = null;
+        example = literalExpression ''
+          pkgs.writeText "allowed_signers" "me@example.org ssh-ed25519 AAAA..."
+        '';
+        description = ''
+          The keys a commit must be signed with before pull mode switches to it, in Git's allowed
+          signers format (`gpg.ssh.allowedSignersFile`), so only SSH-signed commits pass. Public keys
+          only, so it may live in the store.
+        '';
+      };
+
+      allowUnsigned = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Switch to unsigned commits when no `allowedSignersFile` is given. Anyone who can push to a
+          remote, or impersonate one while the server is unreachable, then gets root on this host.
+        '';
+      };
     };
   };
 
@@ -149,6 +174,10 @@ in
       {
         assertion = !cfg.pull.enable || cfg.pull.remotes != [ ];
         message = "services.x-nix-agent.pull needs at least one remote.";
+      }
+      {
+        assertion = !cfg.pull.enable || cfg.pull.allowedSignersFile != null || cfg.pull.allowUnsigned;
+        message = "services.x-nix-agent.pull needs allowedSignersFile, the keys its commits are signed with, or allowUnsigned = true.";
       }
     ];
 

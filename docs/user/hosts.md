@@ -108,7 +108,7 @@ there until it ends, so the host's own idle suspend cannot cut a build or switch
 | -------------- | --------------------- | ----------------------------------------------------------------- |
 | `id`           | required              | The name the host's agent logs in as.                             |
 | `name`         | the id                | What the page calls it.                                           |
-| `agent_key`    | none                  | Its agent's public key line (see [Agents](/user/agents/)); none for the server's own host. |
+| `agent_key`    | none                  | Its agent's public key line (see [Agents](/user/agents/)); the server's own host needs none only with `localAgent`. |
 | `wake_on_lan`  | none                  | Its MAC address, or the Wake-on-LAN settings above.               |
 | `keep_awake`   | `true` with `wake_on_lan` | Hold off idle and sleep on the host through every job.        |
 | `interval`     | `5m`                  | How often the store and boot entries are read.                    |

@@ -1,6 +1,6 @@
 // Signing in, on the X-Libs accounts: the users in the accounts file are admins, others are added on the Users page,
 // and every API route but the health check, the agents' socket and the push webhook needs a session or a token. A
-// viewer reads everything; changing anything needs an admin, since the actions rebuild and reboot machines.
+// viewer reads everything but downloads; those and changing anything need an admin, since the actions rebuild and reboot machines.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -27,9 +27,13 @@ export function load_accounts(file_path?: string): Accounts {
   return load_accounts_from(accounts_variable, file_path);
 }
 
-// Reading is open to every user; anything else needs an admin. MCP is open to every user too, as each tool's route
-// is checked again on its own.
+// Downloads of build products and install media, which can hold secrets built into a system, and which wake a host.
+const download_routes = [/^\/api\/builds\/[^/]+\/products\/[^/]+$/, /^\/api\/provisioning\/media\/[^/]+\/download$/];
+
+// Reading is open to every user, but for downloads; anything else needs an admin. MCP is open to every user too, as
+// each tool's route is checked again on its own.
 export function needed(method: string, path: string): Need {
+  if (download_routes.some((route) => route.test(path))) return { role: "admin" };
   return method === "GET" || path === "/api/mcp" ? "any" : { role: "admin" };
 }
 

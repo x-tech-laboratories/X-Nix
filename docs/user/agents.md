@@ -4,9 +4,9 @@ sidebar:
   order: 7
 ---
 
-Every machine other than the X-Nix server's own runs `x-nix-agent`. The agent dials out to the server, so nothing
-listens on the machine and it needs no open port; a laptop that sleeps simply reconnects when it wakes. The server's own
-machine needs no agent.
+Every machine X-Nix manages runs `x-nix-agent`, the server's own included. The agent dials out to the server, so nothing
+listens on the machine and it needs no open port; a laptop that sleeps simply reconnects when it wakes. On the server's
+own machine it dials `ws://127.0.0.1:<port>/api/agent`; it needs none there only when the server's `localAgent` is on.
 
 ## Setting up a host
 
@@ -64,13 +64,20 @@ if the agent restarts or loses its connection, and the server follows them again
 
 Pull mode lets a host keep deploying from Git while the X-Nix server is down. Once the server has been unreachable for
 `after`, the agent asks its Git remotes, in order, every `interval` for the head of their branch with `git ls-remote`.
-When the head moves, it runs
+When the head moves, it fetches that commit into its own repository under its state folder and checks it with
+`git verify-commit` against `allowedSignersFile`, then runs
 
 ```sh
 nixos-rebuild switch --flake 'git+<url>?ref=refs/heads/<branch>&rev=<revision>#<configuration>'
 ```
 
-and logs what it does. The first revision it sees is only noted, so turning pull mode on never switches by itself.
+and logs what it does. A commit with no allowed signature is not switched to, and is logged once. The first revision it
+sees is only noted, so turning pull mode on never switches by itself.
+
+A host in pull mode switches to whatever its remotes say once the server is out of reach, and someone who can block the
+server can choose when that is. So it needs the keys its commits are signed with, as Git's allowed signers file, such
+as `me@example.org ssh-ed25519 AAAA...` per line; only SSH signatures are checked. `allowUnsigned = true` switches to
+unsigned commits instead, which hands root on the host to anyone who can push to a remote or impersonate one.
 Once the server is back, the agent reports each switch, which joins the job history of every deployment on that host
 with the trigger `agent pull`.
 
@@ -81,12 +88,15 @@ services.x-nix-agent.pull = {
     { url = "https://github.com/example/nixos-config"; }
     { url = "https://git.example.org/example/nixos-config"; }
   ];
+  allowedSignersFile = pkgs.writeText "allowed_signers" "me@example.org ssh-ed25519 AAAA...";
 };
 ```
 
 | Option          | Default          | Meaning                                                        |
 | --------------- | ---------------- | -------------------------------------------------------------- |
-| `remotes`       | required         | `{ url, branch }` entries (branch `main` by default), asked in order; https://, ssh://, git:// or file://. |
+| `remotes`       | required         | `{ url, branch }` entries (branch `main` by default), asked in order; https://, ssh:// or file://. |
+| `allowedSignersFile` | required unless `allowUnsigned` | The keys a commit must be signed with, in Git's allowed signers format. |
+| `allowUnsigned` | `false`          | Switch to unsigned commits when no `allowedSignersFile` is given. |
 | `after`         | `15m`            | How long the server must be unreachable before the agent deploys. |
 | `interval`      | `5m`             | How often the remotes are asked; at least 30 seconds.          |
 | `configuration` | the agent's host | The `nixosConfigurations` attribute.                           |
@@ -95,4 +105,4 @@ services.x-nix-agent.pull = {
 
 Without the module, the agent reads `X_NIX_AGENT_URL`, `X_NIX_AGENT_KEY_FILE`, `X_NIX_AGENT_HOST` and
 `X_NIX_AGENT_STATE_DIR` from its environment, and its pull settings from the JSON file `X_NIX_AGENT_PULL_FILE` names
-(with `rebuild_bin`, `rebuild_args`, `require_sudo` and `git_bin` in snake case).
+(with `rebuild_bin`, `rebuild_args`, `require_sudo`, `git_bin`, `allowed_signers` and `allow_unsigned` in snake case).
