@@ -38,6 +38,11 @@ let
       "${system_bin}/kill -TERM *"
       "${system_bin}/kill -KILL *"
     ]
+    # Long runs, each a transient unit of its own, and stopping one.
+    ++ [
+      "${system_bin}/systemd-run --unit\\=x-nix-run-* *"
+      "${system_bin}/systemctl stop x-nix-run-*"
+    ]
     # Reboot, and Collect Garbage with whatever gc_args the deployment sets.
     ++ [
       "${system_bin}/systemctl reboot"
