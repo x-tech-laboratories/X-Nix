@@ -7,9 +7,9 @@ import { hostname } from "node:os";
 
 import { AgentKeyError, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { read_channels, type Channel } from "@x-tech-laboratories/x-libs/server/notify/channels";
 
 import type { WakeSettings } from "./agents/wake.ts";
-import { read_channels, type Channel } from "./notifications.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 import { defer_parts, type DeferPart } from "../shared/operations.ts";
 
@@ -29,6 +29,11 @@ export const direct_on_values: DirectOn[] = ["host", "server", "ranked"];
 export type CheckUpdate = "evaluate" | "build" | "none";
 
 export const check_update_values: CheckUpdate[] = ["evaluate", "build", "none"];
+
+// How a github: flake's update lands its new lock: pushed to the branch the flake follows, or as a pull request to it.
+export type LandUpdate = "push" | "pull_request";
+
+export const land_update_values: LandUpdate[] = ["push", "pull_request"];
 
 export const level_of_status: Record<Status, "info" | "warning" | "error"> = { online: "info", info: "info", unavailable: "warning", warning: "warning", failed: "error" };
 
@@ -100,6 +105,7 @@ export interface FlakeSettings {
   commit_author: string;
   commit_message: string;
   check_update: CheckUpdate;
+  land_update: LandUpdate;
   require_sudo: boolean;
   nix_bin: string;
   nix_args: string[];
@@ -387,6 +393,11 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
   if (url === null) throw new ConfigError(`Flake '${id}' needs the \`url\` of its flake reference`);
   const check_update = read.text("check_update") ?? "evaluate";
   if (!check_update_values.includes(check_update as CheckUpdate)) throw new ConfigError(`\`check_update\` of ${read.owner} must be one of ${check_update_values.join(", ")}`);
+  const land_update = read.text("land_update") ?? "push";
+  if (!land_update_values.includes(land_update as LandUpdate)) throw new ConfigError(`\`land_update\` of ${read.owner} must be one of ${land_update_values.join(", ")}`);
+  if (land_update === "pull_request" && (!url.startsWith("github:") || read.text("access_tokens_file") === null)) {
+    throw new ConfigError(`\`land_update\` pull_request of ${read.owner} needs a github: flake and an \`access_tokens_file\` with a github.com token that may open pull requests`);
+  }
   return {
     id,
     name: read.text("name") ?? id,
@@ -404,6 +415,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     check_update: check_update as CheckUpdate,
+    land_update: land_update as LandUpdate,
     require_sudo: read.flag("require_sudo", true),
     nix_bin: read.text("nix_bin") ?? "nix",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
@@ -411,7 +423,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 }
 
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
-const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "check_update", "max_input_age"];
+const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "check_update", "land_update", "max_input_age"];
 
 // The settings of a deployment's own build, which its cache takes over when it names one.
 const cache_only_keys = ["cache_url", "build_at", "build_agent", "build_root_dir"];

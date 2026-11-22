@@ -520,6 +520,66 @@ describe("building elsewhere", () => {
     expect(harness.store.job(outcome.job_id!)!.progress).toBe("Building on builder");
   });
 
+  it("holds a Build while another system builds on the same host, then starts it under the same job", async () => {
+    const harness = with_builder();
+    const other = harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "builder", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+
+    const outcome = await harness.deployment.act("build");
+
+    expect(outcome).toMatchObject({ ok: true, message: `Build waits: job #${other} of other is building there; it starts once that ends` });
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeUndefined();
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ kind: "build", state: "running", run_id: null, progress: `Waiting to build on builder: job #${other} of other is building there` });
+    expect(await harness.deployment.act("build")).toMatchObject({ ok: false, message: "A job is already running for this deployment" });
+
+    await harness.deployment.cycle();
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeUndefined();
+    harness.store.finish_job(other, "succeeded", 0, null, clock.now);
+    await harness.deployment.cycle();
+
+    const run = harness.builder.last_run('"kind":"cache_build"')!;
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "running", run_id: run.run_id, progress: "Building on builder" });
+    expect(harness.deployment.evaluation().held_build).toBeUndefined();
+    harness.builder.end(run, `${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+    expect(harness.store.job(outcome.job_id!)!.state).toBe("succeeded");
+  });
+
+  it("lets a held Build be stopped before it starts, and never starts it", async () => {
+    const harness = with_builder();
+    const other = harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "builder", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+    const outcome = await harness.deployment.act("build");
+
+    expect(await harness.deployment.stop_held_build(outcome.job_id!, "admin")).toEqual({ ok: true, message: `Stopped job #${outcome.job_id}`, job_id: outcome.job_id });
+    expect(await harness.deployment.stop_held_build(outcome.job_id!, "admin")).toBeNull();
+    harness.store.finish_job(other, "succeeded", 0, null, clock.now);
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "admin stopped it before it started" });
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeUndefined();
+  });
+
+  it("builds at once beside a Build that is only held, which builds nothing yet", async () => {
+    const harness = with_builder();
+    harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "builder", run_id: null, trigger: "manual", started_epoch: 0 });
+
+    await harness.deployment.act("switch");
+
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeDefined();
+  });
+
+  it("fails a held Build whose host cannot start it, with why", async () => {
+    const harness = with_builder();
+    const other = harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "builder", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+    const outcome = await harness.deployment.act("build");
+    harness.store.finish_job(other, "succeeded", 0, null, clock.now);
+    harness.builder.start_error = new AgentError("The builder hung up");
+
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The job could not be started" });
+    expect(harness.deployment.evaluation().held_build).toBeUndefined();
+  });
+
   it("activates boot and test from what the build pushed too", async () => {
     const harness = with_builder();
 
@@ -955,6 +1015,23 @@ describe("daily jobs", () => {
     expect(make_deployment({ build_at: "02:30" }, { store: harness.store }).deployment.scheduled_due()).toBeNull();
   });
 
+  it("hold a build while another system builds on the host, and count its slot as handled", async () => {
+    const harness = make_deployment({ build_at: "02:30" });
+    await collect(harness);
+    const other = harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "host", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+    rewind_schedule(harness, "build");
+
+    await cycle(harness);
+
+    const job = harness.deployment.running_job()!;
+    expect([job.kind, job.trigger, job.run_id]).toEqual(["build", "schedule", null]);
+    expect(harness.deployment.scheduled_due()).toBeNull();
+    expect(harness.agent.last_run('"kind":"build"')).toBeUndefined();
+    harness.store.finish_job(other, "succeeded", 0, null, clock.now);
+    await cycle(harness);
+    expect(harness.agent.last_run('"kind":"build"')).toBeDefined();
+  });
+
   it("wait for a running job", async () => {
     const harness = make_deployment({ build_at: "02:30" });
     await collect(harness);
@@ -1076,6 +1153,27 @@ describe("safer switches", () => {
 
     expect(harness.store.events(harness.deployment.id).some((event) => event.message.includes("Switch set for the next boot: The new system changes kernel"))).toBe(true);
     expect(harness.deployment.reading()!.messages.map((message) => message.text)).toContain("Waiting on a reboot: The new system changes kernel, so it starts at the next boot");
+  });
+
+  it("keeps a switch whose units partly failed as succeeded, warning with them until the host runs another system", async () => {
+    const harness = make_deployment();
+    await collect(harness);
+    await harness.deployment.act("switch");
+    const output = "warning: the following units failed: borgmatic.service\n@@x-nix-switch units-failed\n@@x-nix-switch outcome confirmed X-Nix confirmed the switch\n";
+    harness.agent.end(harness.agent.last_run('"kind":"switch"')!, output, 0);
+
+    await cycle(harness);
+    await collect(harness, { probe: probe({ current: target_closure }) });
+
+    expect(harness.store.jobs()[0]).toMatchObject({ kind: "switch", state: "succeeded" });
+    expect(harness.store.events(harness.deployment.id).map((event) => event.message)).toContain("Switch kept, but some units failed to start: borgmatic.service");
+    const warning = "Some units failed to start after the last switch: borgmatic.service";
+    expect(harness.deployment.reading()!.messages.map((message) => message.text)).toContain(warning);
+    expect(harness.deployment.reading()!.status).not.toBe("ok");
+
+    harness.deployment.request_evaluation();
+    await collect(harness, { probe: probe({ current: newer_closure }) });
+    expect(harness.deployment.reading()!.messages.map((message) => message.text)).not.toContain(warning);
   });
 
   it("records a refusal by a pre-switch check", async () => {

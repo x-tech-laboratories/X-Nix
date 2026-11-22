@@ -26,6 +26,12 @@ flake's host:
 - **A `github:` flake with a `push_ssh_key`** is cloned, updated, committed with `commit_author` and `commit_message`,
   and pushed back over SSH. github.com's host key comes from the system's known hosts.
 
+With `land_update` set to `pull_request`, a `github:` flake's update pushes its commit to the `x-nix/flake-update` branch
+instead and opens a pull request from it to the branch the flake follows, so CI and a reviewer see the new lock before
+deployments build it. There is only ever one: a later update replaces that branch and brings the open pull request up to
+date, so commit nothing of your own there. Opening it takes the `github.com` token in `access_tokens_file`, which needs
+permission to write pull requests and contents; the job's last line links the pull request.
+
 Before either writes or pushes the new lock, it is checked: every deployment naming the flake has its system evaluated
 against it, and so does every target of a cache naming the flake. With `check_update` set to `build` they are built
 instead, and with `none` the lock is written unchecked. A check that fails keeps the old lock, pushes nothing, and fails
@@ -56,8 +62,9 @@ a day, and each move is an update and a commit; leave it out of `watch_inputs` t
 
 Updating a `github:` input asks GitHub's API, which allows 60 calls an hour per address without a token.
 `access_tokens_file` names a file in nix.conf syntax on the flake's host, such as `access-tokens = github.com=<token>`.
-X-Nix never reads the file: nix includes it through `NIX_CONFIG`, and `sudo` keeps that for a local checkout's update,
-which the module's sudo rules allow. With sops-nix, a template renders it:
+nix includes it through `NIX_CONFIG`, and `sudo` keeps that for a local checkout's update, which the module's sudo rules
+allow. X-Nix itself reads it only with `land_update` set to `pull_request`, taking the `github.com` token to open the
+update's pull request, and never prints it. With sops-nix, a template renders it:
 
 ```nix
 sops.templates."nix-access-tokens".content = "access-tokens = github.com=${config.sops.placeholder.github-token}";
@@ -86,6 +93,7 @@ services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-acce
 | `commit_author`        | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
 | `commit_message`       | `chore(flake): update inputs` | The update commit's message.                               |
 | `check_update`         | `evaluate`                    | What an update does to everything naming the flake before it writes the lock: `evaluate`, `build` or `none`. |
+| `land_update`          | `push`                        | How a `github:` flake's update lands: `push` to its branch, or `pull_request`, which needs `access_tokens_file`. |
 | `require_sudo`         | `true`                        | Update a local checkout under `sudo -n`.                   |
 | `nix_bin`              | `nix`                         | The nix program.                                           |
 | `nix_args`             | the experimental features     | Arguments before nix's subcommand.                         |

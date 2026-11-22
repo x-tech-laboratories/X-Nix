@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { Notifier, read_channels, type Notification } from "../src/server/notifications.ts";
+import { Notifier, type Notification } from "@x-tech-laboratories/x-libs/server/notify/channels";
 import { allowance, OverdueJobs, overdue_text } from "../src/server/overdue.ts";
 import { Store, type JobKind } from "../src/server/store.ts";
 
@@ -56,27 +56,5 @@ describe("an overdue job", () => {
 
     expect(sent).toEqual([{ title: "X-Nix: a job on odin is overdue", body: `The switch job ${id} has run for 2 hours, well past the 1 hour it should take`, level: "warning" }]);
     expect(store.events("odin").filter((event) => event.level === "warning")).toHaveLength(1);
-  });
-});
-
-// ── Notifications ────────────────────────────────────────────────────────────
-
-describe("notification channels", () => {
-  it("are read from the config, refusing one of no known type", () => {
-    expect(read_channels(undefined)).toEqual([]);
-    expect(read_channels([{ type: "ntfy", topic: "x-nix" }, { type: "webhook", url: "https://hooks.example/x-nix" }, { type: "apprise", urls: ["ntfys://x-nix"] }])).toHaveLength(3);
-    expect(() => read_channels([{ type: "pager" }])).toThrow("notifications[0]: `type` must be one of ntfy, webhook, apprise");
-    expect(() => read_channels([{ type: "ntfy" }])).toThrow(/notifications\[0\].*topic/);
-  });
-
-  it("each get the notification, one failing leaving the rest", async () => {
-    const logged: string[] = [];
-    let delivered = 0;
-    const notifier = new Notifier([async () => { throw new Error("ntfy is down"); }, async () => void delivered++], (message) => logged.push(message));
-
-    await notifier.send({ title: "t", body: "b", level: "warning" });
-
-    expect(delivered).toBe(1);
-    expect(logged).toEqual(["Notification channel 1 failed: ntfy is down"]);
   });
 });

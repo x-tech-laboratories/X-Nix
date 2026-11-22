@@ -8,7 +8,7 @@ import fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
 import { register_backup_routes, type BackupRoutesOptions } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { EventStream } from "@x-tech-laboratories/x-libs/server/events";
-import { register_error_replies, send_error } from "@x-tech-laboratories/x-libs/server/replies";
+import { register_error_replies, register_lenient_json_body, send_error } from "@x-tech-laboratories/x-libs/server/replies";
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
@@ -440,6 +440,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const { store, poller } = options;
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
+  // An empty body counts as no arguments, and one that is not JSON is refused before any route takes it for empty.
+  register_lenient_json_body(app, { refuse_bad_json: "json" });
   const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
   await register_auth(app, options.accounts, options.store.sql);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
@@ -804,8 +806,12 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   // Stops a running job's processes on its host; its owner finishes it as stopped on its next cycle.
   app.post<{ Params: { id: string } }>("/api/jobs/:id/stop", async (request, reply) => {
+    const id = Number(request.params.id);
+    const owner = poller.deployments.get(store.job(id)?.deployment_id ?? "");
+    const held = await owner?.stop_held_build(id, started_by(request.viewer));
+    if (held != null) return held;
     if (options.agents === undefined) return reply.code(503).send({ error: "No agents to stop the job through" });
-    const outcome = await stop_job(store, options.agents, Number(request.params.id), started_by(request.viewer), () => Math.floor(Date.now() / 1000));
+    const outcome = await stop_job(store, options.agents, id, started_by(request.viewer), () => Math.floor(Date.now() / 1000));
     const job = outcome.job_id === null ? null : store.job(outcome.job_id);
     if (job !== null) poller.soon_for(job.deployment_id);
     return reply.code(outcome.ok ? 200 : outcome.job_id === null ? 404 : 409).send(outcome);

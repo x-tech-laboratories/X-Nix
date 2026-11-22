@@ -240,6 +240,17 @@ export interface GithubUpdateOperation extends NixSettings {
   message: string;
   // Absent from an older server's update, which pushes unchecked.
   check?: UpdateCheck | null;
+  // Lands the commit as a pull request rather than on the branch; absent or null pushes to the branch.
+  pull_request?: UpdatePullRequest | null;
+}
+
+// Where an update's pull request goes, and the nix.conf whose github.com access token opens it.
+export interface UpdatePullRequest {
+  // The repository's owner and name, such as "x-tech-laboratories/X-Nix".
+  repository: string;
+  // The branch the update's commit is pushed to, the pull request's head, replaced by each update.
+  head: string;
+  token_file: string;
 }
 
 // Updates a local checkout's lock into a spare file, and writes it over the checkout's own once the check passes.
