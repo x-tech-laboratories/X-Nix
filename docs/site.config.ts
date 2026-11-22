@@ -25,5 +25,7 @@ export default define_site({
     { slug: "", label: "Home" },
     { label: "User guide", autogenerate: { directory: "user" } },
     { label: "Developer guide", autogenerate: { directory: "developer" } },
+    { slug: "roadmap" },
+    { slug: "changelog" },
   ],
 });

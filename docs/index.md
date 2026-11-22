@@ -17,7 +17,7 @@ X-Nix is a web portal for a fleet of NixOS machines. It tells you whether each m
 should, and it updates flakes, builds systems, switches them safely, keeps binary caches filled, watches the Nix store
 and boot entries, and installs NixOS on new machines, all from one page.
 
-![The Overview: hosts by status, what needs attention, and which flakes build which caches and hosts](/assets/screenshots/overview.png)
+![The Overview: hosts, flakes, caches, jobs, deployments, reboots and agents by status, the last week of jobs, what needs attention, and which flakes build which caches and hosts](/assets/screenshots/overview.png)
 
 ---
 
@@ -45,3 +45,6 @@ does and how to set it up.
 
 The **[developer guide](/developer/)** is for people who change X-Nix itself: how the code is laid out, how its parts
 talk to each other, what the database holds and how each long process runs, with diagrams.
+
+The **[roadmap](/roadmap/)** lists what X-Nix does not do yet, and the **[changelog](/changelog/)** every change, commit
+by commit.
