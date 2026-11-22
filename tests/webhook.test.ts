@@ -172,10 +172,21 @@ describe("the webhook", () => {
   it("answers a ping, ignores other events, and turns away an address after ten unsigned deliveries", () => {
     const { webhook, evaluated } = make_webhook();
     expect(webhook.receive("192.0.2.1", { "x-github-event": "ping", authorization: `Bearer ${secret}` }, Buffer.from("{}")).status).toBe(200);
-    expect(webhook.receive("192.0.2.1", { "x-github-event": "issues", authorization: `Bearer ${secret}` }, Buffer.from("{}")).status).toBe(202);
+    expect(webhook.receive("192.0.2.1", { "x-github-event": "issues", authorization: `Bearer ${secret}` }, Buffer.from('{"action":"opened"}')).status).toBe(202);
     for (let count = 0; count < 10; count++) expect(webhook.receive("192.0.2.2", {}, Buffer.from(push_payload())).status).toBe(401);
     expect(webhook.receive("192.0.2.2", { authorization: `Bearer ${secret}` }, Buffer.from(push_payload())).status).toBe(429);
     expect(evaluated).toEqual([]);
+  });
+
+  it("takes a delivery sent again only once", () => {
+    const { webhook, evaluated } = make_webhook();
+    const headers = { "x-github-event": "push", authorization: `Bearer ${secret}` };
+
+    expect(webhook.receive("192.0.2.1", headers, Buffer.from(push_payload())).status).toBe(202);
+    const again = webhook.receive("192.0.2.3", headers, Buffer.from(push_payload()));
+
+    expect(again).toEqual({ status: 200, body: { message: "Already received this delivery" } });
+    expect(evaluated).toEqual(["followed"]);
   });
 
   it("starts one evaluation for a burst of pushes once the debounce ends", async () => {

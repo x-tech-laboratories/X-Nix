@@ -19,6 +19,9 @@ version.
 
 ### 2026-11-21
 
+- docs: add the sign-in limits to the changelog
+- build(deps): use X-Libs 0.72.0
+- feat(server)!: sign-in limits, required second factor for admins, security headers and webhook replay guard
 - test: raise the coverage floor to what main's tests reach
 - ci: keep @types/node on the Node 24 runtime's major
 - docs(todo): the wake-on-LAN test on Thor passed
