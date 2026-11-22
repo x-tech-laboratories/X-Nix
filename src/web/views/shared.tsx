@@ -2,18 +2,19 @@
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
+import { JobsTable as SharedJobsTable } from "@x-tech-laboratories/x-libs/web/react/jobs";
 import { Empty } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { describe_error } from "@x-tech-laboratories/x-libs/web/errors";
-import { age, size, size_change, stamp } from "@x-tech-laboratories/x-libs/web/format";
+import { size, size_change } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState, type ReactNode } from "react";
 import {
-  api, changes, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type EventRow, type Host, type Job, type Message, type PackageChange,
+  api, changes, type ActionOutcome, type ActionView, type ClosureDiff, type Deployment, type DiffOutcome, type Host, type Job, type Message, type PackageChange,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { JobBadge, LevelBadge } from "../ui.tsx";
 
 // An open page loads again whenever the server says something changed, and each minute for what it does not announce.
 export const live = { watch: changes, refresh_in_milliseconds: 60_000 };
@@ -70,22 +71,7 @@ export function FlakeLink({ flake_id, reference }: { flake_id: string | null; re
 
 // What the last cycle found, each with its level.
 export function MessagesList({ messages }: { messages: Message[] }) {
-  if (messages.length === 0) return <Empty title="Not read yet." />;
-  return <ul className="events">{messages.map((message, index) => <li key={index}><LevelBadge level={message.level} /> <span className="event-message">{message.text}</span></li>)}</ul>;
-}
-
-export function EventsList({ events }: { events: EventRow[] }) {
-  return (
-    <ul className="events">
-      {events.map((event, index) => (
-        <li key={index}>
-          <span className="event-time muted small" title={stamp(event.epoch)}>{age(event.epoch)}</span>{" "}
-          <LevelBadge level={event.level} />{" "}
-          <span className="event-message">{event.message}</span>
-        </li>
-      ))}
-    </ul>
-  );
+  return <EventsList events={messages.map((message) => ({ level: message.level, message: message.text }))} empty="Not read yet." />;
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────
@@ -235,15 +221,11 @@ export function job_owner_link(job: Job): string {
   return link([cache_job_kinds.has(job.kind) ? "cache" : "deployments", job.deployment_id]);
 }
 
+// The page a job's owner is shown on, linked under its id.
+export function JobOwner({ job }: { job: Job }) {
+  return <a href={job_owner_link(job)}>{job.deployment_id}</a>;
+}
+
 export function JobsTable({ jobs, show_deployment }: { jobs: Job[]; show_deployment: boolean }) {
-  return (
-    <DataTable<Job> caption="Jobs" rows={jobs} row_key={(job) => job.id} columns={[
-      { label: "Job", cell: (job) => <a href={link(["jobs", String(job.id)])}>{job.kind} #{job.id}</a> },
-      ...(show_deployment ? [{ label: "For", cell: (job: Job) => <a href={job_owner_link(job)}>{job.deployment_id}</a> }] : []),
-      { label: "State", cell: (job) => <JobBadge state={job.state} /> },
-      { label: "Started", cell: (job) => <Age epoch={job.started_epoch} /> },
-      { label: "By", cell: (job) => job.trigger },
-      { label: "Last line", cell: (job) => <span className="muted small">{job.error ?? job.progress ?? ""}</span> },
-    ]} />
-  );
+  return <SharedJobsTable jobs={jobs} job_href={(job) => link(["jobs", String(job.id)])} owner={show_deployment ? (job) => <JobOwner job={job} /> : undefined} />;
 }

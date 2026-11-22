@@ -7,11 +7,12 @@ import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/rea
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, duration, stamp } from "@x-tech-laboratories/x-libs/web/format";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type ActionOutcome, type EventRow, type Flake, type Job, type LockedInput, type Status } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
-import { error_toast, EventsList, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
+import { error_toast, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
