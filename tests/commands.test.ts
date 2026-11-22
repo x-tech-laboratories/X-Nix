@@ -345,6 +345,56 @@ describe("the update", () => {
     expect(commit.indexOf("commit.gpgsign=true")).toBeLessThan(commit.indexOf("commit"));
   });
 
+  it("puts the update on the branch's new tip when the branch moved during the check but kept its lock", async () => {
+    const operation = update_operation(flake({ ...github, commit_signing_key: "/var/lib/x-nix/signing_key" })) as GithubUpdateOperation;
+    let pushes = 0;
+    const { context, ran, output } = fake_context((argv) => {
+      if (argv.includes("diff")) return { exit_code: 1 };
+      if (argv.includes("push")) return { exit_code: ++pushes === 1 ? 1 : 0 };
+      if (argv.includes("--abbrev-ref")) return { stdout: "main\n" };
+      if (argv.some((word) => word.endsWith(":flake.lock"))) return { stdout: "aaa\naaa\n" };
+      if (argv.includes("rev-parse")) return { stdout: "c0ffee\n" };
+      return {};
+    });
+
+    expect(await github_update(context, operation)).toBe(0);
+    expect(pushes).toBe(2);
+    expect(ran).toContainEqual(expect.arrayContaining(["fetch", "--depth", "1", "origin", "main"]));
+    expect(ran).toContainEqual(expect.arrayContaining(["reset", "--quiet", "--hard", "FETCH_HEAD"]));
+    expect(ran).toContainEqual(expect.arrayContaining(["checkout", "c0ffee", "--", "flake.lock"]));
+    const commits = ran.filter((argv) => argv.includes("commit"));
+    expect(commits).toHaveLength(2);
+    expect(commits[1]).toEqual(expect.arrayContaining(["commit.gpgsign=true"]));
+    expect(output()).toContain("main moved during the update");
+  });
+
+  it("leaves the update to the next run when the branch changed its own lock during the check", async () => {
+    const operation = update_operation(flake(github)) as GithubUpdateOperation;
+    const { context, ran, output } = fake_context((argv) => {
+      if (argv.includes("diff") || argv.includes("push")) return { exit_code: 1 };
+      if (argv.includes("--abbrev-ref")) return { stdout: "main\n" };
+      if (argv.some((word) => word.endsWith(":flake.lock"))) return { stdout: "aaa\nbbb\n" };
+      return {};
+    });
+
+    expect(await github_update(context, operation)).toBe(1);
+    expect(ran.filter((argv) => argv.includes("push"))).toHaveLength(1);
+    expect(ran.some((argv) => argv.includes("reset"))).toBe(false);
+    expect(output()).toContain("changed its lock during the update");
+  });
+
+  it("gives up after three refused pushes", async () => {
+    const operation = update_operation(flake(github)) as GithubUpdateOperation;
+    const { context, ran } = fake_context((argv) => {
+      if (argv.includes("diff") || argv.includes("push")) return { exit_code: 1 };
+      if (argv.some((word) => word.endsWith(":flake.lock"))) return { stdout: "aaa\naaa\n" };
+      return {};
+    });
+
+    expect(await github_update(context, operation)).toBe(1);
+    expect(ran.filter((argv) => argv.includes("push"))).toHaveLength(3);
+  });
+
   describe("landed as a pull request", () => {
     const folder = mkdtempSync(join(tmpdir(), "x-nix-tokens-"));
     const token_file = join(folder, "nix-access-tokens.conf");

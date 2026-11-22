@@ -145,16 +145,50 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
     const message = [operation.message, "", ...updated_inputs(updated)].join("\n");
     const identity = ["-c", `user.name=${operation.author_name}`, "-c", `user.email=${operation.author_email}`];
     const signing = operation.signing_key == null ? [] : ["-c", "gpg.format=ssh", "-c", `user.signingkey=${operation.signing_key}`, "-c", "commit.gpgsign=true"];
-    const committed = await git(["-C", repository, ...identity, ...signing, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
+    const commit = () => git(["-C", repository, ...identity, ...signing, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
+    const base = (await git(["-C", repository, "rev-parse", "HEAD"], { stdout: "keep" })).stdout.trim();
+    const committed = await commit();
     if (committed.exit_code !== 0) return committed.exit_code;
     if (operation.pull_request != null) return await land_as_pull_request(context, operation.pull_request, repository, git, message, fetcher);
-    const pushed = await git(["-C", repository, "push", "origin", "HEAD"]);
-    if (pushed.exit_code !== 0) return pushed.exit_code;
-    await git(["-C", repository, "log", "--oneline", "-1"]);
-    return 0;
+    return await push_onto_tip(context, repository, git, base, commit);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
+}
+
+const push_attempts = 3;
+
+// Pushes the update's commit. A push refused because the branch moved during the check is put on the branch's new tip
+// and pushed again, as long as the branch's own lock is still the one the update started from: the checked lock then
+// replaces an unchanged lock, so the check still holds. A branch whose lock changed is left to the next update.
+async function push_onto_tip(
+  context: Context, repository: string, git: (args: string[], options?: { stdout?: "show" | "keep" }) => Promise<{ exit_code: number; stdout: string }>,
+  base: string, commit: () => Promise<{ exit_code: number }>,
+): Promise<number> {
+  const branch = (await git(["-C", repository, "rev-parse", "--abbrev-ref", "HEAD"], { stdout: "keep" })).stdout.trim();
+  for (let attempt = 1; ; attempt++) {
+    const pushed = await git(["-C", repository, "push", "origin", "HEAD"]);
+    if (pushed.exit_code === 0) break;
+    if (attempt === push_attempts) return pushed.exit_code;
+    const fetched = await git(["-C", repository, "fetch", "--quiet", "--depth", "1", "origin", branch]);
+    if (fetched.exit_code !== 0) return fetched.exit_code;
+    const locks = await git(["-C", repository, "rev-parse", `${base}:flake.lock`, "FETCH_HEAD:flake.lock"], { stdout: "keep" });
+    const [started, now] = locks.stdout.trim().split("\n");
+    if (locks.exit_code !== 0 || started !== now) {
+      context.out.write(`${branch} moved and changed its lock during the update, so the next update redoes it\n`);
+      return 1;
+    }
+    context.out.write(`${branch} moved during the update; putting the new lock on its new tip\n`);
+    const checked = (await git(["-C", repository, "rev-parse", "HEAD"], { stdout: "keep" })).stdout.trim();
+    for (const step of [["reset", "--quiet", "--hard", "FETCH_HEAD"], ["checkout", checked, "--", "flake.lock"]]) {
+      const moved = await git(["-C", repository, ...step]);
+      if (moved.exit_code !== 0) return moved.exit_code;
+    }
+    const recommitted = await commit();
+    if (recommitted.exit_code !== 0) return recommitted.exit_code;
+  }
+  await git(["-C", repository, "log", "--oneline", "-1"]);
+  return 0;
 }
 
 // Pushes the update's commit to its own branch, replacing the last update there, and opens a pull request from it to
