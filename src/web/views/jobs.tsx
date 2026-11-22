@@ -2,9 +2,8 @@
 // The Builds tab beside the list is builds.tsx.
 
 import { Badge, StateBadge, type Tone } from "@x-tech-laboratories/x-libs/web/react/badges";
-import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
-import { FollowingOutput } from "@x-tech-laboratories/x-libs/web/react/following";
-import { Crumbs, Facts, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
+import { JobDetails, StopJobButton } from "@x-tech-laboratories/x-libs/web/react/jobs";
+import { Crumbs, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { ProgressBar } from "@x-tech-laboratories/x-libs/web/react/progress";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -14,9 +13,7 @@ import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useEffect, useMemo, useState } from "react";
 import { plan_tree, type PlannedPath, type PlannedState, type PlanRow } from "../../shared/build_plan.ts";
 import { api, type ActionOutcome, type BuildProgress, type Job, type JobWithOutput } from "../api.ts";
-import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { JobBadge } from "../ui.tsx";
-import { error_toast, job_owner_link, JobsTable, live } from "./shared.tsx";
+import { error_toast, JobOwner, JobsTable, live } from "./shared.tsx";
 
 // The tabs over the job history: every job, or the finished builds with what they made.
 export function JobsTabs({ active }: { active: "jobs" | "builds" }) {
@@ -70,36 +67,19 @@ export function JobView({ id }: { id: number }) {
   return (
     <div className="page">
       <Crumbs items={[["Jobs", link(["jobs"])], [`Job ${id}`, null]]} />
-      <PageHeading title={`Job ${id}`} actions={state === "running" && <button className="danger" onClick={() => confirm_dialog({
-        title: `Stop job ${id}`,
-        message: job.data?.kind === "switch"
-          ? `Stop job ${id}? A switch stopped while it activates can leave ${job.data.deployment_id} part-way between systems.`
-          : `Stop job ${id}? Its processes on ${job.data?.agent ?? "this server"} are ended, and the job fails as stopped.`,
-        confirm_label: "Stop",
-        danger: true,
-        run: stop,
-      })}>Stop</button>} />
+      <PageHeading title={`Job ${id}`} actions={state === "running" && <StopJobButton job_id={id} stop={stop} message={job.data?.kind === "switch"
+        ? `Stop job ${id}? A switch stopped while it activates can leave ${job.data.deployment_id} part-way between systems.`
+        : `Stop job ${id}? Its processes on ${job.data?.agent ?? "this server"} are ended, and the job fails as stopped.`} />} />
       <Stack>
         <Loaded resource={job}>
           {(found) => {
             const operation = operation_text(found.command);
-            return <>
-              <Facts rows={[
-                ["For", <a href={job_owner_link(found)}>{found.deployment_id}</a>],
-                ["State", <JobBadge state={found.state} />],
-                ["Started", <Age epoch={found.started_epoch} />],
-                ["Finished", <Age epoch={found.finished_epoch} />],
-                ["Exit code", found.exit_code ?? "—"],
-                ["Started by", found.trigger],
-                ["Runs on", found.agent ?? "this server"],
-              ]} />
-              {found.error && <p className="tone-bad">{found.error}</p>}
-              {found.live && <LiveProgress progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} />}
-              <Section title={operation === null ? "Command" : "Operation"}><pre className="output">{operation ?? found.command}</pre></Section>
-              <Section title="Output">
-                {found.output ? <FollowingOutput text={found.output} active={found.state === "running"} toggle={found.state === "running"} class_name="run-output" /> : <Empty title={found.state === "running" ? "Nothing printed yet." : "It printed nothing."} />}
-              </Section>
-            </>;
+            return (
+              <JobDetails job={found} owner={<JobOwner job={found} />} facts={[["Runs on", found.agent ?? "this server"]]}
+                command={operation === null ? undefined : { title: "Operation", text: operation }}>
+                {found.live && <LiveProgress progress={JSON.parse(found.live) as BuildProgress} running={found.state === "running"} />}
+              </JobDetails>
+            );
           }}
         </Loaded>
       </Stack>
