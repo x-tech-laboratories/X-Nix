@@ -9,6 +9,5 @@
 - Port more generic UI to X-Libs: `EventsList`, a state-to-tone badge, and a jobs table/page.
 - Fix the timing-flaky test in `tests/agents.test.ts`: it fails under parallel load and passes alone.
 - Decide whether a switch whose `switch-to-configuration` exits 4 (it activated, but some units failed) should still roll back: `switch_system` treats every non-zero status as a failure, and one failed unit made Odin build and revert generations 505 to 513.
-- Serve `/api/openapi.json`, which the Application Standard asks of every app: the `routes` table in `src/server/mcp.ts` already lists each call with its parameters, so it can be built from `api_spec`.
 - Offer to land a flake update as a pull request instead of pushing to its branch, so the change can be reviewed and pass CI first.
 - Hold a manual or scheduled Build while another system build runs on the same host, as a switch's build step now does (`build_blocker` in `src/server/deployment.ts`): only switches wait, so a Build pressed during a fleet-wide drift can still run Odin out of memory.
