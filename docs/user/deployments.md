@@ -70,8 +70,10 @@ of the derivations (a host without `nix-diff` says so). When the new system is n
 
 ### Where a switch builds
 
-A switch built on the switching host itself, or one with `target_host`, runs `nixos-rebuild` straight away. A switch
-built anywhere else goes in two steps:
+A switch built on the switching host itself, or one with `target_host`, runs `nixos-rebuild` straight away. For a
+remote flake it builds and switches the commit X-Nix last evaluated, not whatever the branch holds by then, so a push
+between the build and the activation cannot make the activation build a newer system against `activation_timeout`. A
+local checkout switches as it is on disk. A switch built anywhere else goes in two steps:
 
 1. Its job builds on the build host first, showing the build's output as it prints. A failed build fails the switch
    without touching the host.
