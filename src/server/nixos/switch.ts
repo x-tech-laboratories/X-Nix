@@ -39,6 +39,8 @@ export interface SwitchVerdict {
   // Why a pre-switch check refused the switch, before anything changed.
   refused: string | null;
   activated: boolean;
+  // The units that failed to start in a system kept anyway, as switch-to-configuration names them; null when none did.
+  units_failed: string | null;
   awaiting_confirmation: boolean;
   // The watchdog's last word: confirmed, kept, unchanged, rolled-back, rollback-failed or unknown, then its reason.
   outcome: { kind: string; reason: string } | null;
@@ -141,14 +143,17 @@ export function rollback_signal_operation(token: string, reason: string): Signal
 
 // Reads the marker lines of a switch's output.
 export function switch_verdict(output: string): SwitchVerdict {
-  const verdict: SwitchVerdict = { refused: null, activated: false, awaiting_confirmation: false, outcome: null };
+  const verdict: SwitchVerdict = { refused: null, activated: false, units_failed: null, awaiting_confirmation: false, outcome: null };
   for (const line of output.split("\n")) {
+    const failed = /the following units failed: (.+)$/.exec(line);
+    if (failed !== null) verdict.units_failed = failed[1]!.trim();
     if (!line.startsWith(`${switch_mark} `)) continue;
     const words = line.slice(switch_mark.length + 1).trim();
     const space = words.indexOf(" ");
     const [kind, rest] = space === -1 ? [words, ""] : [words.slice(0, space), words.slice(space + 1)];
     if (kind === "refused") verdict.refused = rest;
     else if (kind === "activated") verdict.activated = true;
+    else if (kind === "units-failed") verdict.units_failed ??= "units it did not name";
     else if (kind === "awaiting-confirmation") verdict.awaiting_confirmation = true;
     else if (kind === "outcome") {
       const split = rest.indexOf(" ");

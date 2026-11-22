@@ -2,17 +2,18 @@
 
 import { Badge, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { BarChart } from "@x-tech-laboratories/x-libs/web/react/charts";
+import { CommitInput } from "@x-tech-laboratories/x-libs/web/react/controls";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { Facts, Section, Stack, Tile, Tiles, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, bytes } from "@x-tech-laboratories/x-libs/web/format";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
-import { useEffect, useState } from "react";
 import { api, type ActionOutcome, type Deployment, type DiffOutcome, type EventRow, type Generation, type GenerationSize, type Job } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { DiffView, drift_state, error_toast, EventsList, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
+import { DiffView, drift_state, error_toast, FlakeLink, job_toast, JobsTable, MessagesList, TagChips } from "./shared.tsx";
 
 // ── Tab ──────────────────────────────────────────────────────────────────────
 
@@ -104,12 +105,8 @@ function SystemTiles({ deployment }: { deployment: Deployment }) {
   );
 }
 
-// The commit or tag the deployment is fixed at, and a form that pins it, follows the head, or goes back to the settings.
+// The commit or tag the deployment is fixed at, saved once the field is left or Enter is pressed, with buttons to follow the head or go back to the settings.
 function PinForm({ deployment, done }: { deployment: Deployment; done: () => void }) {
-  const [typed, set_typed] = useState(deployment.pin ?? "");
-  // A new pin from the server, such as after Follow the branch head, shows in the field.
-  useEffect(() => set_typed(deployment.pin ?? ""), [deployment.pin]);
-
   const send = async (body: { pin?: string | null; reset?: boolean }) => {
     try {
       toast((await api<ActionOutcome>(`/api/deployments/${encodeURIComponent(deployment.id)}/pin`, "POST", body)).message, { tone: "good" });
@@ -126,22 +123,21 @@ function PinForm({ deployment, done }: { deployment: Deployment; done: () => voi
           ? `Following the branch head of ${deployment.flake} (${where}).`
           : <span>Evaluating, building and switching <code>{deployment.pin}</code>{` of ${deployment.flake} (${where}).`}</span>}
       </p>
-      <form className="toolbar" onSubmit={(event) => {
-        event.preventDefault();
-        void send({ pin: typed.trim() === "" ? null : typed.trim() });
-      }}>
+      <div className="toolbar">
         <label className="field">
           <span className="field-label">Commit or tag</span>
-          <input type="text" className="filter" placeholder="commit hash or tag" aria-label="Pin" value={typed} onChange={(event) => set_typed(event.currentTarget.value)} />
+          <CommitInput type="text" className="filter" placeholder="commit hash or tag" aria-label="Pin" value={deployment.pin ?? ""} on_commit={(event) => {
+            const typed = event.currentTarget.value.trim();
+            if (typed !== (deployment.pin ?? "")) void send({ pin: typed === "" ? null : typed });
+          }} />
         </label>
-        <button type="submit" className="accent solid">Pin</button>
         <button type="button" disabled={deployment.pin === null} onClick={() => void send({ pin: null })}>Follow the branch head</button>
         {deployment.pin_overridden && (
           <button type="button" onClick={() => void send({ reset: true })}>
             {deployment.configured_pin === null ? "Use the settings (head)" : `Use the settings (${deployment.configured_pin})`}
           </button>
         )}
-      </form>
+      </div>
     </Stack>
   );
 }

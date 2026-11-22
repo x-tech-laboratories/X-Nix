@@ -21,13 +21,22 @@ let
   # systemd places each loaded secret here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix.service";
 
+  # Where install media is linked when this host's agent builds it, so the agent writes the links and the server reads and removes them.
+  shared_media_directory = "/var/lib/x-nix-media";
+
+  provisioning =
+    if cfg.localAgent then cfg.provisioning else { media_root_dir = shared_media_directory; } // cfg.provisioning;
+
   config_file = json.generate "x-nix.json" {
     hosts = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.hosts;
     flakes = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.flakes;
     deployments = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.deployments;
     caches = lib.mapAttrsToList (id: settings: { inherit id; } // settings) cfg.caches;
-    inherit (cfg) provisioning fleet notifications;
+    inherit provisioning;
+    inherit (cfg) fleet notifications;
   };
+
+  agent_enabled = config.services ? x-nix-agent && config.services.x-nix-agent.enable;
 in
 {
   imports = [
@@ -203,13 +212,50 @@ in
       description = "Extra entries on the PATH of the commands X-Nix runs, such as a wrapper named by rebuild_bin.";
     };
 
-    sudoRules = mkEnableOption ''
-      the NOPASSWD sudo rules for every command X-Nix runs under `sudo -n` on this host, as README.md
-      lists; turn them off only to write your own, such as for a rebuild_bin outside the system profile
-    '' // { default = true; };
+    localAgent = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Whether the server works on this host itself, as root through sudo rules. Off, this host is
+        served by `services.x-nix-agent` like any other, dialling in on `ws://127.0.0.1:<port>/api/agent`
+        with the key under its `hosts` entry, so the process that answers the web has no sudo and runs
+        sandboxed. Secrets the jobs read, such as a flake's push key or a cache's token, must then be
+        readable by the x-nix-agent user.
+      '';
+    };
+
+    sudoRules = mkOption {
+      type = types.bool;
+      default = cfg.localAgent;
+      defaultText = lib.literalExpression "config.services.x-nix.localAgent";
+      description = ''
+        Whether to add the NOPASSWD sudo rules for every command X-Nix runs under `sudo -n` on this host,
+        as README.md lists, which only the built-in agent of `localAgent` needs; turn them off only to
+        write your own, such as for a rebuild_bin outside the system profile.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.localAgent || agent_enabled;
+        message = ''
+          services.x-nix needs services.x-nix-agent on this host, with its key under services.x-nix.hosts,
+          or services.x-nix.localAgent = true to work on this host from the server itself.
+        '';
+      }
+    ];
+
+    # Media links are made by the agent and removed by the server, so both may write the folder.
+    systemd.tmpfiles.settings."X-Nix media" = mkIf (!cfg.localAgent && !(cfg.provisioning ? media_root_dir)) {
+      ${shared_media_directory}.d = {
+        user = "x-nix-agent";
+        group = "x-nix";
+        mode = "0770";
+      };
+    };
+
     users.users.x-nix = {
       isSystemUser = true;
       group = "x-nix";
@@ -250,14 +296,36 @@ in
         X_NIX_PASSWORD_HASH_FILE = "${credentials_directory}/password-hash";
         X_NIX_STATE_DIR = "/var/lib/x-nix";
         X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
+        X_NIX_LOCAL_AGENT = if cfg.localAgent then "yes" else "no";
       }
       // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
       // lib.optionalAttrs (cfg.webhookSecretFile != null) {
         X_NIX_WEBHOOK_SECRET_FILE = "${credentials_directory}/webhook-secret";
       };
 
-      # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
-      serviceConfig = {
+      # With the built-in agent it is left unsandboxed, because sudo inherits the unit's sandbox and a switch run under it
+      # could not write the system; without it the server runs no command as root and is kept to its own state.
+      serviceConfig = lib.optionalAttrs (!cfg.localAgent) {
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ provisioning.media_root_dir ];
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        RestrictSUIDSGID = true;
+        RestrictRealtime = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        CapabilityBoundingSet = "";
+        SystemCallArchitectures = "native";
+      }
+      // {
         ExecStart = lib.getExe cfg.package;
         User = "x-nix";
         Group = "x-nix";

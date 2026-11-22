@@ -1,6 +1,7 @@
 // Pull mode: once the server has been unreachable for `after`, the agent deploys from Git on its own. Every `interval` it
 // asks its remotes, in order, for the head of their branch, and switches to a revision it has not deployed yet with
-// `nixos-rebuild switch --flake`, as a long run that outlives the agent. The first revision it sees is only noted, so
+// `nixos-rebuild switch --flake`, as a long run that outlives the agent, once the revision's commit is signed by a key
+// the allowed signers file names, unless unsigned commits are allowed. The first revision it sees is only noted, so
 // starting pull mode never switches by itself. Each switch is logged and kept in `pull.json` until the server, once
 // back, has taken its report into the deployment's job history.
 
@@ -14,13 +15,13 @@ import type { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { PullReport, RunResult } from "../shared/agent_protocol.ts";
-import type { Operation } from "../shared/operations.ts";
+import type { Operation, ProgramsOperation } from "../shared/operations.ts";
 import { run_operation } from "./run.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 export interface PullRemote {
-  // A Git URL: https://, http://, ssh://, git:// or file://, optionally with nix's git+ in front.
+  // A Git URL: https://, ssh:// or file://, optionally with nix's git+ in front.
   url: string;
   branch: string;
 }
@@ -37,6 +38,10 @@ export interface PullSettings {
   rebuild_args: string[];
   require_sudo: boolean;
   git_bin: string;
+  // The file of keys whose signature a commit needs before it is switched to, in Git's allowed signers format.
+  allowed_signers: string | null;
+  // Whether a commit is switched to without a signature, when no allowed signers are given.
+  allow_unsigned: boolean;
 }
 
 export class PullConfigError extends Error {
@@ -61,6 +66,8 @@ interface PullRecord {
 interface PullState {
   revision: string | null;
   records: PullRecord[];
+  // The last revision refused for its signature, so it is not fetched and refused again every interval.
+  refused?: string | null;
 }
 
 export interface PullerOptions {
@@ -75,8 +82,10 @@ export interface PullerOptions {
   now?: () => number;
 }
 
-const remote_schemes = /^(git\+)?(https?|ssh|git|file):\/\//;
+// Remotes reached over a channel that proves the server, or on this machine; plain http:// and git:// can be tampered with.
+const remote_schemes = /^(git\+)?(https|ssh|file):\/\//;
 const ls_remote_timeout_in_seconds = 60;
+const verify_timeout_in_seconds = 600;
 const report_output_limit_in_bytes = 64 * 1024;
 
 // ── Reading settings ─────────────────────────────────────────────────────────
@@ -90,7 +99,7 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
     const remote = (typeof entry === "string" ? { url: entry } : entry) as Record<string, unknown> | null;
     const url = remote?.url;
     const branch = remote?.branch ?? "main";
-    if (typeof url !== "string" || !remote_schemes.test(url)) throw new PullConfigError(`Remote ${index + 1} needs a \`url\` starting with https://, ssh://, git:// or file://`);
+    if (typeof url !== "string" || !remote_schemes.test(url)) throw new PullConfigError(`Remote ${index + 1} needs a \`url\` starting with https://, ssh:// or file://`);
     if (typeof branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith("-")) throw new PullConfigError(`The branch of remote ${index + 1} must be a branch name`);
     return { url, branch };
   });
@@ -109,6 +118,15 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
   const rebuild_args = values.rebuild_args ?? [];
   if (!Array.isArray(rebuild_args) || !rebuild_args.every((item) => typeof item === "string")) throw new PullConfigError("`rebuild_args` of the pull settings must be a list of text");
   if (values.require_sudo !== undefined && typeof values.require_sudo !== "boolean") throw new PullConfigError("`require_sudo` of the pull settings must be true or false");
+  const allowed_signers = values.allowed_signers ?? null;
+  if (allowed_signers !== null && (typeof allowed_signers !== "string" || !allowed_signers.startsWith("/"))) {
+    throw new PullConfigError("`allowed_signers` of the pull settings must be the absolute path of an allowed signers file");
+  }
+  if (values.allow_unsigned !== undefined && typeof values.allow_unsigned !== "boolean") throw new PullConfigError("`allow_unsigned` of the pull settings must be true or false");
+  const allow_unsigned = (values.allow_unsigned as boolean | undefined) ?? false;
+  if (allowed_signers === null && !allow_unsigned) {
+    throw new PullConfigError("Pull mode needs `allowed_signers`, the keys a commit must be signed with, or `allow_unsigned: true` to switch to unsigned commits");
+  }
   return {
     remotes,
     after: duration("after", "15m"),
@@ -118,6 +136,8 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
     rebuild_args,
     require_sudo: (values.require_sudo as boolean | undefined) ?? true,
     git_bin: text("git_bin", "git"),
+    allowed_signers,
+    allow_unsigned,
   };
 }
 
@@ -142,6 +162,19 @@ export function pulled_flake(remote: PullRemote, revision: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}ref=${encodeURIComponent(`refs/heads/${remote.branch}`)}&rev=${revision}`;
 }
 
+// Fetches the revision into the agent's own bare repository and checks its commit is signed by an allowed signer.
+export function verify_operation(settings: PullSettings, remote: PullRemote, revision: string, repository: string, allowed_signers: string): ProgramsOperation {
+  const git = [settings.git_bin, "-C", repository];
+  return {
+    kind: "programs",
+    steps: [
+      { argv: [settings.git_bin, "init", "--quiet", "--bare", repository] },
+      { argv: [...git, "fetch", "--quiet", "--no-tags", "--depth", "1", "--", remote.url.replace(/^git\+/, ""), revision] },
+      { argv: [...git, "-c", `gpg.ssh.allowedSignersFile=${allowed_signers}`, "verify-commit", revision] },
+    ],
+  };
+}
+
 export function pull_switch_operation(settings: PullSettings, remote: PullRemote, revision: string): Operation {
   const sudo = settings.require_sudo ? ["sudo", "-n"] : [];
   const flake = `${pulled_flake(remote, revision)}#${settings.configuration}`;
@@ -154,6 +187,7 @@ export class Puller {
   private readonly settings: PullSettings;
   private readonly runs: LongRuns<Operation>;
   private readonly file: string;
+  private readonly repository: string;
   private readonly options: PullerOptions;
   private readonly run: (operation: Operation, timeout_in_seconds: number) => Promise<RunResult>;
   private readonly now: () => number;
@@ -166,6 +200,7 @@ export class Puller {
     this.settings = settings;
     this.runs = runs;
     this.file = join(state_directory, "pull.json");
+    this.repository = join(state_directory, "pull.git");
     this.options = options;
     this.run = options.run ?? ((operation, timeout_in_seconds) => run_operation(operation, { timeout_in_seconds }));
     this.now = options.now ?? (() => Date.now());
@@ -187,7 +222,7 @@ export class Puller {
     if (!existsSync(this.file)) return { revision: null, records: [] };
     try {
       const state = JSON.parse(readFileSync(this.file, "utf8")) as Partial<PullState>;
-      return { revision: state.revision ?? null, records: Array.isArray(state.records) ? state.records : [] };
+      return { revision: state.revision ?? null, records: Array.isArray(state.records) ? state.records : [], refused: state.refused ?? null };
     } catch {
       return { revision: null, records: [] };
     }
@@ -270,7 +305,12 @@ export class Puller {
       this.options.log(`Pull mode noted ${revision} of ${remote.branch} from ${remote.url} as deployed; a later revision is switched to`);
       return;
     }
-    if (state.revision === revision) return;
+    if (state.revision === revision || state.refused === revision) return;
+    if (!(await this.signed(remote, revision))) {
+      state.refused = revision;
+      this.save(state);
+      return;
+    }
     const operation = pull_switch_operation(this.settings, remote, revision);
     const command = JSON.stringify(operation);
     const run_id = `pull-${Math.floor(this.now() / 1000)}-${randomBytes(3).toString("hex")}`;
@@ -288,6 +328,17 @@ export class Puller {
     });
     this.save(state);
     this.options.log(`The server has been unreachable, so switching to ${revision} of ${remote.branch} from ${remote.url}`);
+  }
+
+  // Whether the revision's commit carries an allowed signature, or is let through as unsigned commits are allowed.
+  private async signed(remote: PullRemote, revision: string): Promise<boolean> {
+    const allowed_signers = this.settings.allowed_signers;
+    if (allowed_signers === null) return this.settings.allow_unsigned;
+    const result = await this.run(verify_operation(this.settings, remote, revision, this.repository, allowed_signers), verify_timeout_in_seconds);
+    if (result.exit_code === 0) return true;
+    const why = (result.stderr || result.stdout).trim().split("\n").slice(-2).join(" ").slice(0, 300);
+    this.options.log(`Not switching to ${revision} of ${remote.branch} from ${remote.url}: its commit is not signed by an allowed signer (${why || `exit ${result.exit_code}`})`);
+    return false;
   }
 
   // ── Reporting ────────────────────────────────────────────────────────────

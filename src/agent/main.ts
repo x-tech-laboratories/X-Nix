@@ -5,9 +5,11 @@
 
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { join, resolve } from "node:path";
 
 import { AgentConfigError, start_agent } from "./agent.ts";
 import { parse_pull_settings, PullConfigError, type PullSettings } from "./pull.ts";
+import { switch_folders_variable } from "../shared/operations.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -48,10 +50,13 @@ function pull_settings(host: string): PullSettings | undefined {
 
 try {
   const host = process.env.X_NIX_AGENT_HOST || hostname();
+  const state_directory = process.env.X_NIX_AGENT_STATE_DIR || "state";
+  // Switches keep their watchdog's folder in the agent's own state, which its runs and watchdogs inherit.
+  process.env[switch_folders_variable] ||= join(resolve(state_directory), "switches");
   const agent = start_agent({
     url: required("X_NIX_AGENT_URL"),
     key_file: required("X_NIX_AGENT_KEY_FILE"),
-    state_directory: process.env.X_NIX_AGENT_STATE_DIR || "state",
+    state_directory,
     host,
     agent_version: agent_version(),
     pull: pull_settings(host),

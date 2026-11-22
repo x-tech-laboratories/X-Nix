@@ -39,6 +39,7 @@ config's `notifications` list:
 |-----------|------------------------------------------------------------------------------------------------|
 | `ntfy`    | `topic` or `topic_file`, `url` (default `https://ntfy.sh`), `token` or `token_file`, or `username` with `password` or `password_file`, `priority` (1-5 or a name; by default by the notification's level), `tags`. |
 | `webhook` | `url` or `url_file`, `method`, `headers`, `bearer_token` or `bearer_token_file`, and a `payload` template whose `{title}`, `{body}` and `{level}` are filled in; JSON of those three by default. |
+| `mail`    | `host`, `security` (`starttls`, `tls` or `none`; default `starttls`), `port` (by default the security's), `username` with `password` or `password_file`, `from` (default the username), `to` (one address or a list), `subject_prefix`; the title is the subject and the body the text. |
 | `apprise` | `urls`, or `urls_file` with one per line; needs the `apprise` program on the service's PATH (add it with `path`). |
 
 Prefer the `_file` form of each secret, so the secret stays out of the config.
@@ -50,7 +51,7 @@ X-Monitor's.
 
 ## Backups
 
-X-Nix's database holds the users added on the Users page, their sessions and tokens, and every job, event, build and
+X-Nix's database holds the users added under Settings → Users, their sessions and tokens, and every job, event, build and
 reading. It is backed up once a day into `<state dir>/backups`, keeping the last 14 daily copies. Under **Backups** on
 the Settings page, an admin changes that schedule, backs up by hand, restores, or deletes a backup.
 

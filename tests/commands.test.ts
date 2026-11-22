@@ -333,6 +333,83 @@ describe("the update", () => {
     expect(ran.some((argv) => argv.includes("push"))).toBe(true);
   });
 
+  describe("landed as a pull request", () => {
+    const folder = mkdtempSync(join(tmpdir(), "x-nix-tokens-"));
+    const token_file = join(folder, "nix-access-tokens.conf");
+    writeFileSync(token_file, "# tokens\nextra-access-tokens = gitlab.com=not-this-one github.com=test-token\n");
+    const as_pull_request = { ...github, land_update: "pull_request", access_tokens_file: token_file };
+
+    // A fetch answering GitHub's list of open pull requests and each change with what the test says, keeping every request.
+    function fake_github(open: unknown[], change: { status: number; body: unknown } = { status: 201, body: { html_url: "https://github.com/owner/config/pull/8" } }) {
+      const requests: { url: string; method: string; headers: Record<string, string>; body: unknown }[] = [];
+      const fetcher = (async (url: string, init: RequestInit) => {
+        requests.push({ url, method: init.method!, headers: init.headers as Record<string, string>, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
+        const answer = init.method === "GET" ? { status: 200, body: open } : change;
+        return new Response(JSON.stringify(answer.body), { status: answer.status });
+      }) as typeof fetch;
+      return { fetcher, requests };
+    }
+
+    const changed_lock = (argv: string[]) => {
+      if (argv.includes("rev-parse")) return { stdout: "main\n" };
+      if (argv.includes("update")) return { stderr: "• Updated input 'nixpkgs':\n" };
+      return argv.includes("diff") ? { exit_code: 1 } : {};
+    };
+
+    it("is asked for per flake, which needs a github: flake and an access_tokens_file", () => {
+      const operation = inner_config(update_operation(flake(as_pull_request))) as GithubUpdateOperation;
+
+      expect(operation.pull_request).toEqual({ repository: "owner/config", head: "x-nix/flake-update", token_file });
+      expect((inner_config(update_operation(flake({ ...github, access_tokens_file: token_file }))) as GithubUpdateOperation).pull_request).toBeNull();
+      expect(() => flake({ ...github, land_update: "pull_request" })).toThrow(/access_tokens_file/);
+      expect(() => flake({ land_update: "pull_request", access_tokens_file: token_file })).toThrow(/github: flake/);
+      expect(() => flake({ ...github, land_update: "sometimes" })).toThrow(ConfigError);
+    });
+
+    it("pushes the commit to its own branch and opens a pull request to the flake's branch", async () => {
+      const operation = inner_config(update_operation(flake(as_pull_request))) as GithubUpdateOperation;
+      const { context, ran, output } = fake_context(changed_lock);
+      const github_api = fake_github([]);
+
+      expect(await github_update(context, operation, github_api.fetcher)).toBe(0);
+
+      expect(ran.filter((argv) => argv.includes("push"))).toEqual([["git", "-C", expect.any(String), "push", "--force", "origin", "HEAD:refs/heads/x-nix/flake-update"]]);
+      const [listed, opened] = github_api.requests;
+      expect(listed.url).toBe("https://api.github.com/repos/owner/config/pulls?state=open&head=owner%3Ax-nix%2Fflake-update&base=main");
+      expect(listed.headers.authorization).toBe("Bearer test-token");
+      expect(opened).toMatchObject({ method: "POST", body: { title: "chore(flake): update inputs", body: "- nixpkgs", head: "x-nix/flake-update", base: "main" } });
+      expect(output().trim().split("\n").at(-1)).toBe("Opened pull request https://github.com/owner/config/pull/8");
+      expect(output()).not.toContain("test-token");
+    });
+
+    it("brings the pull request already open up to date instead of opening another", async () => {
+      const operation = inner_config(update_operation(flake(as_pull_request))) as GithubUpdateOperation;
+      const { context, output } = fake_context(changed_lock);
+      const github_api = fake_github([{ number: 7, html_url: "https://github.com/owner/config/pull/7" }], { status: 200, body: {} });
+
+      expect(await github_update(context, operation, github_api.fetcher)).toBe(0);
+
+      expect(github_api.requests.map((request) => `${request.method} ${request.url.replace(/\?.*/, "")}`)).toEqual([
+        "GET https://api.github.com/repos/owner/config/pulls", "PATCH https://api.github.com/repos/owner/config/pulls/7",
+      ]);
+      expect(output()).toContain("Updated pull request https://github.com/owner/config/pull/7");
+    });
+
+    it("fails with GitHub's answer when it refuses, and before pushing when the file holds no github.com token", async () => {
+      const operation = inner_config(update_operation(flake(as_pull_request))) as GithubUpdateOperation;
+      const refused = fake_context(changed_lock);
+      expect(await github_update(refused.context, operation, fake_github([], { status: 403, body: { message: "Resource not accessible" } }).fetcher)).toBe(1);
+      expect(refused.output()).toContain('GitHub refused to open the pull request: 403 {"message":"Resource not accessible"}');
+
+      const empty = join(folder, "empty.conf");
+      writeFileSync(empty, "access-tokens = gitlab.com=not-this-one\n");
+      const tokenless = fake_context(changed_lock);
+      expect(await github_update(tokenless.context, { ...operation, pull_request: { ...operation.pull_request!, token_file: empty } }, fake_github([]).fetcher)).toBe(1);
+      expect(tokenless.ran.some((argv) => argv.includes("push"))).toBe(false);
+      expect(tokenless.output()).toContain(`${empty} holds no github.com access token`);
+    });
+  });
+
   it.each([{ status: 0, expected: 0 }, { status: 3, expected: 1 }])("prints its log once and keeps its status (nix exits $status)", async ({ status, expected }) => {
     // A clone succeeds, and diff says the lock is unchanged.
     const { context, output } = fake_context((argv) => (argv.includes("update") ? { exit_code: status, stderr: "Updated input 'nixpkgs'\n" } : {}));
@@ -464,9 +541,9 @@ describe("flake references", () => {
   });
 
   it.each([
-    ["github:owner/config", { ssh_url: "git@github.com:owner/config.git", branch: null }],
-    ["github:owner/config/dev", { ssh_url: "git@github.com:owner/config.git", branch: "dev" }],
-    ["github:owner/config?ref=dev", { ssh_url: "git@github.com:owner/config.git", branch: "dev" }],
+    ["github:owner/config", { name: "owner/config", ssh_url: "git@github.com:owner/config.git", branch: null }],
+    ["github:owner/config/dev", { name: "owner/config", ssh_url: "git@github.com:owner/config.git", branch: "dev" }],
+    ["github:owner/config?ref=dev", { name: "owner/config", ssh_url: "git@github.com:owner/config.git", branch: "dev" }],
     ["github:owner", null],
     ["/etc/nixos", null],
   ])("reads %s as a GitHub repository", (reference, expected) => {

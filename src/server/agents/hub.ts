@@ -24,11 +24,12 @@ export interface HubSettings extends Pick<HubOptions<Operation>, "hello_timeout_
 
 // ── Hub ──────────────────────────────────────────────────────────────────────
 
-// A hub whose agents join the pool as they connect and leave it as they go; the server's own host is the built-in agent.
-export function create_hub(pool: AgentPool, local: LocalAgent<Operation>, settings: HubSettings = {}): Hub {
+// A hub whose agents join the pool as they connect and leave it as they go; the server's own host is the built-in agent
+// when there is one, and otherwise dials in like any other.
+export function create_hub(pool: AgentPool, local: LocalAgent<Operation> | null, settings: HubSettings = {}): Hub {
   const hub: Hub = new AgentHub({
     app: x_nix_app,
-    local: { host: pool.own_host, agent: local },
+    ...(local === null ? {} : { local: { host: pool.own_host, agent: local } }),
     hello_timeout_in_milliseconds: settings.hello_timeout_in_milliseconds,
     connection: settings.connection,
     on_message: (host, message, connection) => {

@@ -5,7 +5,7 @@
 A web portal for managing NixOS deployments: drift against the flake, updates, builds, switches,
 the Nix store, the Attic cache and boot entries.
 
-![The Overview: hosts by status, what needs attention, and which flakes build which caches and hosts](docs/public/assets/screenshots/overview.png)
+![The Overview: hosts, flakes, caches, jobs, deployments, reboots and agents by status, the last week of jobs, what needs attention, and which flakes build which caches and hosts](docs/public/assets/screenshots/overview.png)
 
 **[Read the documentation](https://x-tech-laboratories.github.io/X-Nix/)**: the
 [user guide](https://x-tech-laboratories.github.io/X-Nix/user/) for installing and using X-Nix, and the
@@ -32,7 +32,7 @@ the Nix store, the Attic cache and boot entries.
 ## Installation
 
 X-Nix is a flake with two NixOS modules: `nixosModules.default` runs the server on one machine, and
-`nixosModules.agent` runs the agent on every other machine.
+`nixosModules.agent` runs the agent on every machine, the server's own included.
 
 ```nix
 {
@@ -40,7 +40,7 @@ X-Nix is a flake with two NixOS modules: `nixosModules.default` runs the server 
 
   outputs = { nixpkgs, x-nix, ... }: {
     nixosConfigurations.server = nixpkgs.lib.nixosSystem {
-      modules = [ x-nix.nixosModules.default ./server.nix ];
+      modules = [ x-nix.nixosModules.default x-nix.nixosModules.agent ./server.nix ];
     };
     nixosConfigurations.workstation = nixpkgs.lib.nixosSystem {
       modules = [ x-nix.nixosModules.agent ./workstation.nix ];
@@ -55,6 +55,7 @@ On the server, with the admins' password file from `npm run hash-password -- adm
 services.x-nix = {
   enable = true;
   passwordHashFile = config.sops.secrets.x_nix_password_hash.path;
+  hosts.server.agent_key = "ssh-ed25519 AAAA... x-nix-agent-server";
   hosts.workstation.agent_key = "ssh-ed25519 AAAA... x-nix-agent-workstation";
   flakes.fleet.url = "github:example/nixos-config";
   deployments.server = { flake = "fleet"; configuration = "server"; };
@@ -62,7 +63,8 @@ services.x-nix = {
 };
 ```
 
-On every other machine, with a key made by `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>`:
+On every machine, with a key made by `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>`, and `ws://127.0.0.1:7720/api/agent`
+as the URL on the server's own:
 
 ```nix
 services.x-nix-agent = {
