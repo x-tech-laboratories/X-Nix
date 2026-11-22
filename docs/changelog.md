@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-22
 
+- feat(wake): turn a woken host's screen back off with screen_off, and hold off only sleep during a job
 - docs: a roadmap and a changelog in place of todo.md
 - build(deps): bump the x-tech group with 2 updates
 - build(deps): bump the npm group with 9 updates

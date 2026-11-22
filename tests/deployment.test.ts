@@ -371,7 +371,7 @@ describe("actions", () => {
     agents.add("odin", new FakeAgent());
     expect(deployment.agent_for("build")).toBe("odin");
 
-    agents.set_wake(new Map([["thor", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 60, via: null }]]));
+    agents.set_wake(new Map([["thor", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 60, via: null, screen_off: null }]]));
     agents.remove("odin");
     expect(agents.pick(["odin", "thor"])).toBe("thor");
     expect(agents.pick(["odin", "thor"], false)).toBe("odin");
@@ -616,7 +616,7 @@ describe("building elsewhere", () => {
     await built(harness);
 
     const command = shown_command(harness.deployment.running_job()!.command);
-    expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
+    expect(command).toContain("sudo -n systemd-inhibit --what=sleep --mode=block --who=X-Nix --why=switching cat");
     expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
   });
 
@@ -1310,7 +1310,7 @@ describe("live build progress", () => {
 // ── Sleeping host ────────────────────────────────────────────────────────────
 
 describe("a sleeping host that can be woken", () => {
-  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null }]]);
+  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null, screen_off: null }]]);
 
   it("gets its job at once as waking, and the run starts once its agent dials in", async () => {
     const pi = new FakeAgent();

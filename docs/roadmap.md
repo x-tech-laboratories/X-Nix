@@ -25,12 +25,3 @@ page and connecting to a remote X-Nix server signed in with the user's name and 
 Every X-app runs the X-Libs plugin host, so others can add to it without changing it. X-Nix has none yet: its hooks
 (a job started or ended, a switch verified or rolled back), its providers (where a notification goes) and a Plugins
 section on Settings, through X-Libs' `plugins`, `plugin_folder` and `server/plugin_files`.
-
-## Hosts
-
-### Waking a host with its screen off
-
-A host woken for a job, such as a phone, turns its screen on as it resumes, though nobody is looking at it. The agent
-could turn the screen back off once it has connected for a job, through a per-host command (for Phosh, asking the
-session to blank the display), and the job's inhibitor could block only sleep rather than idle too, so the screen
-stays off while the job runs.

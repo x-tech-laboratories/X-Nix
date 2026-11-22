@@ -448,7 +448,7 @@ sequenceDiagram
     end
 ```
 
-`kept_awake` makes the run hold `systemd-inhibit --what=idle:sleep cat` reading a pipe only the run holds, so the
+`kept_awake` makes the run hold `systemd-inhibit --what=sleep cat` reading a pipe only the run holds, so the
 inhibitor ends when the run ends, however it ends.
 
 ## Pull mode

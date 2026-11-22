@@ -71,6 +71,10 @@ async function kept_awake(context: Context, operation: KeptAwakeOperation): Prom
   inhibitor.on("error", warn);
   inhibitor.on("exit", (code) => (code === 0 ? (ended = true) : warn()));
   try {
+    if (operation.after_wake !== undefined) {
+      const result = await context.program(context, step_argv(operation.after_wake), { echo: true, stdout: "show" });
+      if (result.exit_code !== 0) context.out.write(`The command run after waking the host failed with status ${result.exit_code}; running the job anyway\n`);
+    }
     return await perform(context, operation.operation);
   } finally {
     ended = true;
