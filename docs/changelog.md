@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-22
 
+- test: raise the coverage floor to what the update push retry's tests reach
 - fix(update): push a github: flake's update onto the branch's new tip when the branch moved during the check
 - docs: drop the screenshot of the old Users page
 - docs(changelog): note installing the screen-off command under a fixed name
