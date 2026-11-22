@@ -289,6 +289,17 @@ describe("/api/hosts", () => {
     expect((await post({ entry: "9999" })).statusCode).toBe(409);
     expect((await post({})).statusCode).toBe(400);
   });
+  it("refuses a body that is not JSON before the route takes it for an empty one", async () => {
+    const harness = make_deployment();
+    const { server } = await start_app(harness);
+    const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } })).headers["set-cookie"]).split(";")[0];
+
+    const reply = await server.inject({ method: "POST", url: "/api/deployments/host/diff", headers: { cookie, "content-type": "application/json" }, payload: "{force" });
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.json()).toEqual({ error: "The request body is not JSON" });
+    expect(harness.agent.commands).toEqual([]);
+  });
 });
 
 // ── Caches ───────────────────────────────────────────────────────────────────

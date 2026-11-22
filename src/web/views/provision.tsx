@@ -3,6 +3,7 @@
 // media to download. A named host shows its key on its Machine tab.
 
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { JobBadge } from "@x-tech-laboratories/x-libs/web/react/jobs";
 import { Facts, FormRow, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -15,7 +16,6 @@ import {
   type Provisioning,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { JobBadge } from "../ui.tsx";
 import { forget_key } from "./hosts.tsx";
 import { error_toast, job_toast, live } from "./shared.tsx";
 
