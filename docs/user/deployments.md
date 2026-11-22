@@ -143,7 +143,7 @@ service such as a display manager. Its exit status never changes the switch's.
 
 ### Keeping the host awake
 
-When the host sets `keep_awake`, a switch or rollback holds off idle and sleep on the host from its first step,
+When the host sets `keep_awake`, a switch or rollback holds off sleep on the host from its first step,
 download included, until the job ends however it ends.
 
 ### The Nix store lock

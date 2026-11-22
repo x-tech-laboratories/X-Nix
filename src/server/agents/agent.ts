@@ -128,9 +128,14 @@ export class AgentPool {
     if (result.exit_code !== 0) throw new Error(`${via} could not send the packet: ${(result.stderr || result.stdout).trim().slice(0, 200)}`);
   }
 
-  // Whether every job on a host holds off idle and sleep until it ends.
+  // Whether every job on a host holds off sleep until it ends.
   keeps_awake(host: string | null): boolean {
     return this.kept_awake.has(host ?? this.own_host);
+  }
+
+  // The command a host runs once a job has woken it, or null.
+  screen_off(host: string | null): string | null {
+    return this.wake_settings.get(host ?? this.own_host)?.screen_off ?? null;
   }
 
   // Whether a host's agent is away and the host can be woken.

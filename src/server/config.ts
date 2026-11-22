@@ -71,7 +71,7 @@ export interface HostSettings {
   // Its agent's OpenSSH public key line; null for the server's own host, or a host X-Nix provisioned.
   agent_key: string | null;
   wake: WakeSettings | null;
-  // Whether every job on the host, and every switch activating it, holds off idle and sleep until it ends.
+  // Whether every job on the host, and every switch activating it, holds off sleep until it ends.
   keep_awake: boolean;
   interval: number;
   job_poll: number;
@@ -147,7 +147,7 @@ export interface DeploymentSettings {
   switch_agent: string | null;
   // Where Build and a switch build; elsewhere than the switching host, the build pushes the system to cache_url for the host to fetch.
   direct_on: DirectOn;
-  // Hold off idle and sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
+  // Hold off sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
   inhibit_sleep: boolean;
   target_host: string | null;
   auto_switch: boolean;
@@ -494,7 +494,10 @@ function wake_settings(entry: unknown, host: string): WakeSettings | null {
   if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
   const port = read.limit("port", 9) ?? 9;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
-  return { mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"), via: read.text("via") };
+  return {
+    mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"), via: read.text("via"),
+    screen_off: read.text("screen_off"),
+  };
 }
 
 export function cache_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): CacheSettings {

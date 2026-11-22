@@ -59,7 +59,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 
 | Kind          | Wraps an operation to…                                                                   |
 | ------------- | ---------------------------------------------------------------------------------------- |
-| `kept_awake`  | Hold `systemd-inhibit --what=idle:sleep` for as long as the inner operation runs.          |
+| `kept_awake`  | Hold `systemd-inhibit --what=sleep` for as long as the inner operation runs.          |
 | `timed`       | Stop the inner operation after a time limit, such as `eval_timeout`.                       |
 | `nix_config`  | Run the inner operation with `NIX_CONFIG` including a file, for `access_tokens_file`.       |
 
