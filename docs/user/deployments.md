@@ -120,6 +120,10 @@ The watchdog rolls back to the previous system when:
 - with `magic_rollback`, no confirmation arrives within `confirm_timeout` (plus `health_timeout` when there are health
   checks). Without `magic_rollback` an unconfirmed switch is kept.
 
+An activation that only failed to start some units (switch-to-configuration's status 4) counts as activated: the health
+checks decide, and a switch they pass is kept. Its job succeeds, and the history and the host's status warn with the
+units that failed until the host runs another system.
+
 Every refusal and rollback lands in the job and the history with its reason. On the server's own host, a confirmation
 means the X-Nix server is still running after the switch, or came back if the switch restarted it; on another host it
 means X-Nix still reaches that host's agent. Keep `confirm_timeout` well above `health_period`.
