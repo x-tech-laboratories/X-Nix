@@ -45,3 +45,6 @@ does and how to set it up.
 
 The **[developer guide](/developer/)** is for people who change X-Nix itself: how the code is laid out, how its parts
 talk to each other, what the database holds and how each long process runs, with diagrams.
+
+The **[roadmap](/roadmap/)** lists what X-Nix does not do yet, and the **[changelog](/changelog/)** every change, commit
+by commit.

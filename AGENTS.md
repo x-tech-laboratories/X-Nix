@@ -10,3 +10,10 @@
   before writing your own code: check the module table in the X-Libs README first.
 - A feature another app could use belongs in X-Libs, or Halon for styling, with tests and a README row. If that is out
   of reach, add it to the candidates in X-Libs' `docs/TODO.md`.
+
+## Roadmap and changelog
+
+- Every commit adds its own line to `docs/changelog.md` under **Unreleased**, beneath a heading for the day it was
+  made: the commit's subject line.
+- `docs/roadmap.md` lists what is not built yet. When an item ships, the same commit removes it from the roadmap and
+  describes it in the user or developer guide.
