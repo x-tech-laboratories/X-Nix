@@ -119,12 +119,14 @@ export interface WakeOperation {
 
 // ── Wrappers ─────────────────────────────────────────────────────────────────
 
-// Holds an inhibitor, a program that blocks idle and sleep until its stdin closes, for as long as the operation runs.
+// Holds an inhibitor, a program that blocks sleep until its stdin closes, for as long as the operation runs.
 export interface KeptAwakeOperation {
   kind: "kept_awake";
   inhibitor: Step;
   // Printed when the inhibitor cannot be held, before the operation runs anyway.
   warning: string;
+  // Run once the inhibitor is held, when the job woke the host; a failure is shown and the operation runs anyway.
+  after_wake?: Step;
   operation: Operation;
 }
 

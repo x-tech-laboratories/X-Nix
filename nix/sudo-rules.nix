@@ -60,12 +60,14 @@ let
       "${system_bin}/grub-reboot *"
       "${system_bin}/efibootmgr --bootnext *"
     ]
-    # inhibit_sleep's inhibitor, which holds until its stdin closes.
+    # inhibit_sleep's inhibitor, which holds until its stdin closes; the idle form is for a server not yet updated.
     ++ [
+      "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
     ]
-    # The inhibitor every job holds on a host listed under wake_on_lan.
+    # The inhibitor every job holds on a host listed under wake_on_lan; the idle form is for a server not yet updated.
     ++ [
+      "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
     ]
     # post_switch, run as root.

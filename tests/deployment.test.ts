@@ -301,6 +301,39 @@ describe("actions", () => {
     expect((await harness.deployment.act("switch")).ok).toBe(true);
   });
 
+  it("builds and switches a remote flake at the commit it evaluated, so a branch that moves meanwhile changes neither", async () => {
+    const harness = make_deployment({ flake: "github:owner/config/main", configuration: "laptop", magic_rollback: true });
+    const revision = "a".repeat(40);
+    await collect(harness, { metadata: metadata({ revision }) });
+
+    await harness.deployment.act("switch");
+
+    const command = shown_command(harness.deployment.running_job()!.command);
+    expect(command).toContain(`build --no-link`);
+    expect(command).toContain(`'github:owner/config?rev=${revision}#nixosConfigurations."laptop".config.system.build.toplevel'`);
+    expect(command).toContain(`nixos-rebuild switch --flake 'github:owner/config?rev=${revision}#laptop'`);
+    expect(command).not.toContain("github:owner/config/main");
+  });
+
+  it("switches a remote flake as it is when nothing has been evaluated yet", async () => {
+    const harness = make_deployment({ flake: "github:owner/config" });
+
+    await harness.deployment.act("switch");
+
+    expect(shown_command(harness.deployment.running_job()!.command)).toContain("nixos-rebuild switch --flake github:owner/config ");
+  });
+
+  it("switches a local checkout as it is on disk, uncommitted changes included", async () => {
+    const harness = make_deployment();
+    await collect(harness, { metadata: metadata({ revision: "a".repeat(40) }) });
+
+    await harness.deployment.act("switch");
+
+    const command = shown_command(harness.deployment.running_job()!.command);
+    expect(command).toContain("nixos-rebuild switch --flake /etc/nixos ");
+    expect(command).not.toContain("rev=");
+  });
+
   it("refuses a second job while one runs, reboot included", async () => {
     const harness = make_deployment();
     await harness.deployment.act("switch");
@@ -371,7 +404,7 @@ describe("actions", () => {
     agents.add("odin", new FakeAgent());
     expect(deployment.agent_for("build")).toBe("odin");
 
-    agents.set_wake(new Map([["thor", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 60, via: null }]]));
+    agents.set_wake(new Map([["thor", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 60, via: null, screen_off: null }]]));
     agents.remove("odin");
     expect(agents.pick(["odin", "thor"])).toBe("thor");
     expect(agents.pick(["odin", "thor"], false)).toBe("odin");
@@ -616,7 +649,7 @@ describe("building elsewhere", () => {
     await built(harness);
 
     const command = shown_command(harness.deployment.running_job()!.command);
-    expect(command).toContain("sudo -n systemd-inhibit --what=idle:sleep --mode=block --who=X-Nix --why=switching cat");
+    expect(command).toContain("sudo -n systemd-inhibit --what=sleep --mode=block --who=X-Nix --why=switching cat");
     expect(command.indexOf("systemd-inhibit")).toBeLessThan(command.indexOf("build --no-link"));
   });
 
@@ -1310,7 +1343,7 @@ describe("live build progress", () => {
 // ── Sleeping host ────────────────────────────────────────────────────────────
 
 describe("a sleeping host that can be woken", () => {
-  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null }]]);
+  const wake = (timeout: number) => new Map([["pi", { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout, via: null, screen_off: null }]]);
 
   it("gets its job at once as waking, and the run starts once its agent dials in", async () => {
     const pi = new FakeAgent();

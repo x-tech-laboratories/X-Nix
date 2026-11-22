@@ -196,9 +196,9 @@ function on_host(settings: DeploymentSettings, argv: string[], privileged: boole
 
 // ── Keeping the host awake ───────────────────────────────────────────────────
 
-// The program that holds off idle and sleep on the activated host until its stdin closes.
+// The program that holds off sleep on the activated host until its stdin closes.
 export function inhibitor_step(settings: DeploymentSettings): Step {
-  return on_host(settings, ["systemd-inhibit", "--what=idle:sleep", "--mode=block", "--who=X-Nix", "--why=switching", "cat"], true);
+  return on_host(settings, ["systemd-inhibit", "--what=sleep", "--mode=block", "--who=X-Nix", "--why=switching", "cat"], true);
 }
 
 // Runs the operation with inhibit_sleep's inhibitor held for exactly as long as it runs.

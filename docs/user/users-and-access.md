@@ -23,15 +23,20 @@ user's tokens under **Settings → Tokens**.
 
 ## Signing in
 
-Unless **Keep me signed in** is ticked, a session ends when the browser closes; ticked, it lasts until it is signed out
-from the Account page. Sessions are kept in X-Nix's database, so a restart keeps everyone signed in.
+Unless **Keep me signed in** is ticked, a session ends when the browser closes or after `signIn.sessionLifetime` (12
+hours); ticked, it lasts `signIn.rememberedLifetime` (30 days) unless signed out from the Account page first. Sessions
+are kept in X-Nix's database, so a restart keeps everyone signed in.
 
-The Account page also turns on a second factor (an authenticator app) and makes tokens for scripts.
+The Account page also turns on a second factor (an authenticator app) and makes tokens for scripts. An admin can switch
+and reboot every machine, so admins must set up a second factor: until they do, they can only read, and the Account page
+says so. `signIn.adminSecondFactor = false` (`X_NIX_ADMIN_SECOND_FACTOR=no`) lets admins act without one.
 
 ## Tokens
 
 A token from the Account page lets a script or an AI client call X-Nix as you, sent as `Authorization: Bearer <token>`.
 A token can be read-only. A token never reaches the account and user pages, and never does more than its owner may.
+A token lasts at most `signIn.tokenLifetime` (90 days), or fewer days when made so, and stops working once it ends; an
+admin without a second factor cannot make one.
 
 ## MCP
 
