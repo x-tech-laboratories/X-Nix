@@ -112,7 +112,7 @@ Long runs talk back to the server through lines in their output, which the parse
 | `@@x-nix-switch`| `switch`           | `switch_verdict()`            |
 | `@@x-nix-cache` | cache operations   | `parse_report()`              |
 | `@@x-nix-diff`  | `closure_diff`     | `parse_diff()`                |
-| `@@x-nix-stall` | the runner (`waits.ts`), `close_nix_lock_holders` | `overdue.ts`, which names what an overdue job waits for |
+| `@@x-nix-stall` | the runner (`stalls.ts`), `close_nix_lock_holders` | `overdue.ts`, which names what an overdue job waits for |
 
 ## Pull reports
 

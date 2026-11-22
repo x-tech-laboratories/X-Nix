@@ -13,7 +13,7 @@ import { theme_choice } from "@x-tech-laboratories/x-libs/web/theme";
 import { Fragment, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { accounts, changes } from "./api.ts";
-import { Sidebar } from "./sidebar.tsx";
+import { sidebar_pref, use_sidebar_sections } from "./sidebar.tsx";
 import { BuildsView } from "./views/builds.tsx";
 import { CacheView, CachesView } from "./views/cache.tsx";
 import { closure_title, ClosureView } from "./views/closure.tsx";
@@ -111,6 +111,7 @@ function App() {
   const shown = me ? page_for(route, me) : null;
   const shown_sections = sections.filter((section) => section.id !== "users" || me?.role === "admin");
   const place = sidebar_place(route);
+  const folding_sections = use_sidebar_sections(shown_sections, Boolean(me));
   const view_key = `${route.parts.join("/")}?${route.query}`;
 
   useEffect(() => {
@@ -122,7 +123,10 @@ function App() {
       key={logged_in ? "open" : "closed"}
       brand="X-Nix"
       brand_icon="/icon.svg"
-      sidebar={me && <Sidebar sections={shown_sections} section={place.section} item={place.item} />}
+      sections={folding_sections}
+      active={place.section}
+      active_item={place.item}
+      sections_pref={sidebar_pref}
       theme={theme}
       user={me?.name ?? null}
       user_href="#/account"

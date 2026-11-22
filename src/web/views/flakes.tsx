@@ -7,11 +7,12 @@ import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/rea
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
 import { toast } from "@x-tech-laboratories/x-libs/web/react/toasts";
 import { age, duration, stamp } from "@x-tech-laboratories/x-libs/web/format";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { api, type ActionOutcome, type EventRow, type Flake, type Job, type LockedInput, type Status } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
 import { StatusBadge } from "../ui.tsx";
-import { error_toast, EventsList, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
+import { error_toast, job_toast, JobsTable, MessagesList, live, short_revision } from "./shared.tsx";
 
 const status_tones: Record<Status, string> = { online: "good", info: "good", unavailable: "warn", warning: "warn", failed: "bad" };
 
@@ -114,9 +115,9 @@ export function FlakeView({ id }: { id: string }) {
             <Section title="Findings"><MessagesList messages={found.reading?.messages ?? []} /></Section>
             <Section title="Details"><Details flake={found} /></Section>
             <Section title="Used by"><UsedBy flake={found} /></Section>
-            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <><InputAges flake={found} /><InputsTable flake={found} /></>}</Section>
             <Section title="Jobs">{jobs.length === 0 ? <Empty title="No updates yet." /> : <JobsTable jobs={jobs} show_deployment={false} />}</Section>
             <Section title="Events">{events.length === 0 ? <Empty title="No events yet." /> : <EventsList events={events} />}</Section>
+            <Section title="Locked inputs">{(found.reading?.inputs.length ?? 0) === 0 ? <Empty title="Not read yet." /> : <><InputAges flake={found} /><InputsTable flake={found} /></>}</Section>
           </>}
         </Loaded>
       </Stack>

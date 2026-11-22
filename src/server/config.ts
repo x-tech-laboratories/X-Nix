@@ -7,9 +7,9 @@ import { hostname } from "node:os";
 
 import { AgentKeyError, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { read_channels, type Channel } from "@x-tech-laboratories/x-libs/server/notify/channels";
 
 import type { WakeSettings } from "./agents/wake.ts";
-import { read_channels, type Channel } from "./notifications.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 import { defer_parts, type DeferPart } from "../shared/operations.ts";
 

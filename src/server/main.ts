@@ -8,6 +8,7 @@ import { backup_naming, keep_backing_up } from "@x-tech-laboratories/x-libs/back
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
 import { json_backup_schedule } from "@x-tech-laboratories/x-libs/server/backup_routes";
 import { read_server_config } from "@x-tech-laboratories/x-libs/server/config";
+import { Notifier } from "@x-tech-laboratories/x-libs/server/notify/channels";
 import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
 import { sqlite_backups, take_staged_restore } from "@x-tech-laboratories/x-libs/server/sqlite_backups";
 
@@ -22,7 +23,6 @@ import { Deployment } from "./deployment.ts";
 import { Flake } from "./flake.ts";
 import { Host } from "./host.ts";
 import { target_attributes } from "./nixos/attic.ts";
-import { Notifier } from "./notifications.ts";
 import { OverdueJobs } from "./overdue.ts";
 import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";

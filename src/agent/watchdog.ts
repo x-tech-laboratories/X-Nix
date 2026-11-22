@@ -11,10 +11,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { lock_holders, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
+
 import type { SwitchWatch } from "../shared/operations.ts";
 import { link_target, real } from "./operations/reads.ts";
 import { spawn_program, type Context } from "./programs.ts";
-import { lock_holders, show_holders, switch_lock, type ProcessInfo } from "./waits.ts";
+import { switch_lock } from "./stalls.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
