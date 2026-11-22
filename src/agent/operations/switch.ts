@@ -38,6 +38,9 @@ const outcome_interval_in_milliseconds = 2000;
 const nix_lock_patience_in_milliseconds = 60_000;
 const nix_lock_grace_in_milliseconds = 10_000;
 
+// switch-to-configuration's status when the new system is active but some units failed to start; the health checks decide then.
+export const units_failed_status = 4;
+
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 export async function switch_system(context: Context, operation: SwitchOperation, now: () => number = () => Date.now()): Promise<number> {
@@ -101,7 +104,9 @@ export async function switch_system(context: Context, operation: SwitchOperation
     mark(`outcome ${ended.outcome}`);
     return 1;
   }
-  const { status } = ended;
+  const units_failed = ended.status === units_failed_status;
+  if (units_failed) mark("units-failed");
+  const status = units_failed ? 0 : ended.status;
   // post_switch runs whatever the activation returned, and its own status never changes the switch's.
   if (operation.post_switch !== null) await context.program(context, operation.post_switch, { echo: true });
   if (watch === null || folder === null) return status;

@@ -39,6 +39,10 @@ builds where `direct_on` says:
 | `server`           | The X-Nix server's own machine.                                                   |
 | `host`             | The machine that switches.                                                        |
 
+Only one whole system builds on a machine at a time, since a fleet's systems change together and building them all at
+once runs the machine out of memory. A Build, daily or by hand, or a switch's build waits while another one runs there,
+showing "Waiting to build on …" in its job, and starts once that build ends; Stop ends a waiting Build before it starts.
+
 `build_agent`, like a cache's `host`, may list several hosts, most preferred first: each job runs on the first whose
 agent is connected, else on the first that can be woken, so a build moves to a faster machine whenever it is up. A
 deployment whose host, `eval_agent`, `build_agent` or `switch_agent` names a host whose agent is not connected reads as
@@ -88,7 +92,8 @@ switches `github:owner/repo?rev=<commit>` (or `?ref=<tag>`), or for a git flake 
 (or `?ref=refs/tags/<tag>`); a plain checkout such as `/etc/nixos` is read as `git+file://`. A `path:` or tarball flake
 cannot be pinned.
 
-The deployment's page shows the pin, sets another, follows the branch head again, or goes back to the settings' `pin`.
+The deployment's page shows the pin and sets another once its field is left or Enter is pressed; emptying the field follows
+the branch head again, as does its button, and another button goes back to the settings' `pin`.
 The flake's Update still moves the branch, and a pinned deployment ignores pushes.
 
 ## Generations and rollback
@@ -119,6 +124,10 @@ The watchdog rolls back to the previous system when:
 - a health check keeps failing for `health_timeout`;
 - with `magic_rollback`, no confirmation arrives within `confirm_timeout` (plus `health_timeout` when there are health
   checks). Without `magic_rollback` an unconfirmed switch is kept.
+
+An activation that only failed to start some units (switch-to-configuration's status 4) counts as activated: the health
+checks decide, and a switch they pass is kept. Its job succeeds, and the history and the host's status warn with the
+units that failed until the host runs another system.
 
 Every refusal and rollback lands in the job and the history with its reason. On the server's own host, a confirmation
 means the X-Nix server is still running after the switch, or came back if the switch restarted it; on another host it
