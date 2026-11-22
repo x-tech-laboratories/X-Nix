@@ -273,8 +273,8 @@ flowchart TB
 | `jobs.tsx`       | `#/jobs`, `#/jobs/<id>`             | The job list, one job with live output and build tree.   |
 | `builds.tsx`     | `#/builds`                          | The build history and products.                          |
 | `provision.tsx`  | `#/provision`                       | Installs, agent keys, media.                             |
-| `settings.tsx`   | `#/settings`                        | Theme, about, MCP address, backups.                      |
-| X-Libs views     | `#/account`, `#/users`              | `AccountView`, `UsersView`.                              |
+| `settings.tsx`   | `#/settings` (and the old `#/users`) | Theme, about, MCP address, backups, users and tokens.    |
+| X-Libs views     | `#/account`                         | `AccountView`; Users and Tokens are `users_settings` on Settings. |
 
 ## What comes from X-Libs
 
