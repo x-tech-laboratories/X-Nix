@@ -330,7 +330,19 @@ describe("the update", () => {
     const commit = ran.find((argv) => argv.includes("commit"))!;
     expect(commit).toEqual(expect.arrayContaining(["user.name=Bot", "user.email=bot@example.com"]));
     expect(commit[commit.indexOf("-m") + 1]).toBe("build: bump inputs\n\n- nixpkgs");
+    expect(commit).not.toContain("commit.gpgsign=true");
     expect(ran.some((argv) => argv.includes("push"))).toBe(true);
+  });
+
+  it("signs a github: flake's update commit with commit_signing_key, so pull mode with allowed signers can deploy it", async () => {
+    const operation = update_operation(flake({ ...github, commit_signing_key: "/var/lib/x-nix/signing_key" })) as GithubUpdateOperation;
+    const { context, ran } = fake_context((argv) => (argv.includes("diff") ? { exit_code: 1 } : {}));
+
+    expect(operation.signing_key).toBe("/var/lib/x-nix/signing_key");
+    expect(await github_update(context, operation)).toBe(0);
+    const commit = ran.find((argv) => argv.includes("commit"))!;
+    expect(commit).toEqual(expect.arrayContaining(["gpg.format=ssh", "user.signingkey=/var/lib/x-nix/signing_key", "commit.gpgsign=true"]));
+    expect(commit.indexOf("commit.gpgsign=true")).toBeLessThan(commit.indexOf("commit"));
   });
 
   describe("landed as a pull request", () => {

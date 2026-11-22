@@ -114,6 +114,7 @@ export function update_operation(settings: FlakeSettings, attributes: string[] =
     kind: "github_update", nix: nix(settings), ssh_url: repository.ssh_url, branch: repository.branch, ssh_key: settings.push_ssh_key!,
     author_name: name.trim(), author_email: email.replace(/>\s*$/, "").trim(), message: settings.commit_message, check,
     pull_request: settings.land_update === "pull_request" ? { repository: repository.name, head: update_branch, token_file: settings.access_tokens_file! } : null,
+    signing_key: settings.commit_signing_key,
   });
 }
 

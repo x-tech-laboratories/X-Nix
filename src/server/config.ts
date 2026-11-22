@@ -102,6 +102,8 @@ export interface FlakeSettings {
   // A nix.conf file on the flake's host holding access-tokens, which nix reads when it reads or updates the flake.
   access_tokens_file: string | null;
   push_ssh_key: string | null;
+  // An SSH private key file a github: flake's update commit is signed with, so a host that only takes signed commits can deploy it.
+  commit_signing_key: string | null;
   commit_author: string;
   commit_message: string;
   check_update: CheckUpdate;
@@ -412,6 +414,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
     watch_inputs: values.watch_inputs == null ? null : read.list("watch_inputs", []),
     access_tokens_file: read.text("access_tokens_file"),
     push_ssh_key: read.text("push_ssh_key"),
+    commit_signing_key: read.text("commit_signing_key"),
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     check_update: check_update as CheckUpdate,
@@ -423,7 +426,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 }
 
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
-const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "check_update", "land_update", "max_input_age"];
+const flake_only_keys = ["update_at", "push_ssh_key", "commit_signing_key", "commit_author", "commit_message", "check_update", "land_update", "max_input_age"];
 
 // The settings of a deployment's own build, which its cache takes over when it names one.
 const cache_only_keys = ["cache_url", "build_at", "build_agent", "build_root_dir"];
