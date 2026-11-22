@@ -320,7 +320,7 @@ flowchart TD
 
     update[[Update]] --> kind{flake kind}
     kind -- "local checkout" --> local[local_update: sudo -n nix flake update<br/>into a spare lock, check it, cp it over flake.lock]
-    kind -- "github: with push_ssh_key" --> gh[github_update: clone over SSH,<br/>nix flake update, check it, commit, push]
+    kind -- "github: with push_ssh_key" --> gh[github_update: clone over SSH,<br/>nix flake update, check it, commit, push<br/>or open a pull request with land_update]
     kind -- other --> refuse([refused: no lock X-Nix can write])
 ```
 
