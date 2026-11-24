@@ -119,12 +119,14 @@ export interface WakeOperation {
 
 // ── Wrappers ─────────────────────────────────────────────────────────────────
 
-// Holds an inhibitor, a program that blocks idle and sleep until its stdin closes, for as long as the operation runs.
+// Holds an inhibitor, a program that blocks sleep until its stdin closes, for as long as the operation runs.
 export interface KeptAwakeOperation {
   kind: "kept_awake";
   inhibitor: Step;
   // Printed when the inhibitor cannot be held, before the operation runs anyway.
   warning: string;
+  // Run once the inhibitor is held, when the job woke the host; a failure is shown and the operation runs anyway.
+  after_wake?: Step;
   operation: Operation;
 }
 
@@ -240,6 +242,19 @@ export interface GithubUpdateOperation extends NixSettings {
   message: string;
   // Absent from an older server's update, which pushes unchecked.
   check?: UpdateCheck | null;
+  // Lands the commit as a pull request rather than on the branch; absent or null pushes to the branch.
+  pull_request?: UpdatePullRequest | null;
+  // An SSH private key file the commit is signed with; absent or null leaves it unsigned.
+  signing_key?: string | null;
+}
+
+// Where an update's pull request goes, and the nix.conf whose github.com access token opens it.
+export interface UpdatePullRequest {
+  // The repository's owner and name, such as "x-tech-laboratories/X-Nix".
+  repository: string;
+  // The branch the update's commit is pushed to, the pull request's head, replaced by each update.
+  head: string;
+  token_file: string;
 }
 
 // Updates a local checkout's lock into a spare file, and writes it over the checkout's own once the check passes.
@@ -336,6 +351,8 @@ export interface InstallOperation {
   agent_key_path: string | null;
   generate_hardware_config: boolean;
   stop_after_partitioning: boolean;
+  // The target's SSH host key line, which it must prove it holds before anything is sent to it; absent or null trusts whatever answers.
+  host_key?: string | null;
   extra_args: string[];
 }
 
@@ -418,17 +435,21 @@ export function show_argv(argv: Argv): string {
 
 // ── Switch folders ───────────────────────────────────────────────────────────
 
-const watch_folder_parent = "/tmp";
+// The variable naming where switch folders go, set by the agent to a folder of its own state that no other user can reach.
+export const switch_folders_variable = "X_NIX_SWITCH_FOLDERS";
+
+// Where switches kept their folders before they moved into the agent's state, and where they go when it names none.
+export const shared_watch_folder_parent = "/tmp";
 export const watch_folder_prefix = "x-nix-switch-";
 
-// The folder the watchdog and X-Nix share for one switch.
-export function watch_folder(token: string): string {
+// The folder the watchdog and X-Nix share for one switch, under the given parent.
+export function watch_folder(token: string, parent = watch_folders_parent()): string {
   if (!/^[a-f0-9]+$/.test(token)) throw new Error(`'${token}' is not a switch token`);
-  return `${watch_folder_parent}/${watch_folder_prefix}${token}`;
+  return `${parent}/${watch_folder_prefix}${token}`;
 }
 
 export function watch_folders_parent(): string {
-  return watch_folder_parent;
+  return process.env[switch_folders_variable] || shared_watch_folder_parent;
 }
 
 // ── Markers ──────────────────────────────────────────────────────────────────

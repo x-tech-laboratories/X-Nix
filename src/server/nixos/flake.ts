@@ -15,6 +15,8 @@ export function local_path(flake: string): string | null {
 }
 
 export interface GithubRepository {
+  // The owner and name, such as "x-tech-laboratories/X-Nix".
+  name: string;
   ssh_url: string;
   branch: string | null;
 }
@@ -26,7 +28,7 @@ export function github_repository(flake: string): GithubRepository | null {
   const parts = path.split("/");
   if (parts.length < 2 || !parts[0] || !parts[1]) return null;
   const ref = new URLSearchParams(query).get("ref") || parts.slice(2).join("/") || null;
-  return { ssh_url: `git@github.com:${parts[0]}/${parts[1]}.git`, branch: ref };
+  return { name: `${parts[0]}/${parts[1]}`, ssh_url: `git@github.com:${parts[0]}/${parts[1]}.git`, branch: ref };
 }
 
 // ── Pins ─────────────────────────────────────────────────────────────────────

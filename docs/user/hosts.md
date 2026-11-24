@@ -99,11 +99,39 @@ agent is away. It answers at once rather than waiting for the agent, and notes t
 | `port`      | `9`               | The UDP port the packet is sent to.                           |
 | `timeout`   | `3m`              | How long to wait for the agent before the operation fails.    |
 | `via`       | the server        | The host whose agent sends the packet with `wakeonlan`, for a host on another network. |
+| `screen_off` | none             | A shell command the agent runs, as its own user, once a job has woken the host, such as one turning a phone's screen back off. |
 
 ### Keep awake
 
-With `keep_awake` (on by default with `wake_on_lan`), every job on the host, woken or not, holds off idle and sleep
-there until it ends, so the host's own idle suspend cannot cut a build or switch short.
+With `keep_awake` (on by default with `wake_on_lan`), every job on the host, woken or not, holds off sleep there until
+it ends, so the host's own idle suspend cannot cut a build or switch short. The screen may still go dark meanwhile.
+
+A host such as a phone lights its screen as it wakes, though nobody is looking at it. With `screen_off`, a job that woke
+the host runs that command first, right after holding off sleep, so the screen goes dark again while the job runs. It
+runs only when the job itself woke the host, never on a host that was already awake, and a failure is shown in the job's
+output while the job runs anyway. It needs `keep_awake`. A download, Reboot and Set next boot wake the host without it.
+
+On a Phosh phone, a small command run as the phone's user can turn the display off without unlocking it. Install it
+under a fixed name, since the server and the phone build different store paths:
+
+```nix
+let
+  screen_off = pkgs.writeShellScriptBin "screen-off" ''
+    export XDG_RUNTIME_DIR=/run/user/1000
+    exec ${pkgs.systemd}/bin/busctl --user set-property org.gnome.Mutter.DisplayConfig \
+      /org/gnome/Mutter/DisplayConfig org.gnome.Mutter.DisplayConfig PowerSaveMode i 3
+  '';
+in {
+  environment.systemPackages = [ screen_off ];
+  security.sudo.extraRules = [{
+    users = [ "x-nix-agent" ];
+    runAs = "phone-user";
+    commands = [{ command = "/run/current-system/sw/bin/screen-off"; options = [ "NOPASSWD" ]; }];
+  }];
+}
+```
+
+and on the server, `wake_on_lan.screen_off = "sudo -n -u phone-user /run/current-system/sw/bin/screen-off"`.
 
 ## Settings
 
@@ -111,9 +139,9 @@ there until it ends, so the host's own idle suspend cannot cut a build or switch
 | -------------- | --------------------- | ----------------------------------------------------------------- |
 | `id`           | required              | The name the host's agent logs in as.                             |
 | `name`         | the id                | What the page calls it.                                           |
-| `agent_key`    | none                  | Its agent's public key line (see [Agents](/user/agents/)); none for the server's own host. |
+| `agent_key`    | none                  | Its agent's public key line (see [Agents](/user/agents/)); the server's own host needs none only with `localAgent`. |
 | `wake_on_lan`  | none                  | Its MAC address, or the Wake-on-LAN settings above.               |
-| `keep_awake`   | `true` with `wake_on_lan` | Hold off idle and sleep on the host through every job.        |
+| `keep_awake`   | `true` with `wake_on_lan` | Hold off sleep on the host through every job.                 |
 | `interval`     | `5m`                  | How often the store and boot entries are read.                    |
 | `job_poll`     | `30s`                 | How often a running collection is read.                           |
 | `require_sudo` | `true`                | Run switch, rollback, reboot, Collect Garbage, Set next boot and `post_switch` under `sudo -n`. |

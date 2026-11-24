@@ -25,8 +25,9 @@ Raise `protocol_version` when an agent and a server of different versions could 
 4. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
    name; on failure the socket closes with one of X-Libs' `close_codes`.
 
-The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host never connects:
-it is served by the in-process `LocalAgent`, which implements the same `Agent` interface.
+The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host connects the same
+way over `ws://127.0.0.1`, unless `localAgent` has the in-process `LocalAgent` serve it, which implements the same
+`Agent` interface.
 
 ## Requests
 
@@ -58,7 +59,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 
 | Kind          | Wraps an operation to…                                                                   |
 | ------------- | ---------------------------------------------------------------------------------------- |
-| `kept_awake`  | Hold `systemd-inhibit --what=idle:sleep` for as long as the inner operation runs.          |
+| `kept_awake`  | Hold `systemd-inhibit --what=sleep` for as long as the inner operation runs.          |
 | `timed`       | Stop the inner operation after a time limit, such as `eval_timeout`.                       |
 | `nix_config`  | Run the inner operation with `NIX_CONFIG` including a file, for `access_tokens_file`.       |
 
@@ -112,7 +113,7 @@ Long runs talk back to the server through lines in their output, which the parse
 | `@@x-nix-switch`| `switch`           | `switch_verdict()`            |
 | `@@x-nix-cache` | cache operations   | `parse_report()`              |
 | `@@x-nix-diff`  | `closure_diff`     | `parse_diff()`                |
-| `@@x-nix-stall` | the runner (`waits.ts`), `close_nix_lock_holders` | `overdue.ts`, which names what an overdue job waits for |
+| `@@x-nix-stall` | the runner (`stalls.ts`), `close_nix_lock_holders` | `overdue.ts`, which names what an overdue job waits for |
 
 ## Pull reports
 

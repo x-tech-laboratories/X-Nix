@@ -38,6 +38,11 @@ let
       "${system_bin}/kill -TERM *"
       "${system_bin}/kill -KILL *"
     ]
+    # Long runs, each a transient unit of its own, and stopping one.
+    ++ [
+      "${system_bin}/systemd-run --unit\\=x-nix-run-* *"
+      "${system_bin}/systemctl stop x-nix-run-*"
+    ]
     # Reboot, and Collect Garbage with whatever gc_args the deployment sets.
     ++ [
       "${system_bin}/systemctl reboot"
@@ -55,12 +60,14 @@ let
       "${system_bin}/grub-reboot *"
       "${system_bin}/efibootmgr --bootnext *"
     ]
-    # inhibit_sleep's inhibitor, which holds until its stdin closes.
+    # inhibit_sleep's inhibitor, which holds until its stdin closes; the idle form is for a server not yet updated.
     ++ [
+      "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
     ]
-    # The inhibitor every job holds on a host listed under wake_on_lan.
+    # The inhibitor every job holds on a host listed under wake_on_lan; the idle form is for a server not yet updated.
     ++ [
+      "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
     ]
     # post_switch, run as root.

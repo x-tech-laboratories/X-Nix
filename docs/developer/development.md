@@ -26,6 +26,7 @@ machine to see readings.
 | `npm run build`         | `tsc -b` over every target, then `vite build` into `dist/`. |
 | `npm start`             | The server in production mode, serving `dist/`.         |
 | `npm test`              | `vitest run`.                                           |
+| `npm run coverage`      | The tests with coverage; raises the floor in `vite.config.ts`, which only rises. |
 | `npm run lint`          | `oxlint`.                                               |
 | `npm run hash-password` | Adds a user to the password file.                       |
 
@@ -48,8 +49,10 @@ Run one file with `npx vitest run tests/deployment.test.ts`, or one test with `-
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push to `main` and every pull request: `npm ci`, `npm run build`, `npm test`,
-`npm run lint`. `main` changes only through pull requests with passing CI.
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request: `npm ci`, `npm audit signatures`,
+`npm run build`, `npm run coverage`, a check that any raised coverage floor is committed, and `npm run lint`. `main`
+changes only through pull requests with passing CI. Dependabot's X-Libs and Halon bumps merge on their own only when
+npm's provenance shows they were built from our own repositories (`.github/scripts/check-provenance.mjs`).
 
 `.github/workflows/pages.yml` builds this documentation site from `docs/` with the X-Libs site framework and publishes
 it to GitHub Pages on every push to `main` that touches `docs/`.

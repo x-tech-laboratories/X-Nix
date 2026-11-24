@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -78,16 +78,28 @@ describe("agent hub", () => {
   let key: { private_file: string; public_line: string };
   let agent: RunningAgent | null;
   let processes: ChildProcess[];
+  let agent_log: string[];
+  let log_waiters: (() => void)[];
 
   const connected = (host = "odin") => new Promise<void>((resolve) => {
     if (hub.is_connected(host)) resolve();
     hub.on("connect", (status) => status.host === host && resolve());
   });
 
+  // Resolves once the agent logs that the hub hung up on it for holding the wrong key.
+  const refused = () => new Promise<void>((resolve) => {
+    const check = () => agent_log.some((line) => line.includes(`(${close_codes.bad_key}:`)) ? resolve() : log_waiters.push(check);
+    check();
+  });
+
   function start_test_agent(private_file = key.private_file, host = "odin"): RunningAgent {
+    const log = (line: string) => {
+      agent_log.push(line);
+      for (const waiter of log_waiters.splice(0)) waiter();
+    };
     agent = start_agent({
       url, key_file: private_file, state_directory, host, agent_version: "test",
-      backoff_initial_in_milliseconds: 50, backoff_longest_in_milliseconds: 200, log: () => {},
+      backoff_initial_in_milliseconds: 50, backoff_longest_in_milliseconds: 200, log,
     });
     return agent;
   }
@@ -98,6 +110,8 @@ describe("agent hub", () => {
     key = make_key(folder, "odin");
     agent = null;
     processes = [];
+    agent_log = [];
+    log_waiters = [];
     const local = new LocalAgent(join(folder, "local"), { runner: operation_runner });
     pool = new AgentPool("heimdall", local);
     hub = create_hub(pool, local);
@@ -139,23 +153,26 @@ describe("agent hub", () => {
   });
 
   it("leaves the pool when the agent hangs up, and keeps a long run going for it to report on its return", async () => {
+    // The run waits for this file, so it is still going when the agent returns however slowly either starts.
+    const gate = join(folder, "go");
     start_test_agent();
     await connected();
-    await pool.get("odin").start("odin-sleep", shell("sleep 1; echo done"));
+    await pool.get("odin").start("odin-gated", shell(`until [ -e ${gate} ]; do sleep 0.05; done; echo done`));
     const gone = new Promise((resolve) => hub.once("disconnect", resolve));
     await agent!.stop();
     await gone;
-    await expect(pool.get("odin").poll("odin-sleep", 0)).rejects.toMatchObject({ unreachable: true });
+    await expect(pool.get("odin").poll("odin-gated", 0)).rejects.toMatchObject({ unreachable: true });
 
     start_test_agent();
     await connected();
-    // A slow machine may take a while to finish the run, so it is asked again until it has.
-    let output = "";
-    for (let tries = 0; tries < 50 && !/\ndone\n$/.test(output); tries++) {
-      await sleep(200);
-      output = (await pool.get("odin").poll("odin-sleep", 0)).new_output;
+    expect((await pool.get("odin").poll("odin-gated", 0)).alive).toBe(true);
+    writeFileSync(gate, "");
+    let poll = await pool.get("odin").poll("odin-gated", 0);
+    while (poll.alive) {
+      await sleep(25);
+      poll = await pool.get("odin").poll("odin-gated", 0);
     }
-    expect(output).toMatch(/\ndone\n$/);
+    expect([poll.exit_code, poll.new_output]).toEqual([0, expect.stringMatching(/\ndone\n$/)]);
   });
 
   it("starts the agent process from its environment", async () => {
@@ -172,7 +189,7 @@ describe("agent hub", () => {
     let connections = 0;
     hub.on("connect", () => connections++);
     start_test_agent(make_key(folder, "other").private_file);
-    await sleep(400);
+    await refused();
     expect(connections).toBe(0);
 
     expect(hub.admit({ [key_host_header]: "thor" })).toEqual({ error: "Host 'thor' has no declared agent key." });
@@ -198,8 +215,49 @@ describe("agent hub", () => {
     const gone = new Promise((resolve) => hub.once("disconnect", resolve));
     hub.set_agent_keys(new Map([["odin", make_key(folder, "replacement").public_line]]));
     await gone;
-    await sleep(300);
+    await refused();
     expect(hub.is_connected("odin")).toBe(false);
+  });
+});
+
+describe("server without a built-in agent", () => {
+  let app: FastifyInstance;
+  let agent: RunningAgent | null = null;
+
+  afterEach(async () => {
+    await agent?.stop();
+    agent = null;
+    await app.close();
+  });
+
+  it("reaches its own host through that host's agent once it dials in, and loses it when it goes", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "x-nix-own-"));
+    const key = make_key(folder, "heimdall");
+    const pool = new AgentPool("heimdall", null);
+    const hub = create_hub(pool, null);
+    hub.set_agent_keys(new Map([["heimdall", key.public_line]]));
+    app = fastify();
+    await register_agent_route(app, hub);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    const url = `ws://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}/api/agent`;
+
+    expect(pool.has_own_agent).toBe(false);
+    expect((await pool.get(null).run(shell("echo hi"), { timeout_in_seconds: 5 })).stderr).toBe("No agent named 'heimdall' is connected");
+
+    const joined = new Promise<void>((resolve) => hub.on("connect", (status) => status.host === "heimdall" && resolve()));
+    agent = start_agent({
+      url, key_file: key.private_file, state_directory: join(folder, "agent"), host: "heimdall", agent_version: "test",
+      backoff_initial_in_milliseconds: 50, backoff_longest_in_milliseconds: 200, log: () => {},
+    });
+    await joined;
+    expect((await pool.get(null).run({ kind: "programs", steps: [{ argv: ["echo", "own host"] }] }, { timeout_in_seconds: 5 })).stdout).toBe("own host");
+
+    const gone = new Promise((resolve) => hub.once("disconnect", resolve));
+    await agent.stop();
+    agent = null;
+    await gone;
+    expect((await pool.get(null).run(shell("echo hi"), { timeout_in_seconds: 5 })).exit_code).toBe(-1);
   });
 });
 

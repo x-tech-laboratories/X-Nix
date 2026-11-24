@@ -6,7 +6,7 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import type { JsonSchema, ParamSpec } from "@x-tech-laboratories/x-libs/api_spec";
+import { route_openapi_document, type JsonSchema, type ParamSpec } from "@x-tech-laboratories/x-libs/api_spec";
 import { register_mcp_route, route_tools, type RouteToolSpec } from "@x-tech-laboratories/x-libs/server/mcp";
 import type { FastifyInstance } from "fastify";
 
@@ -209,5 +209,8 @@ const instructions =
 // ── Route ────────────────────────────────────────────────────────────────────
 
 export async function register_mcp(app: FastifyInstance, version: string): Promise<void> {
-  await app.register(async (scope) => register_mcp_route(scope, { name: "x-nix", version, instructions, ...route_tools(app, routes) }), { prefix: "/api" });
+  await app.register(async (scope) => {
+    await register_mcp_route(scope, { name: "x-nix", version, instructions, ...route_tools(app, routes) });
+    scope.get("/openapi.json", async () => route_openapi_document(routes, { title: "X-Nix", version, description: instructions }));
+  }, { prefix: "/api" });
 }

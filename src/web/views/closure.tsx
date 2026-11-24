@@ -5,10 +5,12 @@ import { Meters } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { Crumbs, PageHeading, Section, Stack, Tabs, Tile, Tiles } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
+import { Tree } from "@x-tech-laboratories/x-libs/web/react/tree";
 import { bytes } from "@x-tech-laboratories/x-libs/web/format";
 import { link } from "@x-tech-laboratories/x-libs/web/router";
 import { useState } from "react";
 import { api, type ClosurePath, type ClosureTree, type Host } from "../api.ts";
+import { opened_after, shown_rows, type PathRow } from "../closure_rows.ts";
 
 // How many paths the largest-paths table lists.
 const largest_count = 25;
@@ -63,7 +65,7 @@ function ClosureBody({ tree }: { tree: ClosureTree }) {
     </Tiles>
     <p className="muted small path">{tree.root}</p>
     <Section title="Dependency tree" tools={<span className="muted small">Each path's own size, then its closure size; children from the largest closure down.</span>}>
-      <div className="tree"><TreeNode tree={tree} index={0} opened /></div>
+      <ClosureTreeView tree={tree} />
     </Section>
     <Section title={`Largest ${largest.length} paths by own size`}>
       <LargestMeters largest={largest.slice(0, meter_count)} root={root} />
@@ -93,23 +95,29 @@ function LargestMeters({ largest, root }: { largest: ClosurePath[]; root: Closur
 
 // ── Tree ─────────────────────────────────────────────────────────────────────
 
-// One path of the tree; its children are drawn the first time it is opened, as a closure repeats paths many times over.
-function TreeNode({ tree, index, opened = false }: { tree: ClosureTree; index: number; opened?: boolean }) {
-  const [drawn, set_drawn] = useState(opened);
-  const path = tree.paths[index];
-  const label = <>
-    <span className="tree-name" title={path.path}>{path_name(path.path)}</span>
-    <span className="muted small closure-sizes">{`${bytes(path.nar_size)} · ${bytes(path.closure_size)}`}</span>
-  </>;
-  if (path.references.length === 0) return <div className="tree-file">{label}</div>;
-  const ordered = drawn ? [...path.references].sort((first, second) => tree.paths[second].closure_size - tree.paths[first].closure_size) : [];
+// The dependency tree, each path's references listed only once it is opened.
+function ClosureTreeView({ tree }: { tree: ClosureTree }) {
+  const [opened, set_opened] = useState<ReadonlySet<string>>(() => new Set(["0"]));
+  const rows = shown_rows(tree, opened);
+  const has_references = (row: PathRow) => tree.paths[row.index].references.length > 0;
+  const collapsed = new Set(rows.filter((row) => has_references(row) && !opened.has(row.id)).map((row) => row.id));
   return (
-    <details className="tree-folder" open={opened} onToggle={(event) => {
-      if (event.currentTarget.open) set_drawn(true);
-    }}>
-      <summary>{label}<span className="muted small"> {path.references.length} references</span></summary>
-      <div className="tree-children">{ordered.map((child) => <TreeNode key={child} tree={tree} index={child} />)}</div>
-    </details>
+    <Tree
+      items={rows}
+      label="Dependency tree"
+      name_of={(row) => path_name(tree.paths[row.index].path)}
+      has_children={has_references}
+      collapsed={collapsed}
+      on_collapsed_change={(next) => set_opened(opened_after(opened, rows, next, has_references))}
+      render_item={(row) => {
+        const path = tree.paths[row.index];
+        return <>
+          <span className="tree-name" title={path.path}>{path_name(path.path)}</span>
+          <span className="muted small closure-sizes">{`${bytes(path.nar_size)} · ${bytes(path.closure_size)}`}</span>
+          {path.references.length > 0 && <span className="muted small"> {path.references.length} references</span>}
+        </>;
+      }}
+    />
   );
 }
 

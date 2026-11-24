@@ -500,6 +500,8 @@ export interface InstallRecord {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
+  // The target's host key the install checked first; absent from an older install.
+  host_key?: string | null;
   public_line: string | null;
   agent_key_path: string;
 }
