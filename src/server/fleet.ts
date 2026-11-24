@@ -61,6 +61,8 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  // The jobs a stop ended while they ran, whose hosts read as skipped rather than failed; absent before any was.
+  stopped_jobs?: number[];
   // How long each finished stage soaks, and whether the next needs approval; absent from runs started before either was kept.
   soak?: number;
   approve?: boolean;
@@ -96,6 +98,8 @@ export interface FleetOptions {
   settings: FleetSettings;
   // Asks the deployment's cycle to come soon, so a started job or a switch's evaluation is followed quickly.
   poke?: (deployment: Deployment) => void;
+  // Stops a running job, for a stop that also ends the jobs already running; such a stop is refused without it.
+  stop_job?: (job_id: number, by: string) => Promise<{ ok: boolean; message: string }>;
   // The time in seconds, which tests set.
   now?: () => number;
 }
@@ -129,6 +133,7 @@ export class Fleet {
   private readonly deployments: Map<string, Deployment>;
   private readonly store: Store;
   private readonly poke: (deployment: Deployment) => void;
+  private readonly stop_job: FleetOptions["stop_job"];
   private readonly now: () => number;
   private timer: NodeJS.Timeout | undefined;
   // Advances run one at a time.
@@ -139,6 +144,7 @@ export class Fleet {
     this.store = options.store;
     this.settings = options.settings;
     this.poke = options.poke ?? (() => {});
+    this.stop_job = options.stop_job;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -215,16 +221,41 @@ export class Fleet {
     return { ok: true, message: `Fleet run #${id} started on ${picked.length} deployment${picked.length === 1 ? "" : "s"}`, run: this.run(id) };
   }
 
-  // Skips every host not yet started; the run ends once those already running have.
-  stop(id: number): Promise<FleetOutcome> {
+  // Skips every host not yet started; the run ends once those already running have, or, with jobs, stops their jobs too.
+  stop(id: number, options: { jobs?: boolean; by?: string } = {}): Promise<FleetOutcome> {
     return this.serial(async () => {
       const run = this.run(id);
       if (run === null) return { ok: false, message: `No fleet run #${id}`, run: null };
       if (run.state !== "running") return { ok: false, message: `Fleet run #${id} has already ended`, run };
+      if (options.jobs === true && this.stop_job === undefined) return { ok: false, message: "This server cannot stop jobs", run };
       run.stop_requested = true;
+      const failures = options.jobs === true ? await this.stop_running_jobs(run, options.by ?? "manual") : [];
       await this.advance_run(run);
-      return { ok: true, message: `Fleet run #${id} is stopping`, run: this.run(id) };
+      const message = options.jobs === true ? `Fleet run #${id} is stopping, with its running jobs` : `Fleet run #${id} is stopping`;
+      return { ok: failures.length === 0, message: [message, ...failures].join("; "), run: this.run(id) };
     });
+  }
+
+  // Stops the job of every host still running, all at once, and answers with why any could not be stopped; a Build still
+  // held for its host ends there, before it has a run.
+  private async stop_running_jobs(run: FleetRun, by: string): Promise<string[]> {
+    const running = run.hosts.filter((host) => host.state === "running" && host.job_id !== null);
+    const stop = async (host: FleetHost) => {
+      const held = await this.deployments.get(host.deployment_id)?.stop_held_build(host.job_id!, by);
+      return held ?? this.stop_job!(host.job_id!, by);
+    };
+    const outcomes = await Promise.all(running.map(async (host) => ({ host, outcome: await stop(host) })));
+    const failures: string[] = [];
+    for (const { host, outcome } of outcomes) {
+      if (!outcome.ok) {
+        failures.push(`${host.name}: ${outcome.message}`);
+        continue;
+      }
+      run.stopped_jobs = [...(run.stopped_jobs ?? []), host.job_id!];
+      const deployment = this.deployments.get(host.deployment_id);
+      if (deployment !== undefined) this.poke(deployment);
+    }
+    return failures;
   }
 
   // Lets a run held for approval start its next stage, once any soak still running has passed.
@@ -360,6 +391,7 @@ export class Fleet {
       host.message = job.progress;
       return;
     }
+    if (job.state === "failed" && run.stopped_jobs?.includes(job.id)) return this.finish_host(host, "skipped", job.error ?? "Stopped", now);
     if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? "The job failed", now);
     const outcome = run.action === "switch" ? switch_verdict(job.output).outcome : null;
     if (outcome?.kind === "deferred") return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);

@@ -300,6 +300,7 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  stopped_jobs?: number[];
   soak?: number;
   approve?: boolean;
   // The finished stage the run holds at, soaking or waiting for approval.
