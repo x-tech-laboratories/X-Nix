@@ -10,6 +10,11 @@ version.
 
 ## Unreleased
 
+### 2026-11-24
+
+- docs(changelog): note stop a job still waking its host
+- fix(jobs): stop a job still waking its host
+
 ### 2026-11-22
 
 - test: raise the coverage floor to what the update push retry's tests reach
