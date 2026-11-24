@@ -6,7 +6,7 @@ import { perform } from "../src/agent/operations/index.ts";
 import { spawn_program, type Context } from "../src/agent/programs.ts";
 import { AgentPool, type Agent } from "../src/server/agents/agent.ts";
 import { job_inhibitor, kept_awake_job, magic_packet, send_magic_packet, wake_operation, type WakeSettings } from "../src/server/agents/wake.ts";
-import { start_run } from "../src/server/runs.ts";
+import { start_run, stop_job, track_wake } from "../src/server/runs.ts";
 import { ConfigError, host_settings, parse_config } from "../src/server/config.ts";
 import { Host } from "../src/server/host.ts";
 import { Store } from "../src/server/store.ts";
@@ -129,6 +129,28 @@ describe("the Wake action", () => {
 
     expect(await host.act("wake")).toMatchObject({ ok: false, message: "Could not wake thor: no route" });
     expect(await plain_host.act("wake")).toMatchObject({ ok: false, message: expect.stringContaining("wake_on_lan is unset") });
+  });
+});
+
+describe("stopping a job that waits on its host to wake", () => {
+  it("calls the run off, so it never starts, and fails the job as stopped", async () => {
+    const operations: Operation[] = [];
+    const pool = new AgentPool("server", fake_agent("server"), async () => {});
+    pool.set_wake(new Map([["thor", { ...thor, timeout: 5 }]]));
+    const store = new Store(":memory:");
+    const job_id = store.create_job({ deployment_id: "thor-deploy", kind: "build", command: "{}", agent: "thor", run_id: "run-1", trigger: "admin", started_epoch: 100 });
+    const { waking } = await start_run(pool, "thor", "run-1", plain);
+    track_wake(store, job_id, "thor", waking!, () => 200);
+
+    const outcome = await stop_job(store, pool, job_id, "admin", () => 150);
+    await waking!.catch(() => {});
+    pool.add("thor", fake_agent("thor", operations));
+
+    expect(outcome).toEqual({ ok: true, message: `Stopped job #${job_id} before it started`, job_id });
+    expect(store.job(job_id)).toMatchObject({ state: "failed", error: "Stopped by admin", finished_epoch: 200 });
+    expect(store.events("thor-deploy").map((event) => event.message)).toEqual([`admin stopped job #${job_id} (build) before its host woke`]);
+    expect(pool.is_starting("run-1")).toBe(false);
+    expect(operations).toEqual([]);
   });
 });
 

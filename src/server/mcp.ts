@@ -121,7 +121,11 @@ export const routes: Record<string, RouteToolSpec> = {
     ],
   },
   get_fleet_run: { route: "GET /api/fleet/runs/:id", description: "Shows one fleet run and how far each deployment in it got.", params: [{ name: "id", schema: whole }] },
-  stop_fleet_run: { route: "POST /api/fleet/runs/:id/stop", description: "Stops a fleet run from starting any more deployments.", params: [{ name: "id", schema: whole }] },
+  stop_fleet_run: {
+    route: "POST /api/fleet/runs/:id/stop",
+    description: "Stops a fleet run from starting any more deployments; jobs true also stops the jobs of the deployments still running, as stop_job does.",
+    params: [{ name: "id", schema: whole }, { name: "jobs", schema: { type: "boolean" }, optional: true }],
+  },
   approve_fleet_run: {
     route: "POST /api/fleet/runs/:id/approve", description: "Lets a staged fleet run waiting for approval start its next stage.", params: [{ name: "id", schema: whole }],
   },

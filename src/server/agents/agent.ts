@@ -20,6 +20,16 @@ export type Agent = Pick<XLibsAgent<Operation>, "run" | "start" | "poll" | "stop
 
 const wake_command_timeout_in_seconds = 30;
 
+// Why a long run waiting on its host to wake never started: someone stopped it first.
+export class StoppedBeforeStart extends Error {
+  readonly by: string;
+
+  constructor(by: string) {
+    super(`Stopped by ${by} before the host woke`);
+    this.by = by;
+  }
+}
+
 // ── Pool ─────────────────────────────────────────────────────────────────────
 
 // An agent for a host with none connected, which answers every request as unreachable.
@@ -60,8 +70,8 @@ export class AgentPool {
   private kept_awake = new Set<string>();
   // Who waits on each host's agent to dial in after waking it.
   private readonly waiting = new Map<string, Set<() => void>>();
-  // The long runs waiting on their host to wake before they start.
-  private readonly starting = new Set<string>();
+  // The long runs waiting on their host to wake before they start, each with how to call it off.
+  private readonly starting = new Map<string, (by: string) => void>();
   // Who stopped each long run, until the job following it has finished.
   private readonly stopped = new Map<string, string>();
 
@@ -161,11 +171,26 @@ export class AgentPool {
   }
 
   // Wakes a host and starts a long run on it, counting the run as starting until then; rejects with why it did not start.
+  // A stop while it waits calls it off, rejecting with StoppedBeforeStart; once the host is awake the run starts.
   start_when_awake(host: string | null, run_id: string, operation: Operation, stdin: string | null = null): Promise<void> {
-    this.starting.add(run_id);
-    return this.awake(host)
-      .then(async (agent) => void (await agent.start(run_id, operation, { stdin })))
+    const called_off = new Promise<never>((_resolve, reject) => {
+      this.starting.set(run_id, (by) => reject(new StoppedBeforeStart(by)));
+    });
+    return Promise.race([this.awake(host), called_off])
+      .then(async (agent) => {
+        this.starting.delete(run_id);
+        await agent.start(run_id, operation, { stdin });
+      })
       .finally(() => this.starting.delete(run_id));
+  }
+
+  // Calls off a long run still waiting on its host to wake, so it never starts; false when it is not waiting.
+  call_off(run_id: string, by: string): boolean {
+    const call_off = this.starting.get(run_id);
+    if (call_off === undefined) return false;
+    this.starting.delete(run_id);
+    call_off(by);
+    return true;
   }
 
   // Whether a long run waits on its host to wake before it starts.
