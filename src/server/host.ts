@@ -25,9 +25,9 @@ import type { Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
-export type HostActionId = "collect" | "reboot";
+export type HostActionId = "collect" | "reboot" | "wake";
 
-export const host_action_ids: HostActionId[] = ["collect", "reboot"];
+export const host_action_ids: HostActionId[] = ["collect", "reboot", "wake"];
 
 // What the last cycle read from the host.
 export interface HostReading {
@@ -110,6 +110,10 @@ export class Host {
 
   // Why an action cannot run now, or null when it can.
   action_refusal(action: HostActionId): string | null {
+    if (action === "wake") {
+      if (this.settings.wake === null) return "Wake-on-LAN is not set up for this host; its wake_on_lan is unset";
+      return this.agents.can_wake(this.name) ? null : "The host's agent is already connected";
+    }
     if (action === "collect" && this.settings.gc === null) return "The store is not watched on this host; its gc is off";
     if (this.running_job() !== null) return "A collection is already running on this host";
     return null;
@@ -215,6 +219,7 @@ export class Host {
       const refusal = this.action_refusal(action);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       if (action === "reboot") return this.reboot(trigger);
+      if (action === "wake") return this.wake(trigger);
       const { unreachable: _, ...outcome } = await this.collect(trigger);
       return outcome;
     });
@@ -246,6 +251,19 @@ export class Host {
     const message = trigger === "schedule" ? "Scheduled collection started" : "Collection started";
     this.store.add_event(this.id, this.now(), "info", message);
     return { ok: true, message, job_id, unreachable: false };
+  }
+
+  // Sends the wake packet and answers at once; the host reads as online once its agent dials in.
+  private async wake(trigger: string): Promise<HostActionOutcome> {
+    try {
+      await this.agents.wake(this.name);
+    } catch (error) {
+      const message = `Could not wake ${this.name}: ${error instanceof Error ? error.message : String(error)}`;
+      this.store.add_event(this.id, this.now(), "error", message);
+      return { ok: false, message, job_id: null };
+    }
+    this.store.add_event(this.id, this.now(), "info", `${trigger} sent a wake-on-LAN packet`);
+    return { ok: true, message: `Sent ${this.name} a wake-on-LAN packet; it shows as connected once its agent dials in`, job_id: null };
   }
 
   // A reboot runs as a command rather than a job that would die with the host.

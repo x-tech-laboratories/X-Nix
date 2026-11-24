@@ -6,8 +6,10 @@ import { perform } from "../src/agent/operations/index.ts";
 import { spawn_program, type Context } from "../src/agent/programs.ts";
 import { AgentPool, type Agent } from "../src/server/agents/agent.ts";
 import { job_inhibitor, kept_awake_job, magic_packet, send_magic_packet, wake_operation, type WakeSettings } from "../src/server/agents/wake.ts";
-import { start_run } from "../src/server/runs.ts";
-import { ConfigError, parse_config } from "../src/server/config.ts";
+import { start_run, stop_job, track_wake } from "../src/server/runs.ts";
+import { ConfigError, host_settings, parse_config } from "../src/server/config.ts";
+import { Host } from "../src/server/host.ts";
+import { Store } from "../src/server/store.ts";
 import type { Operation } from "../src/shared/operations.ts";
 
 const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null, screen_off: null };
@@ -95,6 +97,61 @@ describe("waking a host through the pool", () => {
 
     await expect((await quiet.awake("thor")).start("run", plain)).rejects.toMatchObject({ unreachable: true, message: expect.stringMatching(/did not connect within 1 second/) });
     expect((await (await failing.awake("thor")).run(plain, { timeout_in_seconds: 5 })).stderr).toBe("Could not wake thor: no route");
+  });
+});
+
+describe("the Wake action", () => {
+  function make_thor(send: () => Promise<void>) {
+    const pool = new AgentPool("server", fake_agent("server"), send);
+    pool.set_wake(new Map([["thor", thor]]));
+    const store = new Store(":memory:");
+    const host = new Host(host_settings({ id: "thor", wake_on_lan: thor.mac }), { store, agents: pool, now: () => 100 });
+    return { pool, store, host };
+  }
+
+  it("sends the packet and answers at once, then is refused once the agent is connected", async () => {
+    let sent = 0;
+    const { pool, store, host } = make_thor(async () => void sent++);
+
+    const outcome = await host.act("wake", "admin");
+    pool.add("thor", fake_agent("thor"));
+
+    expect(outcome).toMatchObject({ ok: true, job_id: null });
+    expect(sent).toBe(1);
+    expect(store.events("host:thor").map((event) => event.message)).toEqual(["admin sent a wake-on-LAN packet"]);
+    expect(host.action_refusal("wake")).toBe("The host's agent is already connected");
+  });
+
+  it("says why the packet could not be sent, and is refused on a host with no wake_on_lan", async () => {
+    const { host } = make_thor(async () => {
+      throw new Error("no route");
+    });
+    const plain_host = new Host(host_settings({ id: "odin" }), { store: new Store(":memory:"), agents: new AgentPool("server", fake_agent("server")), now: () => 100 });
+
+    expect(await host.act("wake")).toMatchObject({ ok: false, message: "Could not wake thor: no route" });
+    expect(await plain_host.act("wake")).toMatchObject({ ok: false, message: expect.stringContaining("wake_on_lan is unset") });
+  });
+});
+
+describe("stopping a job that waits on its host to wake", () => {
+  it("calls the run off, so it never starts, and fails the job as stopped", async () => {
+    const operations: Operation[] = [];
+    const pool = new AgentPool("server", fake_agent("server"), async () => {});
+    pool.set_wake(new Map([["thor", { ...thor, timeout: 5 }]]));
+    const store = new Store(":memory:");
+    const job_id = store.create_job({ deployment_id: "thor-deploy", kind: "build", command: "{}", agent: "thor", run_id: "run-1", trigger: "admin", started_epoch: 100 });
+    const { waking } = await start_run(pool, "thor", "run-1", plain);
+    track_wake(store, job_id, "thor", waking!, () => 200);
+
+    const outcome = await stop_job(store, pool, job_id, "admin", () => 150);
+    await waking!.catch(() => {});
+    pool.add("thor", fake_agent("thor", operations));
+
+    expect(outcome).toEqual({ ok: true, message: `Stopped job #${job_id} before it started`, job_id });
+    expect(store.job(job_id)).toMatchObject({ state: "failed", error: "Stopped by admin", finished_epoch: 200 });
+    expect(store.events("thor-deploy").map((event) => event.message)).toEqual([`admin stopped job #${job_id} (build) before its host woke`]);
+    expect(pool.is_starting("run-1")).toBe(false);
+    expect(operations).toEqual([]);
   });
 });
 

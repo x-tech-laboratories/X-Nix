@@ -80,6 +80,9 @@ hand, on a schedule or by a fleet run.
 **These never wake a host:** the periodic read, evaluation and cache check. A sleeping host reads as unavailable until
 something wakes it.
 
+**Wake** on the host's page (and `run_host_action` with `wake` over MCP) sends the packet on its own, while the host's
+agent is away. It answers at once rather than waiting for the agent, and notes the wake in the host's history.
+
 `wake_on_lan` is the host's MAC address, or an object of these settings:
 
 ```json

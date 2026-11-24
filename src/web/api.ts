@@ -26,7 +26,7 @@ export type JobKind =
   | "build-all" | "push" | "next-boot" | "install" | "media";
 export type JobState = "running" | "succeeded" | "failed";
 export type ActionId = "build" | "switch" | "reboot" | "boot" | "test" | "dry-activate";
-export type HostActionId = "collect" | "reboot";
+export type HostActionId = "collect" | "reboot" | "wake";
 
 export interface Message {
   level: EventLevel;
@@ -300,6 +300,7 @@ export interface FleetRun {
   state: FleetRunState;
   current_stage: number;
   stop_requested: boolean;
+  stopped_jobs?: number[];
   soak?: number;
   approve?: boolean;
   // The finished stage the run holds at, soaking or waiting for approval.

@@ -43,7 +43,9 @@ export const routes: Record<string, RouteToolSpec> = {
   refresh_host: { route: "POST /api/hosts/:name/refresh", description: "Reads a host's store and boot entries again now, and answers with the host.", params: [host] },
   run_host_action: {
     route: "POST /api/hosts/:name/actions/:action",
-    description: "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine.",
+    description:
+      "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine, " +
+      "and wake sends a sleeping host its wake-on-LAN packet without waiting for it to come up.",
     params: [host, { name: "action", schema: one_of(host_action_ids) }],
   },
   list_host_runs: {
@@ -129,7 +131,11 @@ export const routes: Record<string, RouteToolSpec> = {
     ],
   },
   get_fleet_run: { route: "GET /api/fleet/runs/:id", description: "Shows one fleet run and how far each deployment in it got.", params: [{ name: "id", schema: whole }] },
-  stop_fleet_run: { route: "POST /api/fleet/runs/:id/stop", description: "Stops a fleet run from starting any more deployments.", params: [{ name: "id", schema: whole }] },
+  stop_fleet_run: {
+    route: "POST /api/fleet/runs/:id/stop",
+    description: "Stops a fleet run from starting any more deployments; jobs true also stops the jobs of the deployments still running, as stop_job does.",
+    params: [{ name: "id", schema: whole }, { name: "jobs", schema: { type: "boolean" }, optional: true }],
+  },
   approve_fleet_run: {
     route: "POST /api/fleet/runs/:id/approve", description: "Lets a staged fleet run waiting for approval start its next stage.", params: [{ name: "id", schema: whole }],
   },

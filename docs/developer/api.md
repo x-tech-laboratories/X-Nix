@@ -78,7 +78,7 @@ A token is sent as `Authorization: Bearer xn_…`. A read-only token can only ma
 | `GET /api/fleet/select`           | `?selector=`: the deployment ids a selector picks.           |
 | `POST /api/fleet/runs`            | `{ action, selector or ids, staged?, stages?, parallel? }`: starts a run. |
 | `GET /api/fleet/runs/:id`         | One run.                                                     |
-| `POST /api/fleet/runs/:id/stop`   | Stops a run after its running hosts.                         |
+| `POST /api/fleet/runs/:id/stop`   | Stops a run after its running hosts; `{jobs: true}` stops their jobs too. |
 
 ### Caches
 

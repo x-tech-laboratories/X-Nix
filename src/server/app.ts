@@ -346,11 +346,12 @@ function cache_view(cache: Cache, store_state: Store, deployments: Iterable<Depl
   };
 }
 
-const host_action_labels: Record<HostActionId, string> = { collect: "Collect garbage", reboot: "Reboot" };
+const host_action_labels: Record<HostActionId, string> = { collect: "Collect garbage", reboot: "Reboot", wake: "Wake" };
 
-const host_confirmations: Record<HostActionId, (name: string) => string> = {
+const host_confirmations: Record<HostActionId, (name: string) => string | null> = {
   collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
+  wake: () => null,
 };
 
 function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: string | null): HostView {
@@ -376,7 +377,8 @@ function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: s
     reading: host.reading(),
     state: host.state(),
     running_job: host.running_job(),
-    actions: host_action_ids.map((id) => ({ id: id as ActionId, label: host_action_labels[id], refusal: host.action_refusal(id), confirm: host_confirmations[id](settings.name) })),
+    // Wake is offered only on a host that can be woken.
+    actions: host_action_ids.filter((id) => id !== "wake" || settings.wake !== null).map((id) => ({ id: id as ActionId, label: host_action_labels[id], refusal: host.action_refusal(id), confirm: host_confirmations[id](settings.name) })),
     next_boot_refusal: host.next_boot_refusal(host.reading()?.boot?.entries[0]?.id ?? ""),
     system: reading === null ? null : { current: reading.current, booted: reading.booted, version: reading.version, reboot_required: reading.reboot_required },
     deployments: deployments.map(({ settings: { id, name } }) => ({ id, name })),
@@ -447,7 +449,11 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   register_error_replies(app, { format: "json", not_found_text: "Not found", not_found: !options.serve_web, log_failure: (message, error) => app.log.error(error, message) });
   // An empty body counts as no arguments, and one that is not JSON is refused before any route takes it for empty.
   register_lenient_json_body(app, { refuse_bad_json: "json" });
-  const fleet = options.fleet ?? new Fleet(poller.deployments, { store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment) });
+  const { agents } = options;
+  const fleet = options.fleet ?? new Fleet(poller.deployments, {
+    store, settings: fleet_settings(undefined), poke: (deployment) => poller.soon(deployment),
+    stop_job: agents === undefined ? undefined : (job_id, by) => stop_job(store, agents, job_id, by, () => Math.floor(Date.now() / 1000)),
+  });
   await register_auth(app, options.accounts, options.store.sql, options.sign_in);
   if (options.hub !== undefined) await register_agent_route(app, options.hub);
   if (options.webhook !== undefined) await register_webhook_route(app, options.webhook);
@@ -686,8 +692,9 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     return run ?? reply.code(404).send({ error: "No such fleet run" });
   });
 
-  app.post<{ Params: { id: string } }>("/api/fleet/runs/:id/stop", async (request, reply) => {
-    const outcome = await fleet.stop(Number(request.params.id));
+  // Skips the hosts not yet started, and with `jobs` true also stops the jobs of those running.
+  app.post<{ Params: { id: string }; Body: { jobs?: unknown } | undefined }>("/api/fleet/runs/:id/stop", async (request, reply) => {
+    const outcome = await fleet.stop(Number(request.params.id), { jobs: request.body?.jobs === true, by: started_by(request.viewer) });
     return reply.code(outcome.ok ? 200 : outcome.run === null ? 404 : 409).send(outcome);
   });
 
