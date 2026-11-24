@@ -1,4 +1,4 @@
-// The charts several pages share: jobs per day by outcome, a timeline of each owner's jobs, and the samples kept over time.
+// The charts several pages share: jobs per hour or day by outcome, a timeline of each owner's jobs, and the samples kept over time.
 
 import { Donut, StackedBarChart, Timeline, type Stack, type TimelineRow } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { duration } from "@x-tech-laboratories/x-libs/web/format";
@@ -6,6 +6,15 @@ import { api, type Job, type JobState, type Metric, type Sample } from "../api.t
 import { job_owner_link } from "./shared.tsx";
 
 export const day_in_seconds = 86400;
+const hour_in_seconds = 3600;
+
+// The spans the job charts can cover, each cut into hours or days.
+export type Period = "day" | "week";
+
+export const periods: Record<Period, { label: string; seconds: number; bucket: "hour" | "day" }> = {
+  day: { label: "Last 24 hours", seconds: day_in_seconds, bucket: "hour" },
+  week: { label: "Last 7 days", seconds: 7 * day_in_seconds, bucket: "day" },
+};
 
 export function now_seconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -13,9 +22,9 @@ export function now_seconds(): number {
 
 // ── Loading ──────────────────────────────────────────────────────────────────
 
-// Every job started in the last few days, newest first.
-export function load_recent_jobs(days: number): Promise<Job[]> {
-  return api<Job[]>(`/api/jobs?since=${now_seconds() - days * day_in_seconds}&limit=5000`);
+// Every job started in the period, newest first.
+export function load_recent_jobs(period: Period): Promise<Job[]> {
+  return api<Job[]>(`/api/jobs?since=${now_seconds() - periods[period].seconds}&limit=5000`);
 }
 
 // The samples of these metrics, everyone's or one owner's, from the last few days.
@@ -54,28 +63,33 @@ export function OutcomeDonut({ jobs, title }: { jobs: Job[]; title: string }) {
   );
 }
 
-// The jobs started each day over the last few days, stacked by outcome.
-export function JobsPerDay({ jobs, days }: { jobs: Job[]; days: number }) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const first = today.getTime() / 1000 - (days - 1) * day_in_seconds;
-  const stacks: Stack[] = Array.from({ length: days }, (_, index) => {
-    const from = first + index * day_in_seconds;
-    const inside = jobs.filter((job) => job.started_epoch >= from && job.started_epoch < from + day_in_seconds);
+// The jobs started each hour or day of the period, stacked by outcome.
+export function JobsOverTime({ jobs, period }: { jobs: Job[]; period: Period }) {
+  const { seconds, bucket } = periods[period];
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  if (bucket === "day") start.setHours(0);
+  const size = bucket === "day" ? day_in_seconds : hour_in_seconds;
+  const count = seconds / size;
+  const first = start.getTime() / 1000 - (count - 1) * size;
+  const stacks: Stack[] = Array.from({ length: count }, (_, index) => {
+    const from = first + index * size;
+    const inside = jobs.filter((job) => job.started_epoch >= from && job.started_epoch < from + size);
+    const date = new Date(from * 1000);
     return {
-      label: new Date(from * 1000).toLocaleDateString(undefined, { weekday: "short" }),
+      label: bucket === "day" ? date.toLocaleDateString(undefined, { weekday: "short" }) : date.toLocaleTimeString(undefined, { hour: "2-digit" }),
       parts: outcome_parts.map(([state, label, color]) => ({ label, color, value: inside.filter((job) => job.state === state).length })),
     };
   });
-  return <StackedBarChart title={`Jobs per day, last ${days} days`} stacks={stacks} legend={outcome_legend} format={(value) => String(Math.round(value))} />;
+  return <StackedBarChart title={`Jobs per ${bucket}`} stacks={stacks} legend={outcome_legend} format={(value) => String(Math.round(value))} />;
 }
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
 
 // One lane per deployment, host, cache or flake, each job a span in its outcome's color.
-export function JobTimeline({ jobs, days }: { jobs: Job[]; days: number }) {
+export function JobTimeline({ jobs, period }: { jobs: Job[]; period: Period }) {
   const now = now_seconds();
-  const from = now - days * day_in_seconds;
+  const from = now - periods[period].seconds;
   const by_owner = new Map<string, Job[]>();
   for (const job of jobs) by_owner.set(job.deployment_id, [...(by_owner.get(job.deployment_id) ?? []), job]);
   const rows: TimelineRow[] = [...by_owner].sort(([first], [second]) => first.localeCompare(second)).map(([owner, owned]) => ({
@@ -86,5 +100,5 @@ export function JobTimeline({ jobs, days }: { jobs: Job[]; days: number }) {
       return { start: job.started_epoch, end, color: outcome_color(job.state), title: `${job.kind} #${job.id} ${job.state}, took ${duration(Math.max(0, end - job.started_epoch))}` };
     }),
   }));
-  return <Timeline title={`Jobs, last ${days} days`} rows={rows} from={from} to={now} legend={outcome_legend} message="No jobs in this period." />;
+  return <Timeline title="Jobs by owner" rows={rows} from={from} to={now} legend={outcome_legend} message="No jobs in this period." />;
 }

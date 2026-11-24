@@ -5,6 +5,7 @@ import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { Meters, Sparkline } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { SearchBox, Switch } from "@x-tech-laboratories/x-libs/web/react/controls";
+import { EventsList } from "@x-tech-laboratories/x-libs/web/react/events_list";
 import { Crumbs, Facts, PageHeading, Section, SelectionBar, Stack, Tabs, Toolbar, type Fact } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -23,7 +24,7 @@ import { BootTab, load_boot } from "./boot.tsx";
 import { load_samples, points_of } from "./charts.tsx";
 import { action_labels, RunsTable } from "./fleet.tsx";
 import {
-  ActionButton, error_toast, EventsList, HostActionButton, live, short_revision, TagChips, WaitingOn,
+  ActionButton, error_toast, HostActionButton, live, short_revision, TagChips, WaitingOn,
 } from "./shared.tsx";
 import { last_collection_tone, load_store, store_used_color, StoreTab } from "./store.tsx";
 import { GenerationsSection, load_system, SystemTab, type SystemData } from "./system.tsx";

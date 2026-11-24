@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 
 import { build_app } from "../src/server/app.ts";
 import { hash_password } from "../src/server/auth.ts";
+import { routes } from "../src/server/mcp.ts";
 import { Poller } from "../src/server/poller.ts";
 import { make_deployment } from "./fake_agent.ts";
 
@@ -92,5 +93,21 @@ describe("/api/mcp", () => {
 
     const refused = await rpc(reader, "tools/call", { name: "refresh_deployment", arguments: { id } });
     expect(refused).toEqual({ isError: true, content: [{ type: "text", text: "This token can only read." }] });
+  });
+});
+
+// ── OpenAPI ──────────────────────────────────────────────────────────────────
+
+describe("/api/openapi.json", () => {
+  it("describes every route the tools run, to a signed-in caller only", async () => {
+    const { viewer } = await start_app();
+
+    expect((await app!.inject({ method: "GET", url: "/api/openapi.json" })).statusCode).toBe(401);
+    const reply = await app!.inject({ method: "GET", url: "/api/openapi.json", headers: viewer });
+    const document = reply.json<{ openapi: string; info: { title: string }; paths: Record<string, Record<string, { operationId: string }>> }>();
+    expect(document).toMatchObject({ openapi: "3.1.0", info: { title: "X-Nix" } });
+    const operations = Object.values(document.paths).flatMap((verbs) => Object.values(verbs).map((operation) => operation.operationId));
+    expect(operations.sort()).toEqual(Object.keys(routes).sort());
+    expect(document.paths["/api/deployments/{id}/actions/{action}"]!.post).toMatchObject({ operationId: "run_deployment_action" });
   });
 });

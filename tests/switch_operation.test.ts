@@ -9,7 +9,7 @@ import { confirm_switch, signal_rollback, switch_system } from "../src/agent/ope
 import { spawn_program, type Context, type ProgramResult, type RunProgram } from "../src/agent/programs.ts";
 import { watch_switch } from "../src/agent/watchdog.ts";
 import { switch_verdict } from "../src/server/nixos/switch.ts";
-import { watch_folder, type SwitchOperation, type SwitchWatch } from "../src/shared/operations.ts";
+import { switch_folders_variable, watch_folder, watch_folders_parent, type SwitchOperation, type SwitchWatch } from "../src/shared/operations.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +89,42 @@ describe("a switch on the agent", () => {
     expect(status).toBe(5);
     expect(ran.map((argv) => argv[0])).toEqual(["/bin/sh", "nixos-rebuild", "/bin/sh"]);
   });
+
+  it("keeps a system whose activation only failed to start some units, naming them", async () => {
+    const failed = { exit_code: 4, stdout: "warning: the following units failed: borgmatic.service, nginx.service\n" };
+    const { context, output } = fake_context((argv) => (argv[0] === "nixos-rebuild" ? failed : {}));
+
+    const status = await switch_system(context, plain_switch());
+
+    expect(status).toBe(0);
+    expect(switch_verdict(output()).units_failed).toBe("borgmatic.service, nginx.service");
+  });
+
+  it("leaves a guarded switch with failed units to its health checks, keeping it when they pass", async () => {
+    const watched = watch({ token: token(), require_sudo: false, activation_timeout: 1, confirm_window: 1, health_commands: ["true"] });
+    const { context, output } = fake_context((argv) => (argv[0] === "nixos-rebuild" ? { exit_code: 4 } : {}));
+
+    const status = await switch_system(context, plain_switch({ watch: watched }));
+
+    const verdict = switch_verdict(output());
+    expect([verdict.activated, verdict.awaiting_confirmation, verdict.units_failed]).toEqual([true, true, "units it did not name"]);
+    expect(verdict.outcome?.kind).toBe("kept");
+    expect(status).toBe(0);
+  }, 20_000);
+
+  it("still rolls back a switch with failed units whose health check fails", async () => {
+    const watched = watch({ token: token(), require_sudo: false, health_commands: ["curl -f localhost"], health_timeout: 0 });
+    const { context, output } = fake_context((argv) => {
+      if (argv[0] === "nixos-rebuild") return { exit_code: 4 };
+      return argv[2] === "curl -f localhost" ? { exit_code: 1, stdout: "nginx is down\n" } : {};
+    });
+
+    await switch_system(context, plain_switch({ watch: watched }));
+
+    const verdict = switch_verdict(output());
+    expect(verdict.awaiting_confirmation).toBe(false);
+    expect(verdict.outcome?.reason).toContain("Health check 1 (curl -f localhost) failed with status 1: nginx is down");
+  }, 20_000);
 
   it("fetches from the cache before its watchdog starts, so a slow download leaves the activation its whole time", async () => {
     const watched = watch({ token: token(), require_sudo: false, activation_timeout: 1, confirm_window: 1 });
@@ -226,6 +262,32 @@ describe("the files X-Nix writes for the watchdog", () => {
 
     expect(existsSync(join(watch_folder(value), "confirmed"))).toBe(true);
     expect(readFileSync(join(watch_folder(value), "rollback"), "utf8")).toBe("HTTP check failed: 'quoted' $reason\n");
+  });
+
+  it("go in the folder the agent names, and still reach a switch an older agent left in /tmp", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "x-nix-switches-"));
+    folders.push(parent);
+    const before = process.env[switch_folders_variable];
+    process.env[switch_folders_variable] = join(parent, "switches");
+    try {
+      const value = token();
+      const older = watch_folder(value, "/tmp");
+      folders.push(older);
+      mkdirSync(older);
+      const { context } = fake_context();
+
+      expect(watch_folders_parent()).toBe(join(parent, "switches"));
+      expect(await confirm_switch(context, { kind: "confirm_switch", token: value })).toBe(0);
+      expect(existsSync(join(older, "confirmed"))).toBe(true);
+
+      mkdirSync(watch_folder(value), { recursive: true });
+      expect(await signal_rollback(context, { kind: "signal_rollback", token: value, reason: "failed" })).toBe(0);
+      expect(existsSync(join(watch_folder(value), "rollback"))).toBe(true);
+      expect(existsSync(join(older, "rollback"))).toBe(false);
+    } finally {
+      if (before === undefined) delete process.env[switch_folders_variable];
+      else process.env[switch_folders_variable] = before;
+    }
   });
 
   it("fail once the switch's folder is gone", async () => {

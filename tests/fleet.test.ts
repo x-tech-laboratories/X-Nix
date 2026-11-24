@@ -116,7 +116,10 @@ describe("a pinned flake", () => {
 
 describe("a fleet run", () => {
   it("acts on what the selector picks, no more at once than parallel allows", async () => {
-    const { fleet, harnesses, agent } = make_fleet([{ id: "web-1" }, { id: "web-2" }, { id: "web-3" }, { id: "db-1" }]);
+    // Each builds on a machine of its own, since builds on one machine wait for each other.
+    const ids = ["web-1", "web-2", "web-3", "db-1"];
+    const { fleet, harnesses, agent } = make_fleet(ids.map((id) => ({ id, build_agent: [`${id}-builder`] })));
+    for (const id of ids) harnesses.get(id)!.agents.add(`${id}-builder`, agent);
 
     const outcome = await fleet.start({ action: "build", selector: "web-*", parallel: 2 }, "admin");
 

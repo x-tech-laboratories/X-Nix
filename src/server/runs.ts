@@ -116,8 +116,10 @@ export async function forget_agent_run(store: Store, agents: AgentPool, host: st
 export async function start_run(
   agents: AgentPool, host: string | null, run_id: string, operation: Operation, stdin: string | null = null, wake = true,
 ): Promise<{ waking: Promise<void> | null }> {
-  const running = agents.keeps_awake(host) ? kept_awake_job(operation) : operation;
-  if (wake && agents.can_wake(host)) return { waking: agents.start_when_awake(host, run_id, running, stdin) };
+  const waking = wake && agents.can_wake(host);
+  // Only a host this job wakes turns its screen back off, never one someone may be using.
+  const running = agents.keeps_awake(host) ? kept_awake_job(operation, waking ? agents.screen_off(host) : null) : operation;
+  if (waking) return { waking: agents.start_when_awake(host, run_id, running, stdin) };
   await agents.get(host).start(run_id, running, { stdin });
   return { waking: null };
 }

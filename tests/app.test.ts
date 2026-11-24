@@ -51,6 +51,34 @@ describe("/api/health", () => {
     expect(answer.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(answer.server_name).toBe("workstation");
   });
+
+  it("keeps the page to its own scripts and out of other sites' frames", async () => {
+    const { server } = await start_app();
+
+    const response = await server.inject({ method: "GET", url: "/api/health" });
+
+    expect(response.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+  });
+});
+
+describe("sign-in limits", () => {
+  it("has an admin without a second factor only read, and gives tokens the longest lifetime", async () => {
+    const harness = make_deployment();
+    const poller = new Poller([harness.deployment], null, [], [], [], []);
+    app = await build_app({
+      serve_web: false, logger: false, server_name: "workstation", accounts, store: harness.store, poller,
+      sign_in: { session_seconds: 3600, remembered_seconds: 86400, token_days: 90, admin_second_factor: true },
+    });
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    expect((await app.inject({ method: "GET", url: "/api/deployments", headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/api/deployments/host-deploy/actions/reboot", headers })).json()).toEqual({
+      error: "Set up a second factor on your account page before making changes.",
+    });
+    expect((await app.inject({ method: "GET", url: "/api/me", headers })).json()).toMatchObject({ second_factor_needed: true, longest_token_days: 90 });
+  });
 });
 
 // ── Flakes ───────────────────────────────────────────────────────────────────
@@ -146,6 +174,19 @@ describe("/api/jobs/:id/stop", () => {
     expect((await inject("POST", "/api/jobs/999/stop")).statusCode).toBe(404);
   });
 
+  it("stops a Build held behind another system's build before its run starts", async () => {
+    const harness = make_deployment();
+    harness.store.create_job({ deployment_id: "other", kind: "build", command: "{}", agent: "host", run_id: "other-build", trigger: "automatic", started_epoch: 0 });
+    const { inject } = await start_app(harness, [], [], [], harness.agents);
+    const { job_id } = (await inject("POST", "/api/deployments/host-deploy/actions/build")).json<{ job_id: number }>();
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    expect(stopped.statusCode).toBe(200);
+    expect(harness.store.job(job_id)).toMatchObject({ state: "failed", error: "admin stopped it before it started" });
+    expect(harness.agent.last_run("build")).toBeUndefined();
+  });
+
   it("leaves a run that ended on its own with its own outcome", async () => {
     const harness = make_deployment();
     const { inject } = await start_app(harness, [], [], [], harness.agents);
@@ -238,6 +279,8 @@ describe("logging in", () => {
 
     expect((await server.inject({ method: "GET", url: "/api/deployments", headers })).statusCode).toBe(200);
     expect((await server.inject({ method: "POST", url: "/api/deployments/host-deploy/actions/reboot", headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "GET", url: "/api/builds/1/products/0", headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "GET", url: "/api/provisioning/media/1/download?path=nixos.iso", headers })).statusCode).toBe(403);
   });
 
   it("ends the session on signing out", async () => {
@@ -310,6 +353,17 @@ describe("/api/hosts", () => {
     expect(harness.agent.ran("sudo -n efibootmgr --bootnext 0003")).toBe(true);
     expect((await post({ entry: "9999" })).statusCode).toBe(409);
     expect((await post({})).statusCode).toBe(400);
+  });
+  it("refuses a body that is not JSON before the route takes it for an empty one", async () => {
+    const harness = make_deployment();
+    const { server } = await start_app(harness);
+    const cookie = String((await server.inject({ method: "POST", url: "/api/login", payload: { name: "admin", password } })).headers["set-cookie"]).split(";")[0];
+
+    const reply = await server.inject({ method: "POST", url: "/api/deployments/host/diff", headers: { cookie, "content-type": "application/json" }, payload: "{force" });
+
+    expect(reply.statusCode).toBe(400);
+    expect(reply.json()).toEqual({ error: "The request body is not JSON" });
+    expect(harness.agent.commands).toEqual([]);
   });
 });
 

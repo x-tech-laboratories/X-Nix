@@ -61,5 +61,6 @@ have). X-Nix shows how long drift has lasted and can switch by itself once it ha
 ## Where things run
 
 X-Nix runs every command on a machine through that machine's **agent**, a small service that dials out to the X-Nix
-server. The server's own machine needs no agent; the server does its work itself. Some settings move work to another
+server, the server's own machine included, so the server itself runs nothing as root; with `localAgent` on, it does the
+work on its own machine itself instead. Some settings move work to another
 machine: `eval_agent` evaluates on a bigger machine, `build_agent` builds there, and a cache builds for many.

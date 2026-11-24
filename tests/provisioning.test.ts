@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { generate_agent_key, parse_private_key, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
 
+import { host_key_check } from "../src/agent/operations/provision.ts";
 import { run_operation } from "../src/agent/run.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { build_app, type ProvisioningView } from "../src/server/app.ts";
@@ -27,8 +28,10 @@ const folder = mkdtempSync(join(tmpdir(), "x-nix-provisioning-"));
 
 const request: InstallRequest = {
   host: "freya", address: "192.0.2.10", user: "root", port: 22, flake: "github:owner/fleet", configuration: "freya",
-  agent: null, stop_after_partitioning: false, generate_hardware_config: true,
+  agent: null, stop_after_partitioning: false, generate_hardware_config: true, host_key: null,
 };
+
+const host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleHostKeyForXNixTestsOnly000000000000";
 
 function settings(values: Record<string, unknown> = {}) {
   return provisioning_settings({ ssh_key: "/var/lib/x-nix/install_key", agent_url: "wss://nix.example/api/agent", ...values });
@@ -78,6 +81,14 @@ describe("an install request", () => {
     expect(parse_install_request({ ...request, address: "a;b" })).toContain("SSH address");
     expect(parse_install_request({ ...request, port: 70000 })).toContain("port");
     expect(parse_install_request({ ...request, flake: "two\nlines" })).toContain("flake");
+  });
+
+  it("takes the target's host key as ssh-keyscan prints it, and refuses anything else", () => {
+    expect(parse_install_request({ ...request, host_key: `192.0.2.10 ${host_key}` })).toMatchObject({ host_key });
+    expect(parse_install_request({ ...request, host_key: `${host_key} root@freya` })).toMatchObject({ host_key });
+    expect(parse_install_request({ ...request, host_key: "" })).toMatchObject({ host_key: null });
+    expect(parse_install_request({ ...request, host_key: "ssh-ed25519 not;base64" })).toContain("host key");
+    expect(parse_install_request({ ...request, host_key: "just words" })).toContain("host key");
   });
 });
 
@@ -156,6 +167,29 @@ describe("the install script", () => {
     expect(arguments_given).toContain("--phases\nkexec,disko");
     expect(arguments_given).not.toContain("--extra-files");
     expect(arguments_given).not.toContain("--generate-hardware-config");
+  });
+
+  it("first has the target prove it holds the host key given, and sends nothing when it does not", async () => {
+    const directory = mkdtempSync(join(folder, "host-key-"));
+    const ssh_key = join(directory, "ssh_key");
+    writeFileSync(ssh_key, "not a real key", { mode: 0o600 });
+    const bin = fake_nixos_anywhere(directory);
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${directory}/ssh-arguments"\necho "Host key verification failed." >&2\nexit 255\n`);
+    chmodSync(join(bin, "ssh"), 0o755);
+    const operation = install_operation(settings({ ssh_key }), { ...request, host_key }, generate_agent_key("x-nix-agent-freya").public_line);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      const ran = await run_install(operation, "key", bin);
+
+      expect(ran.status).toBe(255);
+      expect(ran.stdout).toContain("did not prove it holds the host key");
+      expect(existsSync(join(directory, "arguments"))).toBe(false);
+      expect(readFileSync(join(directory, "ssh-arguments"), "utf8")).toContain("StrictHostKeyChecking=yes");
+    } finally {
+      process.env.PATH = path;
+    }
+    expect(host_key_check(operation, "/tmp/known_hosts").slice(-4)).toEqual(["-p", "22", "root@192.0.2.10", "true"]);
   });
 
   it("says plainly when nixos-anywhere is missing or the SSH key unreadable", async () => {

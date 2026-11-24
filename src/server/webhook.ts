@@ -13,7 +13,7 @@ import type { FastifyInstance } from "fastify";
 
 import { read_secret_file } from "@x-tech-laboratories/x-libs/server/config";
 import {
-  AddressLockout, Debouncer, event_of, is_signed, parse_payload, read_push as read_forge_push, register_webhook_route as register_forge_route,
+  AddressLockout, Debouncer, SeenDeliveries, event_of, is_signed, parse_payload, read_push as read_forge_push, register_webhook_route as register_forge_route,
   type Push, type WebhookAnswer,
 } from "@x-tech-laboratories/x-libs/server/forge_webhook";
 
@@ -95,6 +95,7 @@ export class Webhook {
   private readonly now: () => number;
   private readonly debounce: Debouncer;
   private readonly lockout = new AddressLockout();
+  private readonly seen = new SeenDeliveries();
 
   constructor(options: WebhookOptions) {
     this.options = options;
@@ -110,6 +111,8 @@ export class Webhook {
       return { status: 401, body: { message: "The delivery is not signed with the webhook secret" } };
     }
     this.lockout.succeed(address);
+    // A signed delivery sent again, by the forge retrying or by anyone who caught it, is taken only once.
+    if (this.seen.is_replay(body)) return { status: 200, body: { message: "Already received this delivery" } };
     const event = event_of(headers);
     if (event === "ping") return { status: 200, body: { message: "Pong" } };
     if (event !== "push" && event !== "push hook") return { status: 202, body: { message: `Ignored the ${event} event`, matched: [] } };

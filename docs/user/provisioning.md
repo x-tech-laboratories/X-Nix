@@ -19,6 +19,11 @@ You give the new host's name, the target's SSH address, user and port, the flake
 nixos-anywhere. The install starts only once you type the target's address to confirm that its disks will be wiped. It
 runs as a job, keeps running if X-Nix restarts, and lands in the job history.
 
+nixos-anywhere trusts whatever host key the target shows, so anyone between you and the target could take the new host's
+agent key. Give the target's **SSH host key**, a line from `ssh-keyscan <address>`, and the target must first prove it
+holds that key before anything is sent to it. The installer the target boots into has keys of its own, which
+nixos-anywhere still does not check.
+
 **This erases the target's disks.** For that reason it is only on the page: the MCP tools cannot install.
 
 ### What a full install gives you
@@ -43,9 +48,9 @@ The page builds install media for a deployment or any flake and attribute:
 - a **kexec tarball**.
 
 It builds the configuration's own `system.build.isoImage`, `netbootRamdisk` or `kexecTarball` when it has one, and
-otherwise the configuration extended with nixpkgs' installer module. Media is built on the server's own machine and
+otherwise the configuration extended with nixpkgs' installer module. Media is built on the server's own machine by its agent and
 linked under `media_root_dir`, so it stays in the store until you remove it from the page. Each file downloads from the
-page.
+page, for admins only, since a system can have secrets built into it.
 
 ## Settings
 
@@ -61,5 +66,5 @@ The config's `provisioning` object:
 | `agent_url`           | none                      | The server's agent address, for the snippets the page shows.         |
 | `nix_bin`             | `nix`                     | The nix program media builds run.                                    |
 | `nix_args`            | flakes enabled            | Arguments before every nix command.                                  |
-| `media_root_dir`      | `<state dir>/media`       | Where each built medium is linked.                                   |
+| `media_root_dir`      | `/var/lib/x-nix-media` with the module, else `<state dir>/media` | Where each built medium is linked; the agent writes it and the server removes links from it. |
 | `job_poll`            | `30s`                     | How often a running install or media build is read.                  |

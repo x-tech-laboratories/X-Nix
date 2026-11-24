@@ -1,6 +1,6 @@
 // A deployment's own operations: evaluating the host's toplevel, building it, asking whether the cache holds it,
 // comparing two closures, and updating a flake's lock: a local checkout's in place, or a github: flake's with a commit
-// pushed back, each only once the new lock evaluates.
+// pushed back or opened as a pull request, each only once the new lock evaluates.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 
 import {
   diff_mark, eval_mark, fresh_lookup, is_store_path, show_argv, toplevel, unfetchable_exit_code, type BuildOperation, type CacheHoldsOperation,
-  type ClosureDiffOperation, type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck,
+  type ClosureDiffOperation, type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck, type UpdatePullRequest,
 } from "../../shared/operations.ts";
 import { on_path, type Context } from "../programs.ts";
 
@@ -120,7 +120,7 @@ export async function closure_diff(context: Context, operation: ClosureDiffOpera
 // ── Update ───────────────────────────────────────────────────────────────────
 
 // Clones the flake's repository, updates its lock and pushes a commit back once the check passes, as the agent's user rather than root.
-export async function github_update(context: Context, operation: GithubUpdateOperation): Promise<number> {
+export async function github_update(context: Context, operation: GithubUpdateOperation, fetcher: typeof fetch = fetch): Promise<number> {
   const folder = mkdtempSync(join(tmpdir(), "x-nix-update-"));
   const repository = join(folder, "repo");
   // Host keys come from the system known_hosts, so an unpinned github.com fails rather than being trusted.
@@ -144,15 +144,106 @@ export async function github_update(context: Context, operation: GithubUpdateOpe
     }
     const message = [operation.message, "", ...updated_inputs(updated)].join("\n");
     const identity = ["-c", `user.name=${operation.author_name}`, "-c", `user.email=${operation.author_email}`];
-    const committed = await git(["-C", repository, ...identity, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
+    const signing = operation.signing_key == null ? [] : ["-c", "gpg.format=ssh", "-c", `user.signingkey=${operation.signing_key}`, "-c", "commit.gpgsign=true"];
+    const commit = () => git(["-C", repository, ...identity, ...signing, "commit", "--quiet", "-m", message, "--", "flake.lock"]);
+    const base = (await git(["-C", repository, "rev-parse", "HEAD"], { stdout: "keep" })).stdout.trim();
+    const committed = await commit();
     if (committed.exit_code !== 0) return committed.exit_code;
-    const pushed = await git(["-C", repository, "push", "origin", "HEAD"]);
-    if (pushed.exit_code !== 0) return pushed.exit_code;
-    await git(["-C", repository, "log", "--oneline", "-1"]);
-    return 0;
+    if (operation.pull_request != null) return await land_as_pull_request(context, operation.pull_request, repository, git, message, fetcher);
+    return await push_onto_tip(context, repository, git, base, commit);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
+}
+
+const push_attempts = 3;
+
+// Pushes the update's commit. A push refused because the branch moved during the check is put on the branch's new tip
+// and pushed again, as long as the branch's own lock is still the one the update started from: the checked lock then
+// replaces an unchanged lock, so the check still holds. A branch whose lock changed is left to the next update.
+async function push_onto_tip(
+  context: Context, repository: string, git: (args: string[], options?: { stdout?: "show" | "keep" }) => Promise<{ exit_code: number; stdout: string }>,
+  base: string, commit: () => Promise<{ exit_code: number }>,
+): Promise<number> {
+  const branch = (await git(["-C", repository, "rev-parse", "--abbrev-ref", "HEAD"], { stdout: "keep" })).stdout.trim();
+  for (let attempt = 1; ; attempt++) {
+    const pushed = await git(["-C", repository, "push", "origin", "HEAD"]);
+    if (pushed.exit_code === 0) break;
+    if (attempt === push_attempts) return pushed.exit_code;
+    const fetched = await git(["-C", repository, "fetch", "--quiet", "--depth", "1", "origin", branch]);
+    if (fetched.exit_code !== 0) return fetched.exit_code;
+    const locks = await git(["-C", repository, "rev-parse", `${base}:flake.lock`, "FETCH_HEAD:flake.lock"], { stdout: "keep" });
+    const [started, now] = locks.stdout.trim().split("\n");
+    if (locks.exit_code !== 0 || started !== now) {
+      context.out.write(`${branch} moved and changed its lock during the update, so the next update redoes it\n`);
+      return 1;
+    }
+    context.out.write(`${branch} moved during the update; putting the new lock on its new tip\n`);
+    const checked = (await git(["-C", repository, "rev-parse", "HEAD"], { stdout: "keep" })).stdout.trim();
+    for (const step of [["reset", "--quiet", "--hard", "FETCH_HEAD"], ["checkout", checked, "--", "flake.lock"]]) {
+      const moved = await git(["-C", repository, ...step]);
+      if (moved.exit_code !== 0) return moved.exit_code;
+    }
+    const recommitted = await commit();
+    if (recommitted.exit_code !== 0) return recommitted.exit_code;
+  }
+  await git(["-C", repository, "log", "--oneline", "-1"]);
+  return 0;
+}
+
+// Pushes the update's commit to its own branch, replacing the last update there, and opens a pull request from it to
+// the branch the flake follows, or brings the one already open up to date.
+async function land_as_pull_request(
+  context: Context, request: UpdatePullRequest, repository: string, git: (args: string[], options?: { stdout?: "show" | "keep" }) => Promise<{ exit_code: number; stdout: string }>,
+  message: string, fetcher: typeof fetch,
+): Promise<number> {
+  const say = (line: string) => context.out.write(`${line}\n`);
+  const token = github_token(request.token_file);
+  if (token === null) {
+    say(`${request.token_file} holds no github.com access token, so the update cannot open a pull request`);
+    return 1;
+  }
+  const base = (await git(["-C", repository, "rev-parse", "--abbrev-ref", "HEAD"], { stdout: "keep" })).stdout.trim();
+  const pushed = await git(["-C", repository, "push", "--force", "origin", `HEAD:refs/heads/${request.head}`]);
+  if (pushed.exit_code !== 0) return pushed.exit_code;
+
+  const api = (path: string, init: { method?: string; body?: unknown } = {}) => fetcher(`https://api.github.com/repos/${request.repository}${path}`, {
+    method: init.method ?? "GET",
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+  });
+  const refused = async (answer: Response, what: string) => {
+    say(`GitHub refused to ${what}: ${answer.status} ${(await answer.text()).slice(0, 300)}`);
+    return 1;
+  };
+  const [title, ...rest] = message.split("\n");
+  const words = { title, body: rest.join("\n").trim() };
+  const owner = request.repository.split("/")[0];
+  const open = await api(`/pulls?state=open&head=${encodeURIComponent(`${owner}:${request.head}`)}&base=${encodeURIComponent(base)}`);
+  if (!open.ok) return refused(open, "list its pull requests");
+  const [existing] = (await open.json()) as { number: number; html_url: string }[];
+  if (existing !== undefined) {
+    const edited = await api(`/pulls/${existing.number}`, { method: "PATCH", body: words });
+    if (!edited.ok) return refused(edited, `update pull request #${existing.number}`);
+    say(`Updated pull request ${existing.html_url}`);
+    return 0;
+  }
+  const created = await api("/pulls", { method: "POST", body: { ...words, head: request.head, base } });
+  if (!created.ok) return refused(created, "open the pull request");
+  say(`Opened pull request ${((await created.json()) as { html_url: string }).html_url}`);
+  return 0;
+}
+
+// The github.com token of a nix.conf's access-tokens, read only to call GitHub's API with; null when it has none.
+export function github_token(file: string): string | null {
+  for (const line of (read_text(file) ?? "").split("\n")) {
+    const tokens = /^\s*(?:extra-)?access-tokens\s*=(.*)$/.exec(line)?.[1] ?? "";
+    for (const pair of tokens.trim().split(/\s+/)) {
+      const split = pair.indexOf("=");
+      if (split > 0 && pair.slice(0, split) === "github.com" && split < pair.length - 1) return pair.slice(split + 1);
+    }
+  }
+  return null;
 }
 
 // Updates the checkout's lock into a spare file, checks it, and only then copies it over the checkout's own.

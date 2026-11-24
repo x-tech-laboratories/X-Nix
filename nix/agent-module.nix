@@ -30,7 +30,22 @@ let
       ;
     rebuild_args = cfg.pull.rebuildArgs;
     require_sudo = cfg.pull.requireSudo;
+    allowed_signers = if cfg.pull.allowedSignersFile == null then null else toString cfg.pull.allowedSignersFile;
+    allow_unsigned = cfg.pull.allowUnsigned;
   };
+
+  # The agent's own scheduling, which each run's unit is given too unless runUnits.properties says otherwise.
+  inherited_properties = [
+    "Nice"
+    "CPUSchedulingPolicy"
+    "IOSchedulingClass"
+    "IOSchedulingPriority"
+    "OOMScoreAdjust"
+    "UMask"
+  ];
+
+  run_unit_file = json.generate "x-nix-agent-run-unit.json" { inherit (cfg.runUnits) slice properties; };
+
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
 in
@@ -83,11 +98,36 @@ in
       mode's switch included, as README.md lists; turn them off only to write your own
     '' // { default = true; };
 
+    runUnits = {
+      enable = mkEnableOption ''
+        running each long run as a transient systemd unit, `x-nix-run-<run id>.service`, so stopping
+        a job stops every process it started; off, runs are process groups of the agent's
+      '' // { default = true; };
+
+      slice = mkOption {
+        type = types.nullOr types.str;
+        default = "nix-work.slice";
+        description = "The slice the runs' units go in, whose limits they share; null for systemd's default, system.slice.";
+      };
+
+      properties = mkOption {
+        type = types.attrsOf types.str;
+        default = lib.mapAttrs (_: toString) (
+          lib.filterAttrs (
+            name: _: builtins.elem name inherited_properties
+          ) config.systemd.services.x-nix-agent.serviceConfig
+        );
+        defaultText = literalExpression "the agent unit's Nice, CPUSchedulingPolicy, IOSchedulingClass, IOSchedulingPriority, OOMScoreAdjust and UMask";
+        description = "Further properties of each run's unit, such as `OOMScoreAdjust`; a unit inherits none of the agent's.";
+      };
+    };
+
     pull = {
       enable = mkEnableOption ''
         pull mode: once the server has been unreachable for `after`, the agent asks `remotes` every
-        `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own,
-        reporting each switch to the server once it is back
+        `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own once
+        its commit is signed by a key in `allowedSignersFile`, reporting each switch to the server
+        once it is back
       '';
 
       remotes = mkOption {
@@ -95,9 +135,9 @@ in
           types.submodule {
             options = {
               url = mkOption {
-                type = types.strMatching "(git\\+)?(https?|ssh|git|file)://.+";
+                type = types.strMatching "(git\\+)?(https|ssh|file)://.+";
                 example = "https://github.com/example/nixos-config";
-                description = "The flake's Git remote.";
+                description = "The flake's Git remote, over https://, ssh:// or file://, so it cannot be tampered with on the way.";
               };
               branch = mkOption {
                 type = types.str;
@@ -141,6 +181,28 @@ in
         default = true;
         description = "Run the switch under `sudo -n`.";
       };
+
+      allowedSignersFile = mkOption {
+        type = types.nullOr (types.either types.path types.str);
+        default = null;
+        example = literalExpression ''
+          pkgs.writeText "allowed_signers" "me@example.org ssh-ed25519 AAAA..."
+        '';
+        description = ''
+          The keys a commit must be signed with before pull mode switches to it, in Git's allowed
+          signers format (`gpg.ssh.allowedSignersFile`), so only SSH-signed commits pass. Public keys
+          only, so it may live in the store.
+        '';
+      };
+
+      allowUnsigned = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Switch to unsigned commits when no `allowedSignersFile` is given. Anyone who can push to a
+          remote, or impersonate one while the server is unreachable, then gets root on this host.
+        '';
+      };
     };
   };
 
@@ -149,6 +211,10 @@ in
       {
         assertion = !cfg.pull.enable || cfg.pull.remotes != [ ];
         message = "services.x-nix-agent.pull needs at least one remote.";
+      }
+      {
+        assertion = !cfg.pull.enable || cfg.pull.allowedSignersFile != null || cfg.pull.allowUnsigned;
+        message = "services.x-nix-agent.pull needs allowedSignersFile, the keys its commits are signed with, or allowUnsigned = true.";
       }
     ];
 
@@ -197,7 +263,8 @@ in
         # Node keeps its own CA list, so the system bundle, which holds security.pki.certificates, is added to it.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
       }
-      // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; };
+      // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
+      // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
 
       # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
       serviceConfig = {
@@ -209,7 +276,7 @@ in
         LoadCredential = [ "key:${cfg.keyFile}" ];
         Restart = "always";
         RestartSec = "5s";
-        # A restart stops only the agent, so a running switch carries on and is followed again from its output.
+        # A restart stops only the agent, so a switch run by a runner of an older agent, inside this unit, is not killed mid-activation.
         KillMode = "process";
         UMask = "0077";
       };
