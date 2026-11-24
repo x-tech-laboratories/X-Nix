@@ -222,6 +222,34 @@ describe("/api/hosts/:name/runs", () => {
     expect((await inject("POST", "/api/hosts/host/runs/left-behind/explode")).statusCode).toBe(404);
   });
 
+  it("says why the runs could not be read or acted on", async () => {
+    const harness = make_deployment();
+    const { inject } = await start_app(harness, [], [], [harness.host], harness.agents);
+    await harness.agent.start("ended", { kind: "probe" });
+    harness.agent.end(harness.agent.last_run()!, "", 0);
+
+    expect((await inject("GET", "/api/hosts/host/runs")).statusCode).toBe(200);
+    expect((await inject("POST", "/api/hosts/host/runs/ended/stop")).json()).toMatchObject({ ok: false, message: "The run ended had already ended" });
+    expect((await inject("POST", "/api/hosts/host/runs/missing/stop")).json()).toMatchObject({ ok: false, message: expect.stringContaining("Could not stop the run missing") });
+    harness.agent.forget = async () => {
+      throw new Error("disk is read-only");
+    };
+    expect((await inject("POST", "/api/hosts/host/runs/ended/forget")).json()).toMatchObject({ ok: false, message: "Could not remove the run ended: disk is read-only" });
+    expect((await inject("GET", "/api/hosts/nowhere/runs")).statusCode).toBe(404);
+  });
+
+  it("answers 502 when the host's agent is away, and 503 without agents", async () => {
+    const harness = make_deployment();
+    const away = new AgentPool("server", new FakeAgent());
+    const { inject } = await start_app(harness, [], [], [harness.host], away);
+
+    expect((await inject("GET", "/api/hosts/host/runs")).json()).toEqual({ error: "No agent named 'host' is connected" });
+    await app!.close();
+    const { inject: without } = await start_app(harness, [], [], [harness.host]);
+    expect((await without("GET", "/api/hosts/host/runs")).statusCode).toBe(503);
+    expect((await without("POST", "/api/hosts/host/runs/x/stop")).statusCode).toBe(503);
+  });
+
   it("stops a run a job follows as that job, so it fails as stopped", async () => {
     const harness = make_deployment();
     const { inject } = await start_app(harness, [], [], [harness.host], harness.agents);
