@@ -236,10 +236,15 @@ export class Fleet {
     });
   }
 
-  // Stops the job of every host still running, all at once, and answers with why any could not be stopped.
+  // Stops the job of every host still running, all at once, and answers with why any could not be stopped; a Build still
+  // held for its host ends there, before it has a run.
   private async stop_running_jobs(run: FleetRun, by: string): Promise<string[]> {
     const running = run.hosts.filter((host) => host.state === "running" && host.job_id !== null);
-    const outcomes = await Promise.all(running.map(async (host) => ({ host, outcome: await this.stop_job!(host.job_id!, by) })));
+    const stop = async (host: FleetHost) => {
+      const held = await this.deployments.get(host.deployment_id)?.stop_held_build(host.job_id!, by);
+      return held ?? this.stop_job!(host.job_id!, by);
+    };
+    const outcomes = await Promise.all(running.map(async (host) => ({ host, outcome: await stop(host) })));
     const failures: string[] = [];
     for (const { host, outcome } of outcomes) {
       if (!outcome.ok) {

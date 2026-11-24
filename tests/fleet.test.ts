@@ -200,6 +200,7 @@ describe("a fleet run", () => {
     const stopped = fleet.run(run!.id)!;
     expect(states(stopped)).toEqual({ "web-1": "skipped", "web-2": "skipped", "web-3": "skipped" });
     expect(stopped.hosts[0]!.message).toBe("Stopped by admin");
+    expect(stopped.hosts[1]!.message).toBe("admin stopped it before it started");
     expect(stopped.state).toBe("stopped");
   });
 

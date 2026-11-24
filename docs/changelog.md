@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-24
 
+- fix(fleet): end a Build still held for its host when stopping a run's jobs
 - docs(changelog): note stop a fleet run's running jobs too
 - feat(fleet): stop a fleet run's running jobs too
 
