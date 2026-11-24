@@ -3,6 +3,7 @@
 // media to download. A named host shows its key on its Machine tab.
 
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
+import { JobBadge } from "@x-tech-laboratories/x-libs/web/react/jobs";
 import { Facts, FormRow, PageHeading, Section, Stack } from "@x-tech-laboratories/x-libs/web/react/layout";
 import { Empty, Loaded, use_resource } from "@x-tech-laboratories/x-libs/web/react/states";
 import { DataTable } from "@x-tech-laboratories/x-libs/web/react/table";
@@ -15,7 +16,6 @@ import {
   type Provisioning,
 } from "../api.ts";
 import { Age } from "@x-tech-laboratories/x-libs/web/react/time";
-import { JobBadge } from "../ui.tsx";
 import { forget_key } from "./hosts.tsx";
 import { error_toast, job_toast, live } from "./shared.tsx";
 
@@ -92,7 +92,7 @@ function InstallFields({ provisioning, health, agents, done }: { provisioning: P
       const outcome = await api<ActionOutcome>("/api/provisioning/install", "POST", {
         host: field(form, "host"), address: address.trim(), user: field(form, "user"), port: Number(form.get("port")), flake: field(form, "flake"),
         configuration: field(form, "configuration"), agent: agent === health.server_name ? null : agent, stop_after_partitioning: form.has("stop"),
-        generate_hardware_config: form.has("hardware"), confirm,
+        generate_hardware_config: form.has("hardware"), host_key: field(form, "host_key"), confirm,
       });
       job_toast(outcome.message, outcome.job_id);
       set_confirm("");
@@ -112,6 +112,9 @@ function InstallFields({ provisioning, health, agents, done }: { provisioning: P
         </FormRow>
         <FormRow label="SSH address" id="install-address" hint="A hostname or IP address of a running Linux system, reached with the key in provisioning.ssh_key.">
           <input {...text_field} id="install-address" name="address" required placeholder="192.0.2.10" value={address} onChange={(event) => set_address(event.currentTarget.value)} />
+        </FormRow>
+        <FormRow label="SSH host key" id="install-host-key" hint="Optional: a line from ssh-keyscan of the target. The target must prove it holds it before its agent key is sent; nixos-anywhere itself trusts any host key.">
+          <input {...text_field} id="install-host-key" name="host_key" placeholder="ssh-ed25519 AAAA..." />
         </FormRow>
         <FormRow label="SSH user" id="install-user"><input {...text_field} id="install-user" name="user" defaultValue="root" /></FormRow>
         <FormRow label="SSH port" id="install-port"><input id="install-port" name="port" type="number" min="1" max="65535" defaultValue="22" /></FormRow>

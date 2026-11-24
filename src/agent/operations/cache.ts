@@ -13,13 +13,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
+
+import { whole_lines } from "@x-tech-laboratories/x-libs/agent/programs";
 
 import {
   flake_report_name, fresh_lookup, missing_tool_exit_code, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation,
   type CachePushOperation, type CacheSettings, type CacheTarget,
 } from "../../shared/operations.ts";
-import { on_path, person_command, type Context, type Sink } from "../programs.ts";
+import { on_path, person_command, type Context } from "../programs.ts";
 
 // ── Reporting ────────────────────────────────────────────────────────────────
 
@@ -273,25 +274,6 @@ function evaluate_jobs(context: Context, argv: string[], each: (job: EvaluatedJo
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-// Passes on only whole lines, so programs printing side by side never split each other's; flush passes on the rest.
-export function whole_lines(sink: Sink): Sink & { flush(): void } {
-  const decoder = new StringDecoder("utf8");
-  let carry = "";
-  return {
-    write(chunk) {
-      const text = carry + (typeof chunk === "string" ? chunk : decoder.write(chunk));
-      const end = text.lastIndexOf("\n") + 1;
-      carry = text.slice(end);
-      if (end > 0) sink.write(text.slice(0, end));
-    },
-    flush() {
-      const rest = carry + decoder.end();
-      carry = "";
-      if (rest !== "") sink.write(`${rest}\n`);
-    },
-  };
-}
 
 function lines(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);

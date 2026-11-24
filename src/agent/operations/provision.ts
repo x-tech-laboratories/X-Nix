@@ -1,7 +1,8 @@
 // Provisioning new hosts: a nixos-anywhere install over SSH, and a build of install media.
 //
 // The new host's agent key arrives on stdin, is written into a private folder that nixos-anywhere copies onto the new
-// system with `--extra-files`, and is removed with that folder when the install ends. The generated
+// system with `--extra-files`, and is removed with that folder when the install ends. nixos-anywhere trusts any host
+// key, so when the target's key is given, the target first has to prove it holds it before anything is sent. The generated
 // hardware-configuration.nix is printed between marker lines so the page can show it.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
@@ -39,6 +40,15 @@ export async function install(context: Context, operation: InstallOperation): Pr
 
   const scratch = mkdtempSync(join(tmpdir(), "x-nix-install-"));
   try {
+    if (operation.host_key) {
+      const known_hosts = join(scratch, "known_hosts");
+      writeFileSync(known_hosts, `${host_key_alias} ${operation.host_key}\n`, { mode: 0o600 });
+      const checked = await context.program(context, host_key_check(operation, known_hosts), { echo: true });
+      if (checked.exit_code !== 0) {
+        say(`${record.address} did not prove it holds the host key given, so nothing was sent to it`);
+        return checked.exit_code;
+      }
+    }
     const argv = [
       operation.tool, "--flake", `${record.flake}#${record.configuration}`, "--target-host", `${record.user}@${record.address}`,
       "--ssh-port", String(record.port), "-i", operation.ssh_key,
@@ -68,6 +78,18 @@ export async function install(context: Context, operation: InstallOperation): Pr
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+// The name the given host key is filed under, so the check does not depend on how the address is written.
+const host_key_alias = "x-nix-install-target";
+
+// Logs in to the target only if it holds the given host key, running nothing there.
+export function host_key_check(operation: InstallOperation, known_hosts: string): string[] {
+  const { record } = operation;
+  return [
+    "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", `UserKnownHostsFile=${known_hosts}`, "-o", `HostKeyAlias=${host_key_alias}`,
+    "-o", "IdentitiesOnly=yes", "-i", operation.ssh_key, "-p", String(record.port), `${record.user}@${record.address}`, "true",
+  ];
 }
 
 // Makes a folder with exactly this mode, whatever the umask.

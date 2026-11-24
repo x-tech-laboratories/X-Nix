@@ -178,7 +178,7 @@ describe("switch operations", () => {
     expect(switch_job_operation(settings(), "switch", "ab12").kind).toBe("switch");
     const here = switch_job_operation(settings({ inhibit_sleep: true }), "switch", "ab12") as KeptAwakeOperation;
     expect(here.kind).toBe("kept_awake");
-    expect(here.inhibitor).toEqual({ argv: ["sudo", "-n", "systemd-inhibit", "--what=idle:sleep", "--mode=block", "--who=X-Nix", "--why=switching", "cat"] });
+    expect(here.inhibitor).toEqual({ argv: ["sudo", "-n", "systemd-inhibit", "--what=sleep", "--mode=block", "--who=X-Nix", "--why=switching", "cat"] });
     const there = switch_job_operation(settings({ inhibit_sleep: true, target_host: "root@odin" }), "switch", "ab12") as KeptAwakeOperation;
     expect(there.inhibitor.ssh).toEqual({ host: "root@odin", sudo: true });
     expect(there.inhibitor.argv[0]).toBe("systemd-inhibit");

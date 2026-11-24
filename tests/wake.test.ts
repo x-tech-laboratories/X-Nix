@@ -10,7 +10,7 @@ import { start_run } from "../src/server/runs.ts";
 import { ConfigError, parse_config } from "../src/server/config.ts";
 import type { Operation } from "../src/shared/operations.ts";
 
-const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null };
+const thor: WakeSettings = { mac: "aa:bb:cc:dd:ee:ff", broadcast: "127.0.0.1", port: 9, timeout: 1, via: null, screen_off: null };
 
 const plain: Operation = { kind: "probe" };
 
@@ -133,8 +133,41 @@ describe("a job on a host that sleeps", () => {
     await start_run(pool, "odin", "run-2", plain);
 
     expect(thor_operations).toEqual([kept_awake_job(plain)]);
-    expect(job_inhibitor).toEqual(["sudo", "-n", "systemd-inhibit", "--what=idle:sleep", "--mode=block", "--who=X-Nix", "--why=job", "cat"]);
+    expect(job_inhibitor).toEqual(["sudo", "-n", "systemd-inhibit", "--what=sleep", "--mode=block", "--who=X-Nix", "--why=job", "cat"]);
     expect(odin_operations).toEqual([plain]);
+  });
+
+  it("turns the screen back off only on a host the job woke, never on one already awake", async () => {
+    const operations: Operation[] = [];
+    const screen = { ...thor, screen_off: "screen-off" };
+    const pool = new AgentPool("server", fake_agent("server"), async () => void setTimeout(() => pool.add("thor", fake_agent("thor", operations)), 20));
+    pool.set_wake(new Map([["thor", screen]]));
+
+    const { waking } = await start_run(pool, "thor", "run-1", plain);
+    await waking;
+    await start_run(pool, "thor", "run-2", plain);
+
+    expect(operations).toEqual([kept_awake_job(plain, "screen-off"), kept_awake_job(plain)]);
+    expect((operations[0] as { after_wake?: unknown }).after_wake).toEqual({ argv: ["/bin/sh", "-c", "screen-off"] });
+    expect((operations[1] as { after_wake?: unknown }).after_wake).toBeUndefined();
+  });
+
+  it("runs the after-wake command first, and still runs the job when that command fails", async () => {
+    const run = async (after: string) => {
+      let output = "";
+      const sink = { write: (chunk: Buffer | string) => void (output += chunk.toString()) };
+      const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: false, stdin: null, program: spawn_program };
+      const job = { ...kept_awake_job({ kind: "programs", steps: [{ argv: ["/bin/sh", "-c", "echo job"] }] }, after), inhibitor: { argv: ["cat"] } };
+      return { status: await perform(context, job), output };
+    };
+
+    const quiet = await run("echo dark");
+    expect(quiet.status).toBe(0);
+    expect(quiet.output.indexOf("dark")).toBeLessThan(quiet.output.indexOf("job"));
+    const failed = await run("exit 2");
+    expect(failed.status).toBe(0);
+    expect(failed.output).toContain("failed with status 2; running the job anyway");
+    expect(failed.output).toContain("job\n");
   });
 
   it("still runs the job, and keeps its exit status, when the inhibitor cannot be held", async () => {
@@ -161,8 +194,9 @@ describe("wake-on-LAN settings", () => {
   it("take a bare MAC address or an object, with defaults, and keep the host awake unless told not to", () => {
     const config = hosts({ thor: "aa:bb:cc:dd:ee:ff", odin: { mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: "5m" } });
 
-    expect(config.wake_on_lan.get("thor")).toEqual({ mac: "aa:bb:cc:dd:ee:ff", broadcast: "255.255.255.255", port: 9, timeout: 180, via: null });
-    expect(config.wake_on_lan.get("odin")).toEqual({ mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: 300, via: null });
+    expect(config.wake_on_lan.get("thor")).toEqual({ mac: "aa:bb:cc:dd:ee:ff", broadcast: "255.255.255.255", port: 9, timeout: 180, via: null, screen_off: null });
+    expect(config.wake_on_lan.get("odin")).toEqual({ mac: "AA-BB-CC-DD-EE-01", broadcast: "192.168.1.255", port: 7, timeout: 300, via: null, screen_off: null });
+    expect(hosts({ thor: { mac: "aa:bb:cc:dd:ee:ff", screen_off: "thor-screen-off" } }).wake_on_lan.get("thor")).toMatchObject({ screen_off: "thor-screen-off" });
     expect([...config.keep_awake].sort()).toEqual(["odin", "thor"]);
     const quiet = hosts({ thor: { mac: "aa:bb:cc:dd:ee:ff", via: "heimdall" } }, { keep_awake: false });
     expect(quiet.wake_on_lan.get("thor")).toMatchObject({ via: "heimdall" });

@@ -7,9 +7,9 @@ import { hostname } from "node:os";
 
 import { AgentKeyError, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
 import { parse_duration } from "@x-tech-laboratories/x-libs/durations";
+import { read_channels, type Channel } from "@x-tech-laboratories/x-libs/server/notify/channels";
 
 import type { WakeSettings } from "./agents/wake.ts";
-import { read_channels, type Channel } from "./notifications.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
 import { defer_parts, type DeferPart } from "../shared/operations.ts";
 
@@ -29,6 +29,11 @@ export const direct_on_values: DirectOn[] = ["host", "server", "ranked"];
 export type CheckUpdate = "evaluate" | "build" | "none";
 
 export const check_update_values: CheckUpdate[] = ["evaluate", "build", "none"];
+
+// How a github: flake's update lands its new lock: pushed to the branch the flake follows, or as a pull request to it.
+export type LandUpdate = "push" | "pull_request";
+
+export const land_update_values: LandUpdate[] = ["push", "pull_request"];
 
 export const level_of_status: Record<Status, "info" | "warning" | "error"> = { online: "info", info: "info", unavailable: "warning", warning: "warning", failed: "error" };
 
@@ -66,7 +71,7 @@ export interface HostSettings {
   // Its agent's OpenSSH public key line; null for the server's own host, or a host X-Nix provisioned.
   agent_key: string | null;
   wake: WakeSettings | null;
-  // Whether every job on the host, and every switch activating it, holds off idle and sleep until it ends.
+  // Whether every job on the host, and every switch activating it, holds off sleep until it ends.
   keep_awake: boolean;
   interval: number;
   job_poll: number;
@@ -97,9 +102,12 @@ export interface FlakeSettings {
   // A nix.conf file on the flake's host holding access-tokens, which nix reads when it reads or updates the flake.
   access_tokens_file: string | null;
   push_ssh_key: string | null;
+  // An SSH private key file a github: flake's update commit is signed with, so a host that only takes signed commits can deploy it.
+  commit_signing_key: string | null;
   commit_author: string;
   commit_message: string;
   check_update: CheckUpdate;
+  land_update: LandUpdate;
   require_sudo: boolean;
   nix_bin: string;
   nix_args: string[];
@@ -141,7 +149,7 @@ export interface DeploymentSettings {
   switch_agent: string | null;
   // Where Build and a switch build; elsewhere than the switching host, the build pushes the system to cache_url for the host to fetch.
   direct_on: DirectOn;
-  // Hold off idle and sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
+  // Hold off sleep on the activated host while a switch or rollback runs, as its host's keep_awake says.
   inhibit_sleep: boolean;
   target_host: string | null;
   auto_switch: boolean;
@@ -387,6 +395,11 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
   if (url === null) throw new ConfigError(`Flake '${id}' needs the \`url\` of its flake reference`);
   const check_update = read.text("check_update") ?? "evaluate";
   if (!check_update_values.includes(check_update as CheckUpdate)) throw new ConfigError(`\`check_update\` of ${read.owner} must be one of ${check_update_values.join(", ")}`);
+  const land_update = read.text("land_update") ?? "push";
+  if (!land_update_values.includes(land_update as LandUpdate)) throw new ConfigError(`\`land_update\` of ${read.owner} must be one of ${land_update_values.join(", ")}`);
+  if (land_update === "pull_request" && (!url.startsWith("github:") || read.text("access_tokens_file") === null)) {
+    throw new ConfigError(`\`land_update\` pull_request of ${read.owner} needs a github: flake and an \`access_tokens_file\` with a github.com token that may open pull requests`);
+  }
   return {
     id,
     name: read.text("name") ?? id,
@@ -401,9 +414,11 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
     watch_inputs: values.watch_inputs == null ? null : read.list("watch_inputs", []),
     access_tokens_file: read.text("access_tokens_file"),
     push_ssh_key: read.text("push_ssh_key"),
+    commit_signing_key: read.text("commit_signing_key"),
     commit_author: read.text("commit_author") ?? "X-Nix <x-nix@localhost>",
     commit_message: read.text("commit_message") ?? "chore(flake): update inputs",
     check_update: check_update as CheckUpdate,
+    land_update: land_update as LandUpdate,
     require_sudo: read.flag("require_sudo", true),
     nix_bin: read.text("nix_bin") ?? "nix",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
@@ -411,7 +426,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
 }
 
 // The settings that describe the flake rather than the host, which only a flake under flakes takes.
-const flake_only_keys = ["update_at", "push_ssh_key", "commit_author", "commit_message", "check_update", "max_input_age"];
+const flake_only_keys = ["update_at", "push_ssh_key", "commit_signing_key", "commit_author", "commit_message", "check_update", "land_update", "max_input_age"];
 
 // The settings of a deployment's own build, which its cache takes over when it names one.
 const cache_only_keys = ["cache_url", "build_at", "build_agent", "build_root_dir"];
@@ -482,7 +497,10 @@ function wake_settings(entry: unknown, host: string): WakeSettings | null {
   if (mac === null || !/^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/.test(mac)) throw new ConfigError(`\`mac\` of ${owner} must be a MAC address such as "aa:bb:cc:dd:ee:ff"`);
   const port = read.limit("port", 9) ?? 9;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`\`port\` of ${owner} must be a port number`);
-  return { mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"), via: read.text("via") };
+  return {
+    mac, broadcast: read.text("broadcast") ?? "255.255.255.255", port, timeout: read.duration("timeout", "3m"), via: read.text("via"),
+    screen_off: read.text("screen_off"),
+  };
 }
 
 export function cache_settings(entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>()): CacheSettings {

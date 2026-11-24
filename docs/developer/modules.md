@@ -66,7 +66,6 @@ flowchart TB
     poller[poller.ts]
     fleet[fleet.ts]
     overdue[overdue.ts]
-    notifications[notifications.ts]
     provisioning[provisioning.ts]
     pull_reports[pull_reports.ts]
     flake[flake.ts]
@@ -106,7 +105,6 @@ flowchart TB
     webhook --> deployment & flake
     poller --> flake & deployment & host & cache
     fleet --> deployment
-    overdue --> notifications
     pull_reports --> deployment
     flake --> runs & commands & nix_flake
     deployment --> host & cache & builds & live_builds & runs & overdue & commands & switch & closure & probe & attic
@@ -145,7 +143,6 @@ flowchart TB
 | `runs.ts`          | Starts a long run (waking and keeping awake when needed) and follows its output into a job. |
 | `fleet.ts`         | Fleet runs: selection, parallelism, stages, sync verification.                              |
 | `overdue.ts`       | Spots jobs running far past their usual time; warns and notifies once.                      |
-| `notifications.ts` | ntfy, webhook and Apprise channels through X-Libs' senders.                                 |
 | `provisioning.ts`  | nixos-anywhere installs, agent keys it made, install media.                                 |
 | `pull_reports.ts`  | Takes an agent's pull-mode switches into the job history.                                   |
 | `agents/agent.ts`  | The `Agent` interface and `AgentPool`: picking a host, waking it, waiting for it.          |
@@ -172,8 +169,7 @@ flowchart TB
     tasks[tasks.ts<br/>run now, or launch a runner]
     run[run.ts<br/>perform within the agent]
     runner[runner.ts<br/>separate process per long run]
-    stalls[stalls.ts]
-    waits[waits.ts<br/>/proc locks and holders]
+    stalls[stalls.ts<br/>Nix locks named]
     programs[programs.ts<br/>spawn argv, never a shell]
     watchdog[watchdog.ts<br/>separate process per guarded switch]
 
@@ -195,11 +191,10 @@ flowchart TB
     tasks -. "spawns" .-> runner
     run --> index
     runner --> index & stalls
-    stalls --> waits
     index --> reads & deploy & switch & cache & boot & derivations & provision
-    switch --> watchdog & waits & reads
+    switch --> watchdog & stalls & reads
     switch -. "spawns" .-> watchdog
-    watchdog --> reads & waits
+    watchdog --> reads & stalls
     provision --> reads
     reads & deploy & switch & cache & boot & derivations & provision & watchdog --> programs
 ```
@@ -212,7 +207,7 @@ flowchart TB
 | `run.ts`                   | Performs an operation in-process, collecting its output.                          |
 | `runner.ts`                | The long-run process: reads the plan, writes `out`, notes stalls, writes `exit` atomically. |
 | `programs.ts`              | Spawns one program with argv; optional `sudo -n`; echoes `$ argv` lines.         |
-| `stalls.ts`, `waits.ts`    | After five quiet minutes, write what still runs and which locks it waits on.     |
+| `stalls.ts`                | X-Libs' `agent/stalls` with the Nix locks named and each note marked: after five quiet minutes, what still runs and which locks it waits on. |
 | `watchdog.ts`              | Waits for activation and confirmation; rolls back and writes the outcome.        |
 | `pull.ts`                  | Pull mode: watches Git remotes while the server is away, switches, keeps reports. |
 | `operations/index.ts`      | `perform()`: dispatches on `kind`, unwrapping `kept_awake`, `timed` and `nix_config`. |
@@ -265,7 +260,7 @@ flowchart TB
 
 | View             | Route                               | Shows                                                    |
 | ---------------- | ----------------------------------- | -------------------------------------------------------- |
-| `overview.tsx`   | `#/`                                | Counts, status donut, needs attention, the flow map.     |
+| `overview.tsx`   | `#/`                                | Status donuts, needs attention, the flow map, job charts. |
 | `map.tsx`        | inside the Overview                 | Flakes → caches → hosts, through X-Libs' `flow_map`.     |
 | `hosts.tsx`      | `#/hosts`, `#/hosts/<name>/<tab>`   | The hosts table, fleet selection, one host's header and tabs. |
 | `system.tsx`     | `#/hosts/<name>/system`             | Drift, details, the diff, pin, jobs, events, generations. |
@@ -278,8 +273,8 @@ flowchart TB
 | `jobs.tsx`       | `#/jobs`, `#/jobs/<id>`             | The job list, one job with live output and build tree.   |
 | `builds.tsx`     | `#/builds`                          | The build history and products.                          |
 | `provision.tsx`  | `#/provision`                       | Installs, agent keys, media.                             |
-| `settings.tsx`   | `#/settings`                        | Theme, about, MCP address, backups.                      |
-| X-Libs views     | `#/account`, `#/users`              | `AccountView`, `UsersView`.                              |
+| `settings.tsx`   | `#/settings` (and the old `#/users`) | Theme, about, MCP address, backups, users and tokens.    |
+| X-Libs views     | `#/account`                         | `AccountView`; Users and Tokens are `users_settings` on Settings. |
 
 ## What comes from X-Libs
 
@@ -288,13 +283,13 @@ flowchart TB
 | `server/config`                                 | Reading the server's settings from the environment.                 |
 | `server/account_store`, `account_sign_in`, `passwords`, `hash_password` | Users, sessions, tokens, second factor, the password command. |
 | `server/agents/hub`, `agents/local`, `agents/agent`, `agents/route` | The agent hub, the built-in agent, the WebSocket route.   |
-| `agent/client`, `agent/session`, `agent/long_runs`, `agent/tasks`, `agent/programs`, `agent/keys`, `agent/wake`, `agent/protocol` | The agent side of the protocol, long runs, key login, magic packets. |
+| `agent/client`, `agent/session`, `agent/long_runs`, `agent/stalls`, `agent/tasks`, `agent/programs`, `agent/keys`, `agent/wake`, `agent/protocol` | The agent side of the protocol, long runs, key login, magic packets. |
 | `server/runs`                                   | `follow_run`: copying a long run's output into a job.               |
 | `server/poller`                                 | `CyclePoller`: one timer per watched thing.                         |
 | `server/events`                                 | The `/api/events` change feed.                                      |
 | `server/mcp`, `api_spec`                        | MCP tools from the routes.                                          |
 | `server/forge_webhook`                          | Checking GitHub, Forgejo and GitLab signatures.                     |
-| `server/notify/*`                               | ntfy, webhook and Apprise senders.                                  |
+| `server/notify/channels`                        | The `notifications` list: ntfy, webhook, mail and Apprise channels. |
 | `backups`, `server/sqlite_backups`, `server/backup_routes` | Daily database backups and their routes.                 |
 | `server/replies`, `server/web_folder`           | Error replies and serving the built page.                           |
 | `durations`                                     | Parsing and formatting `30s`, `5m`, `2w`.                           |

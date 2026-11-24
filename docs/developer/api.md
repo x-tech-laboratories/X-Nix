@@ -123,6 +123,7 @@ Registered only when the server has a provisioner.
 | `/api/backups/…` | Listing, making, restoring and deleting backups, and the schedule.                            |
 | `/api/agent`     | The agents' WebSocket.                                                                        |
 | `/api/mcp`       | MCP over streamable HTTP.                                                                     |
+| `/api/openapi.json` | An OpenAPI 3.1 document of the routes the MCP tools run, from the same `routes` table.     |
 
 ## The change feed
 

@@ -59,14 +59,18 @@ flowchart LR
 | ------------------ | -------------- | ------------------------------------------ | -------------------------------- |
 | `x-nix` server     | `x-nix`        | The service.                               | systemd (`services.x-nix`).      |
 | `x-nix-agent`      | `x-nix-agent`  | The service; redials whenever it drops.    | systemd (`services.x-nix-agent`). |
-| Runner             | the agent's user | One long run; outlives the agent.        | The agent, in its own process group. |
+| Runner             | the agent's user | One long run; outlives the agent.        | The agent, as the transient unit `x-nix-run-<run id>.service` in `runUnits.slice` (a process group of its own with `runUnits.enable = false`). |
 | Watchdog           | the agent's user, rolling back with `sudo -n` | One guarded switch; outlives the run. | The switch, in its own session. |
 
-The server's own machine has no agent process: the server holds a `LocalAgent` from X-Libs that performs operations in
-the same way, so the code never has to tell the two apart.
+The server's own machine runs an agent like any other, dialling in over `ws://127.0.0.1`, so the process that answers
+the web runs nothing as root and its unit is sandboxed. With `X_NIX_LOCAL_AGENT=yes` (`localAgent`) the server holds a
+`LocalAgent` from X-Libs for its own machine instead, which performs operations in the same way, so the code never has
+to tell the two apart; `AgentPool.has_own_agent` says which it is.
 
-`KillMode = "process"` in the module means a restart of either service stops only the main process; runners and
-watchdogs carry on, and the server follows their output again from where it stopped.
+A runner's unit has `ExitType=cgroup`, so it lasts while the switch's watchdog does, and stopping the job with
+`systemctl stop` ends every process in it, however detached. `KillMode = "process"` in the module means a restart of
+either service stops only the main process, so a runner started by an older agent inside the agent's unit survives the
+switch that upgrades it; the server follows each run's output again from where it stopped.
 
 ## Design rules
 

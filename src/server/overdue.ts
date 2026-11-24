@@ -4,9 +4,9 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { format_duration } from "@x-tech-laboratories/x-libs/durations";
+import type { Notifier } from "@x-tech-laboratories/x-libs/server/notify/channels";
 
 import { stall_mark } from "../shared/operations.ts";
-import type { Notifier } from "./notifications.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
