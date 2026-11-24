@@ -10,6 +10,11 @@ version.
 
 ## Unreleased
 
+### 2026-11-24
+
+- docs(changelog): note wake a sleeping host on demand
+- feat(hosts): wake a sleeping host on demand
+
 ### 2026-11-22
 
 - test: raise the coverage floor to what the update push retry's tests reach
