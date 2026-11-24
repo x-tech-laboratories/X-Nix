@@ -368,7 +368,7 @@ describe("/api/provisioning", () => {
     const unconfirmed = await post("/api/provisioning/install", { ...request, confirm: "freya" });
     expect(unconfirmed.statusCode).toBe(400);
     expect(unconfirmed.json().error).toContain("192.0.2.10");
-    expect(harness.agent.runs).toEqual([]);
+    expect(harness.agent.long_runs).toEqual([]);
 
     const started = await post("/api/provisioning/install", { ...request, confirm: "192.0.2.10" });
     expect(started.statusCode).toBe(200);

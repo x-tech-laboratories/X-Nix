@@ -335,6 +335,12 @@ export class Store {
     return (row as unknown as JobWithOutput | undefined) ?? null;
   }
 
+  // The newest job for a long run, whoever owns it.
+  job_by_run(run_id: string): Job | null {
+    const row = this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE run_id = ? ORDER BY id DESC LIMIT 1`).get(run_id);
+    return (row as unknown as Job | undefined) ?? null;
+  }
+
   // The deployment's job for a long run, such as a switch an agent ran on its own and reported later.
   job_for_run(deployment_id: string, run_id: string): Job | null {
     const row = this.database.prepare(`SELECT ${job_columns} FROM jobs WHERE deployment_id = ? AND run_id = ? ORDER BY id DESC LIMIT 1`).get(deployment_id, run_id);

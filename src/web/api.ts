@@ -546,6 +546,16 @@ export interface Provisioning {
   provisioned_agents: ProvisionedAgent[];
 }
 
+// A long run on a host's agent, with the job following it, or null for one nothing follows.
+export interface AgentRun {
+  run_id: string;
+  pid: number;
+  started_epoch: number;
+  state: "running" | "exited" | "stopped" | "lost";
+  exit_code: number | null;
+  job: { id: number; deployment_id: string; kind: string; state: "running" | "succeeded" | "failed" } | null;
+}
+
 export interface ActionOutcome {
   ok: boolean;
   message: string;

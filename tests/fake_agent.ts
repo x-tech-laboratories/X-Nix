@@ -159,7 +159,9 @@ export class FakeAgent implements Agent {
   // Each operation run, as `shown` writes it.
   readonly commands: string[] = [];
   readonly operations: Operation[] = [];
-  readonly runs: FakeRun[] = [];
+  readonly long_runs: FakeRun[] = [];
+  // The runs forget removed.
+  readonly forgotten = new Set<string>();
   // Answers for operations whose JSON holds some text, looked at before anything else.
   readonly answers: [needle: string, answer: RunResult][] = [];
 
@@ -177,26 +179,34 @@ export class FakeAgent implements Agent {
   async start(run_id: string, operation: Operation, options: { stdin?: string | null } = {}): Promise<LongRun> {
     if (this.start_error !== null) throw this.start_error;
     const stdin = options.stdin ?? null;
-    this.runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true, stopped: false });
+    this.long_runs.push({ run_id, operation, command: shown(operation), stdin, output: "", exit_code: null, alive: true, stopped: false });
     return { run_id, pid: 4242, started_epoch: clock.now, state: "running", exit_code: null };
   }
 
   async poll(run_id: string, offset: number): Promise<LongRunPoll> {
     if (this.poll_error !== null) throw this.poll_error;
-    const run = this.runs.find((candidate) => candidate.run_id === run_id);
+    const run = this.long_runs.find((candidate) => candidate.run_id === run_id);
     if (run === undefined) throw new AgentError(`No run named '${run_id}'.`);
     return { state: run_state(run), exit_code: run.exit_code, alive: run.alive, size: run.output.length, new_output: run.output.slice(offset), next_offset: run.output.length };
   }
 
   // Ends a running run as a SIGTERM would, and answers with its state.
   async stop(run_id: string): Promise<LongRun> {
-    const run = this.runs.find((candidate) => candidate.run_id === run_id);
+    const run = this.long_runs.find((candidate) => candidate.run_id === run_id);
     if (run === undefined) throw new AgentError(`No run named '${run_id}'.`);
     if (run.alive) Object.assign(run, { alive: false, stopped: true, exit_code: 143 });
     return { run_id, pid: 4242, started_epoch: clock.now, state: run_state(run), exit_code: run.exit_code };
   }
 
-  async forget(): Promise<void> {}
+  // Removes an ended run from what runs() lists, as the agent removes its folder; tests can still look at it.
+  async forget(run_id: string): Promise<void> {
+    if (this.long_runs.some((run) => run.run_id === run_id && run.alive)) throw new AgentError(`The run '${run_id}' is still running.`);
+    this.forgotten.add(run_id);
+  }
+
+  async runs(): Promise<LongRun[]> {
+    return this.long_runs.filter((run) => !this.forgotten.has(run.run_id)).map((run) => ({ run_id: run.run_id, pid: 4242, started_epoch: clock.now, state: run_state(run), exit_code: run.exit_code }));
+  }
 
   // Whether any operation run so far ran this program, as a command line.
   ran(line: string): boolean {
@@ -205,7 +215,7 @@ export class FakeAgent implements Agent {
 
   // The newest long run, optionally only those whose operation's JSON holds some text.
   last_run(containing = ""): FakeRun | undefined {
-    return this.runs.filter((run) => run.command.includes(containing)).pop();
+    return this.long_runs.filter((run) => run.command.includes(containing)).pop();
   }
 
   write(run: FakeRun, output: string): void {
@@ -275,9 +285,9 @@ export function make_host(values: Record<string, unknown> = {}): HostHarness {
 
 // The evaluation runs a cycle launched, or undefined when it launched none.
 export async function cycle(harness: Harness, options: { force_eval?: boolean } = {}): Promise<FakeRun | undefined> {
-  const before = harness.agent.runs.length;
+  const before = harness.agent.long_runs.length;
   await harness.deployment.cycle(options);
-  return harness.agent.runs.slice(before).find((run) => innermost(run.operation).kind === "evaluate");
+  return harness.agent.long_runs.slice(before).find((run) => innermost(run.operation).kind === "evaluate");
 }
 
 interface CollectOptions {

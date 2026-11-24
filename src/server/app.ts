@@ -32,7 +32,7 @@ import { agent_snippet, media_formats, parse_install_request, type MediaFormat }
 import type { InstallView, MediaView, ProvisionedAgentView, Provisioner } from "./provisioning.ts";
 import { metric_names, sample_retention_in_seconds, type BuildRecord, type EventRow, type Job, type JobKind, type Metric, type Sample, type Store } from "./store.ts";
 import { register_mcp } from "./mcp.ts";
-import { stop_job } from "./runs.ts";
+import { agent_runs, forget_agent_run, stop_agent_run, stop_job, type AgentRunView } from "./runs.ts";
 import { register_webhook_route, type Webhook } from "./webhook.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -504,6 +504,33 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
     if (!host_action_ids.includes(action)) return reply.code(404).send({ error: `No action named '${request.params.action}'` });
     const outcome = await host.act(action, started_by(request.viewer));
     if (outcome.ok) poller.soon(host);
+    return reply.code(outcome.ok ? 200 : 409).send(outcome);
+  });
+
+  // The long runs the host's agent holds, each with the job following it, if any.
+  app.get<{ Params: { name: string } }>("/api/hosts/:name/runs", async (request, reply): Promise<AgentRunView[] | FastifyReply> => {
+    const host = find_host(request.params.name, reply);
+    if (host === null) return reply;
+    if (options.agents === undefined) return reply.code(503).send({ error: "No agents to ask" });
+    try {
+      return await agent_runs(store, options.agents, host.name);
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Stops one of the agent's runs, or removes an ended one's folder.
+  app.post<{ Params: { name: string; run_id: string; action: string } }>("/api/hosts/:name/runs/:run_id/:action", async (request, reply) => {
+    const host = find_host(request.params.name, reply);
+    if (host === null) return reply;
+    const { run_id, action } = request.params;
+    if (action !== "stop" && action !== "forget") return reply.code(404).send({ error: `No action named '${action}'` });
+    if (options.agents === undefined) return reply.code(503).send({ error: "No agents to ask" });
+    const outcome = action === "stop"
+      ? await stop_agent_run(store, options.agents, host.name, run_id, started_by(request.viewer), () => Math.floor(Date.now() / 1000))
+      : await forget_agent_run(store, options.agents, host.name, run_id);
+    const job = outcome.job_id === null ? null : store.job(outcome.job_id);
+    if (job !== null) poller.soon_for(job.deployment_id);
     return reply.code(outcome.ok ? 200 : 409).send(outcome);
   });
 

@@ -24,7 +24,7 @@ function make_fleet(entries: Record<string, unknown>[], settings: Record<string,
 
 // The newest long run a deployment started for a kind of job.
 function run_of(agent: FakeAgent, id: string, kind = "switch") {
-  return agent.runs.filter((run) => run.run_id.startsWith(`${id}-${kind}-`)).pop();
+  return agent.long_runs.filter((run) => run.run_id.startsWith(`${id}-${kind}-`)).pop();
 }
 
 // Ends a deployment's running job and lets its cycle notice.

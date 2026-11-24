@@ -245,7 +245,7 @@ describe("evaluation timing", () => {
     await cycle(restarted);
 
     expect(restarted.deployment.reading()?.up_to_date).toBe(true);
-    expect(harness.agent.runs).toHaveLength(1);
+    expect(harness.agent.long_runs).toHaveLength(1);
   });
 
   it("names a timed-out evaluation", async () => {
@@ -750,12 +750,12 @@ describe("building elsewhere", () => {
     const on_host = with_builder({ direct_on: "host" });
     expect((await on_host.deployment.act("switch")).message).toBe("Switch started");
     expect(on_host.agent.last_run("nixos-rebuild switch")).toBeDefined();
-    expect(on_host.builder.runs).toHaveLength(0);
+    expect(on_host.builder.long_runs).toHaveLength(0);
 
     const on_server = with_builder({ direct_on: "server" });
     expect((await on_server.deployment.act("build")).ok).toBe(true);
     expect(on_server.deployment.running_job()?.agent).toBeNull();
-    expect(on_server.builder.runs).toHaveLength(0);
+    expect(on_server.builder.long_runs).toHaveLength(0);
 
     expect(() => with_builder({ direct_on: "elsewhere" })).toThrow("`direct_on` of deployment 'host-deploy' must be one of host, server, ranked");
   });
@@ -790,7 +790,7 @@ describe("building elsewhere", () => {
     expect(outcome).toMatchObject({ ok: true, message: "Building on builder first; the test switch starts once it is built" });
     expect(harness.store.job(waiting.job_id!)).toMatchObject({ state: "failed", error: `A test switch took its place before it started, taking over its build #${first_build}` });
     expect(harness.deployment.evaluation().switch_wait).toMatchObject({ job_id: outcome.job_id, step_job_id: first_build });
-    expect(harness.builder.runs.filter((run) => run.command.includes('"kind":"cache_build"'))).toHaveLength(1);
+    expect(harness.builder.long_runs.filter((run) => run.command.includes('"kind":"cache_build"'))).toHaveLength(1);
     expect(await harness.deployment.act("build")).toMatchObject({ ok: true, message: `Build already running, job #${first_build}`, job_id: first_build });
 
     harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${target_closure}\n`, 0);
@@ -867,7 +867,7 @@ describe("a small host evaluated and built elsewhere", () => {
     server.end(evaluation, eval_output(result(0, `${target_closure}\n`), metadata()), 0);
     await deployment.cycle();
     expect(innermost(evaluation.operation)).toMatchObject({ kind: "evaluate", attribute: "pi", flake: "github:example/nixos-config", refresh: true });
-    expect(pi.runs).toHaveLength(0);
+    expect(pi.long_runs).toHaveLength(0);
 
     const drifting = deployment.evaluation();
     drifting.drift_since_epoch = clock.now - 1801;
@@ -876,7 +876,7 @@ describe("a small host evaluated and built elsewhere", () => {
     await deployment.cycle();
     const build = server.last_run('"kind":"build"')!;
     expect(build.operation).toMatchObject({ kind: "build", root_link: "/var/lib/x-nix/build-roots/pi", cache_url: "https://attic.example/fleet" });
-    expect(pi.runs).toHaveLength(0);
+    expect(pi.long_runs).toHaveLength(0);
     server.end(build, `${target_closure}\n`, 0);
     await deployment.cycle();
 
@@ -888,7 +888,7 @@ describe("a small host evaluated and built elsewhere", () => {
     expect(shown_command(switching.command)).toContain("systemd-inhibit");
     expect(shown_command(switching.command)).toContain("sudo -n /bin/sh -c ");
     expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
-    expect(server.runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
+    expect(server.long_runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
   });
 });
 
@@ -1361,8 +1361,8 @@ describe("a sleeping host that can be woken", () => {
 
     agents.add("pi", pi);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(pi.runs).toHaveLength(1);
-    expect(store.job(outcome.job_id!)?.run_id).toBe(pi.runs[0].run_id);
+    expect(pi.long_runs).toHaveLength(1);
+    expect(store.job(outcome.job_id!)?.run_id).toBe(pi.long_runs[0].run_id);
   });
 
   it("fails the job with why once the host does not wake in time", async () => {
@@ -1407,7 +1407,7 @@ describe("a deployment its cache builds", () => {
 
     await collect(harness);
 
-    expect(harness.agent.runs.some((run) => run.command.includes("@@x-nix-eval"))).toBe(false);
+    expect(harness.agent.long_runs.some((run) => run.command.includes("@@x-nix-eval"))).toBe(false);
     expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, flake_revision: "a".repeat(40), flake_last_modified_epoch: flake_epoch, evaluated_epoch: clock.now - 60 });
     expect(harness.deployment.reading()?.up_to_date).toBe(false);
   });

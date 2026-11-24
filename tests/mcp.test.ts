@@ -57,7 +57,7 @@ describe("/api/mcp", () => {
 
     const { tools } = (await rpc(viewer, "tools/list")) as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] };
     const read_only = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations.readOnlyHint]));
-    expect(read_only).toMatchObject({ list_deployments: true, get_job: true, stop_job: false, run_deployment_action: false, update_flake: false });
+    expect(read_only).toMatchObject({ list_deployments: true, get_job: true, stop_job: false, list_host_runs: true, run_host_run_action: false, run_deployment_action: false, update_flake: false });
     expect(read_only).toMatchObject({ get_health: true, list_backups: true, set_backup_schedule: false, delete_backup: false });
   });
 

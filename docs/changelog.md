@@ -12,6 +12,9 @@ version.
 
 ### 2026-11-24
 
+- test(hosts): cover the agent runs routes' refusals and failures
+- docs(changelog): note list, stop and remove the runs an agent holds
+- feat(hosts): list, stop and remove the runs an agent holds
 - docs(changelog): note wake a sleeping host on demand
 - feat(hosts): wake a sleeping host on demand
 - fix(fleet): end a Build still held for its host when stopping a run's jobs
