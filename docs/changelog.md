@@ -10,6 +10,11 @@ version.
 
 ## Unreleased
 
+### 2026-11-24
+
+- docs(changelog): note stop a fleet run's running jobs too
+- feat(fleet): stop a fleet run's running jobs too
+
 ### 2026-11-22
 
 - test: raise the coverage floor to what the update push retry's tests reach
