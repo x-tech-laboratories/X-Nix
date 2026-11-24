@@ -10,6 +10,11 @@ version.
 
 ## Unreleased
 
+### 2026-11-24
+
+- docs(changelog): note list, stop and remove the runs an agent holds
+- feat(hosts): list, stop and remove the runs an agent holds
+
 ### 2026-11-22
 
 - test: raise the coverage floor to what the update push retry's tests reach
