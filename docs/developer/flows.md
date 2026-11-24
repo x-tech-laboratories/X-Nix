@@ -80,7 +80,7 @@ sequenceDiagram
     end
     runs->>agent: start(run_id, operation, stdin)
     agent->>folder: write operation.json
-    agent->>runner: spawn in its own process group
+    agent->>runner: systemd-run as x-nix-run-<run id>.service
     runner->>folder: append everything to out
     owner->>owner: store.create_job(run_id)
     loop every job_poll, from the owner's cycle
@@ -241,7 +241,7 @@ sequenceDiagram
         run-->>server: refused: Pre-switch check n failed
     end
     run->>host: fetch_steps: nix build from the cache (not timed)
-    run->>wd: start in /tmp/<watch folder> with the previous system
+    run->>wd: start in <state>/switches/<watch folder> with the previous system
     run->>host: activate (switch-to-configuration or nixos-rebuild)
     run->>host: post_switch (status ignored)
     alt activation failed
@@ -320,7 +320,7 @@ flowchart TD
 
     update[[Update]] --> kind{flake kind}
     kind -- "local checkout" --> local[local_update: sudo -n nix flake update<br/>into a spare lock, check it, cp it over flake.lock]
-    kind -- "github: with push_ssh_key" --> gh[github_update: clone over SSH,<br/>nix flake update, check it, commit, push]
+    kind -- "github: with push_ssh_key" --> gh[github_update: clone over SSH,<br/>nix flake update, check it, commit, push<br/>or open a pull request with land_update]
     kind -- other --> refuse([refused: no lock X-Nix can write])
 ```
 
@@ -448,7 +448,7 @@ sequenceDiagram
     end
 ```
 
-`kept_awake` makes the run hold `systemd-inhibit --what=idle:sleep cat` reading a pipe only the run holds, so the
+`kept_awake` makes the run hold `systemd-inhibit --what=sleep cat` reading a pipe only the run holds, so the
 inhibitor ends when the run ends, however it ends.
 
 ## Pull mode

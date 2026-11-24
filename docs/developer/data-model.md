@@ -227,8 +227,9 @@ document treats a missing field as absent (see `CacheReading.build_all`).
 | `x-nix.sqlite` (+ `-wal`, `-shm`) | The database.                                                    |
 | `backups/`                   | Daily and manual copies, `x-nix-<time>.sqlite`.                      |
 | `backup-schedule.json`       | The backup schedule set on the Settings page.                        |
-| `agent/`                     | The built-in agent's long runs, one folder each (`operation.json`, `out`, `exit`). |
+| `agent/`                     | With `localAgent`, the built-in agent's long runs, one folder each (`operation.json`, `out`, `exit`), and `switches/`. |
 | `media/`                     | Garbage-collector roots of built install media.                       |
 
-On every agent, `X_NIX_AGENT_STATE_DIR` holds its long-run folders and `pull.json`, the pull-mode switches not yet
-reported. A guarded switch's watchdog keeps its folder under `/tmp`.
+On every agent, `X_NIX_AGENT_STATE_DIR` holds its long-run folders, `pull.json`, the pull-mode switches not yet
+reported, `pull.git`, where pull mode fetches a revision to check its signature, and `switches/`, where a guarded
+switch's watchdog keeps its folder (`X_NIX_SWITCH_FOLDERS`); one an older agent left in `/tmp` is still found.

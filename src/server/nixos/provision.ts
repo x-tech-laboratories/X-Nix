@@ -31,6 +31,8 @@ export interface InstallRequest {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
+  // The target's SSH host key line, checked before the install starts, or null to trust whatever answers.
+  host_key: string | null;
 }
 
 // What the install operation records, so the job's own command says what it installs.
@@ -58,6 +60,7 @@ export const media_format_labels: Record<MediaFormat, string> = { iso: "Installe
 const name_pattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 const address_pattern = /^[A-Za-z0-9][A-Za-z0-9.:%_-]*$/;
 const user_pattern = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+const host_key_pattern = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}$/;
 
 // Text that fits on one line and in a Nix string.
 function single_line(value: unknown): value is string {
@@ -79,6 +82,11 @@ export function parse_install_request(body: unknown): InstallRequest | string {
   if (!single_line(values.configuration)) return "Name the nixosConfigurations attribute to install";
   const agent = values.agent === undefined || values.agent === null || values.agent === "" ? null : values.agent;
   if (agent !== null && typeof agent !== "string") return "Name the host that runs nixos-anywhere";
+  // A key line as ssh-keyscan prints it may start with the address, and its comment is dropped.
+  const host_key_words = typeof values.host_key === "string" ? values.host_key.trim().split(/\s+/).filter(Boolean) : [];
+  const host_key_start = host_key_words.findIndex((word) => /^(ssh-|ecdsa-|sk-)/.test(word));
+  const host_key = host_key_start === -1 ? null : host_key_words.slice(host_key_start, host_key_start + 2).join(" ");
+  if (host_key_words.length > 0 && (host_key === null || !host_key_pattern.test(host_key))) return "Give the target's host key as one line from ssh-keyscan, such as ssh-ed25519 AAAA...";
   return {
     host, address, user, port,
     flake: (values.flake as string).trim(),
@@ -86,6 +94,7 @@ export function parse_install_request(body: unknown): InstallRequest | string {
     agent,
     stop_after_partitioning: values.stop_after_partitioning === true,
     generate_hardware_config: values.generate_hardware_config !== false,
+    host_key,
   };
 }
 
@@ -102,6 +111,7 @@ export function install_operation(settings: ProvisioningSettings, request: Insta
     agent_key_path: public_line === null ? null : settings.agent_key_path,
     generate_hardware_config: request.generate_hardware_config,
     stop_after_partitioning: request.stop_after_partitioning,
+    host_key: request.host_key,
     extra_args: settings.nixos_anywhere_args,
   };
 }

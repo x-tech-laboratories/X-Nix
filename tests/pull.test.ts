@@ -11,7 +11,7 @@ import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
 
 import { start_agent, type RunningAgent } from "../src/agent/agent.ts";
-import { parse_ls_remote, parse_pull_settings, pull_switch_operation, Puller, PullConfigError, type PullSettings } from "../src/agent/pull.ts";
+import { parse_ls_remote, parse_pull_settings, pull_switch_operation, Puller, PullConfigError, verify_operation, type PullSettings } from "../src/agent/pull.ts";
 import { operation_runner, operation_runs } from "../src/agent/tasks.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { create_hub } from "../src/server/agents/hub.ts";
@@ -31,21 +31,44 @@ function sleep(milliseconds: number) {
 
 describe("pull settings", () => {
   it("fill in their defaults, with the host's own name as the configuration", () => {
-    expect(parse_pull_settings({ remotes: ["https://git.example/config"] }, "odin")).toEqual({
+    expect(parse_pull_settings({ remotes: ["https://git.example/config"], allowed_signers: "/etc/x-nix/allowed_signers" }, "odin")).toEqual({
       remotes: [{ url: "https://git.example/config", branch: "main" }], after: 900, interval: 300, configuration: "odin", rebuild_bin: "nixos-rebuild",
-      rebuild_args: [], require_sudo: true, git_bin: "git",
+      rebuild_args: [], require_sudo: true, git_bin: "git", allowed_signers: "/etc/x-nix/allowed_signers", allow_unsigned: false,
     });
   });
 
+  it("need allowed signers unless unsigned commits are allowed outright", () => {
+    expect(() => parse_pull_settings({ remotes: ["https://git.example/config"] }, "odin")).toThrow(/allowed_signers/);
+    expect(() => parse_pull_settings({ remotes: ["https://git.example/config"], allowed_signers: "signers" }, "odin")).toThrow(/absolute path/);
+    expect(() => parse_pull_settings({ remotes: ["https://git.example/config"], allow_unsigned: "yes" }, "odin")).toThrow(/true or false/);
+    expect(parse_pull_settings({ remotes: ["https://git.example/config"], allow_unsigned: true }, "odin")).toMatchObject({ allowed_signers: null, allow_unsigned: true });
+  });
+
+  it("refuse remotes that can be tampered with on the way", () => {
+    for (const url of ["http://git.example/config", "git://git.example/config", "git+http://git.example/config"]) {
+      expect(() => parse_pull_settings({ remotes: [url], allow_unsigned: true }, "odin")).toThrow(/https:\/\/, ssh:\/\/ or file:\/\//);
+    }
+  });
+
+  it("fetch the revision into the agent's own repository and check its signature there", () => {
+    const settings = parse_pull_settings({ remotes: ["git+https://git.example/config"], allowed_signers: "/etc/signers" }, "odin");
+    expect(verify_operation(settings, settings.remotes[0], first_revision, "/var/lib/x-nix-agent/pull.git", "/etc/signers").steps.map((step) => step.argv)).toEqual([
+      ["git", "init", "--quiet", "--bare", "/var/lib/x-nix-agent/pull.git"],
+      ["git", "-C", "/var/lib/x-nix-agent/pull.git", "fetch", "--quiet", "--no-tags", "--depth", "1", "--", "https://git.example/config", first_revision],
+      ["git", "-C", "/var/lib/x-nix-agent/pull.git", "-c", "gpg.ssh.allowedSignersFile=/etc/signers", "verify-commit", first_revision],
+    ]);
+  });
+
   it("refuse no remotes, a remote that is not a URL, or a branch that is not a name", () => {
-    expect(() => parse_pull_settings({ remotes: [] }, "odin")).toThrow(PullConfigError);
-    expect(() => parse_pull_settings({ remotes: [{ url: "git@github.com:owner/config.git" }] }, "odin")).toThrow(/https:\/\//);
-    expect(() => parse_pull_settings({ remotes: [{ url: "https://git.example/config", branch: "--evil" }] }, "odin")).toThrow(PullConfigError);
-    expect(() => parse_pull_settings({ remotes: ["https://git.example/config"], after: "soon" }, "odin")).toThrow(PullConfigError);
+    const unsigned = { allow_unsigned: true };
+    expect(() => parse_pull_settings({ remotes: [], ...unsigned }, "odin")).toThrow(PullConfigError);
+    expect(() => parse_pull_settings({ remotes: [{ url: "git@github.com:owner/config.git" }], ...unsigned }, "odin")).toThrow(/https:\/\//);
+    expect(() => parse_pull_settings({ remotes: [{ url: "https://git.example/config", branch: "--evil" }], ...unsigned }, "odin")).toThrow(PullConfigError);
+    expect(() => parse_pull_settings({ remotes: ["https://git.example/config"], after: "soon", ...unsigned }, "odin")).toThrow(PullConfigError);
   });
 
   it("switch to the branch fixed at the revision, and read the head ls-remote prints", () => {
-    const settings = parse_pull_settings({ remotes: ["https://git.example/config"], rebuild_args: ["--option", "x y"] }, "odin");
+    const settings = parse_pull_settings({ remotes: ["https://git.example/config"], rebuild_args: ["--option", "x y"], allow_unsigned: true }, "odin");
     expect(pull_switch_operation(settings, settings.remotes[0], first_revision)).toEqual({
       kind: "programs",
       steps: [{ argv: ["sudo", "-n", "nixos-rebuild", "switch", "--flake", `git+https://git.example/config?ref=refs%2Fheads%2Fmain&rev=${first_revision}#odin`, "--option", "x y"] }],
@@ -63,7 +86,7 @@ describe("pull mode", () => {
     const folder = mkdtempSync(join(tmpdir(), "x-nix-pull-"));
     const runs = operation_runs(folder, { tail_interval_in_milliseconds: 10 });
     const settings: PullSettings = parse_pull_settings({
-      remotes: ["https://primary.example/config", { url: "https://mirror.example/config", branch: "main" }], after, rebuild_bin: "echo", require_sudo: false,
+      remotes: ["https://primary.example/config", { url: "https://mirror.example/config", branch: "main" }], after, rebuild_bin: "echo", require_sudo: false, allow_unsigned: true,
     }, "odin");
     const remote_answers = new Map<string, RunResult>();
     const asked: string[] = [];
@@ -147,6 +170,59 @@ describe("pull mode", () => {
   });
 });
 
+describe("pull mode with signed commits", () => {
+  // A local repository with one commit signed by the allowed key and one by nobody, and a puller that runs its operations for real.
+  function make_signed_remote() {
+    const folder = mkdtempSync(join(tmpdir(), "x-nix-signed-"));
+    const key = join(folder, "signer");
+    execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "signer", "-f", key]);
+    const allowed_signers = join(folder, "allowed_signers");
+    writeFileSync(allowed_signers, `signer@example ${readFileSync(`${key}.pub`, "utf8").trim()}\n`);
+    const repository = join(folder, "config");
+    const git = (...args: string[]) => execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
+    execFileSync("git", ["init", "--quiet", "--initial-branch", "main", repository]);
+    git("config", "user.name", "Signer");
+    git("config", "user.email", "signer@example");
+    git("config", "gpg.format", "ssh");
+    git("config", "user.signingkey", key);
+    const commit = (message: string, sign: boolean) => {
+      writeFileSync(join(repository, "file"), message);
+      git("add", "file");
+      git("commit", "--quiet", sign ? "--gpg-sign" : "--no-gpg-sign", "-m", message);
+      return git("rev-parse", "HEAD");
+    };
+    return { folder, allowed_signers, url: `file://${repository}`, commit };
+  }
+
+  function make_puller(remote_url: string, allowed_signers: string, folder: string) {
+    const runs = operation_runs(join(folder, "agent"), { tail_interval_in_milliseconds: 10 });
+    const settings = parse_pull_settings({ remotes: [remote_url], after: "0s", rebuild_bin: "echo", require_sudo: false, allowed_signers }, "odin");
+    const lines: string[] = [];
+    const puller = new Puller(settings, runs, join(folder, "agent"), { connected: () => false, report: () => {}, log: (line) => lines.push(line) });
+    return { puller, runs, lines };
+  }
+
+  it("switches to a commit an allowed key signed, and refuses one nobody signed only once", async () => {
+    const remote = make_signed_remote();
+    remote.commit("first", true);
+    const { puller, runs, lines } = make_puller(remote.url, remote.allowed_signers, remote.folder);
+    await puller.tick();
+
+    const signed = remote.commit("signed", true);
+    await puller.tick();
+    expect(puller.revision()).toBe(signed);
+    expect(runs.list()).toHaveLength(1);
+
+    while (runs.list().some((run) => run.state === "running")) await sleep(20);
+    const unsigned = remote.commit("unsigned", false);
+    await puller.tick();
+    await puller.tick();
+    expect(puller.revision()).toBe(signed);
+    expect(runs.list()).toHaveLength(1);
+    expect(lines.filter((line) => line.includes(`Not switching to ${unsigned}`))).toHaveLength(1);
+  }, 30_000);
+});
+
 // ── Reports ──────────────────────────────────────────────────────────────────
 
 describe("a pull report", () => {
@@ -223,7 +299,7 @@ describe("a reconnecting agent", () => {
 
     agent = start_agent({
       url, key_file, state_directory, host: "odin", agent_version: "test", log: () => {},
-      pull: parse_pull_settings({ remotes: ["https://git.example/config"], interval: "1h" }, "odin"),
+      pull: parse_pull_settings({ remotes: ["https://git.example/config"], interval: "1h", allow_unsigned: true }, "odin"),
     });
     for (let tries = 0; tries < 100 && (received.length === 0 || JSON.parse(readFileSync(join(state_directory, "pull.json"), "utf8")).records.length > 0); tries++) await sleep(20);
 

@@ -7,17 +7,19 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { descendants, lock_file_id, lock_holders, read_locks, read_processes, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
+
 import {
-  is_store_path, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
+  is_store_path, shared_watch_folder_parent, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
   type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import { person_command, run_steps, type Context } from "../programs.ts";
-import { descendants, lock_file_id, lock_holders, nix_database_lock, read_locks, read_processes, show_holders, type ProcessInfo } from "../waits.ts";
+import { nix_database_lock } from "../stalls.ts";
 import { system_profile, watch_files, write_whole } from "../watchdog.ts";
 import { link_target, real } from "./reads.ts";
 
@@ -35,6 +37,9 @@ const outcome_interval_in_milliseconds = 2000;
 // it stopped get to let go before they are killed.
 const nix_lock_patience_in_milliseconds = 60_000;
 const nix_lock_grace_in_milliseconds = 10_000;
+
+// switch-to-configuration's status when the new system is active but some units failed to start; the health checks decide then.
+export const units_failed_status = 4;
 
 // ── Switch ───────────────────────────────────────────────────────────────────
 
@@ -99,7 +104,9 @@ export async function switch_system(context: Context, operation: SwitchOperation
     mark(`outcome ${ended.outcome}`);
     return 1;
   }
-  const { status } = ended;
+  const units_failed = ended.status === units_failed_status;
+  if (units_failed) mark("units-failed");
+  const status = units_failed ? 0 : ended.status;
   // post_switch runs whatever the activation returned, and its own status never changes the switch's.
   if (operation.post_switch !== null) await context.program(context, operation.post_switch, { echo: true });
   if (watch === null || folder === null) return status;
@@ -208,6 +215,7 @@ async function health_checks(context: Context, watch: SwitchWatch, folder: strin
 // starts the watchdog in a session of its own.
 function start_watchdog(watch: SwitchWatch, folder: string): void {
   const parent = watch_folders_parent();
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
   for (const name of readdirSync(parent)) {
     if (!name.startsWith(watch_folder_prefix)) continue;
     try {
@@ -249,8 +257,16 @@ export async function changed_parts(context: Context, defer: SwitchDefer, runnin
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 
+// A switch's folder, or the one an older agent made for it in /tmp, which counts only when this user owns it.
+function existing_watch_folder(token: string): string {
+  const folder = watch_folder(token);
+  if (existsSync(folder)) return folder;
+  const shared = watch_folder(token, shared_watch_folder_parent);
+  return existsSync(shared) && lstatSync(shared).isDirectory() && lstatSync(shared).uid === process.getuid?.() ? shared : folder;
+}
+
 export async function confirm_switch(context: Context, operation: ConfirmSwitchOperation): Promise<number> {
-  const folder = watch_folder(operation.token);
+  const folder = existing_watch_folder(operation.token);
   if (!existsSync(folder)) {
     context.err.write(`${folder} is gone`);
     return 1;
@@ -260,7 +276,7 @@ export async function confirm_switch(context: Context, operation: ConfirmSwitchO
 }
 
 export async function signal_rollback(context: Context, operation: SignalRollbackOperation): Promise<number> {
-  const folder = watch_folder(operation.token);
+  const folder = existing_watch_folder(operation.token);
   if (!existsSync(folder)) {
     context.err.write(`${folder} is gone`);
     return 1;
