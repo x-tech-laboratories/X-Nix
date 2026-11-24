@@ -346,11 +346,12 @@ function cache_view(cache: Cache, store_state: Store, deployments: Iterable<Depl
   };
 }
 
-const host_action_labels: Record<HostActionId, string> = { collect: "Collect garbage", reboot: "Reboot" };
+const host_action_labels: Record<HostActionId, string> = { collect: "Collect garbage", reboot: "Reboot", wake: "Wake" };
 
-const host_confirmations: Record<HostActionId, (name: string) => string> = {
+const host_confirmations: Record<HostActionId, (name: string) => string | null> = {
   collect: (name) => `Collect garbage on ${name}? The generations it deletes can no longer be booted or rolled back to.`,
   reboot: (name) => `Reboot ${name}? Everything running on it stops until it is back up.`,
+  wake: () => null,
 };
 
 function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: string | null): HostView {
@@ -376,7 +377,8 @@ function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: s
     reading: host.reading(),
     state: host.state(),
     running_job: host.running_job(),
-    actions: host_action_ids.map((id) => ({ id: id as ActionId, label: host_action_labels[id], refusal: host.action_refusal(id), confirm: host_confirmations[id](settings.name) })),
+    // Wake is offered only on a host that can be woken.
+    actions: host_action_ids.filter((id) => id !== "wake" || settings.wake !== null).map((id) => ({ id: id as ActionId, label: host_action_labels[id], refusal: host.action_refusal(id), confirm: host_confirmations[id](settings.name) })),
     next_boot_refusal: host.next_boot_refusal(host.reading()?.boot?.entries[0]?.id ?? ""),
     system: reading === null ? null : { current: reading.current, booted: reading.booted, version: reading.version, reboot_required: reading.reboot_required },
     deployments: deployments.map(({ settings: { id, name } }) => ({ id, name })),

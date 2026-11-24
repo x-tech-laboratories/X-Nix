@@ -43,7 +43,9 @@ export const routes: Record<string, RouteToolSpec> = {
   refresh_host: { route: "POST /api/hosts/:name/refresh", description: "Reads a host's store and boot entries again now, and answers with the host.", params: [host] },
   run_host_action: {
     route: "POST /api/hosts/:name/actions/:action",
-    description: "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine.",
+    description:
+      "Runs an action on a host: collect frees space by collecting the Nix store's garbage, reboot restarts the machine, " +
+      "and wake sends a sleeping host its wake-on-LAN packet without waiting for it to come up.",
     params: [host, { name: "action", schema: one_of(host_action_ids) }],
   },
   set_next_boot: {
