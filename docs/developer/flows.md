@@ -247,8 +247,11 @@ as trusted as the machines they build for, and when the same host evaluates and 
 ## A guarded switch
 
 `src/agent/operations/switch.ts`, `src/agent/watchdog.ts`, `Deployment.tend_switch()`.
-The switch prints `@@x-nix-switch` marker lines (`phase …`, `activated`, `awaiting-confirmation`, `refused …`,
-`outcome …`), which `switch_verdict()` reads.
+The switch prints `@@x-nix-switch <token>` marker lines (`phase …`, `activated`, `awaiting-confirmation`, `refused …`,
+`outcome …`) with the run's marker token, which `switch_verdict()` reads, ignoring any line without the job's token
+once the run has printed `@@x-nix-markers <token>` (see [marker lines](/developer/agent-protocol/#marker-lines)). In its
+confirmation window the watchdog looks for a `rollback` file before a `confirmed` one, so a rollback the health checks
+or X-Nix asked for wins over a confirmation that came with it.
 
 ```mermaid
 sequenceDiagram

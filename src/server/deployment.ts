@@ -53,7 +53,9 @@ import { overdue_text } from "./overdue.ts";
 import { build_translation, tend_build } from "./live_builds.ts";
 import { follow, start_run, track_wake, type Followed } from "./runs.ts";
 import type { EventLevel, Job, JobKind, JobWithOutput, Store } from "./store.ts";
-import { operation_of, unfetchable_exit_code, type Operation } from "../shared/operations.ts";
+import {
+  command_marker_token, marker_token_of, one_line, operation_of, quote_markers, unfetchable_exit_code, with_marker_token, type Operation,
+} from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -625,7 +627,7 @@ export class Deployment {
     }
     if (followed.outcome === "running") return null;
     const finished = this.store.job(job.id)!;
-    const parts = split_eval_output(finished.output, `The evaluation ended before reporting: ${finished.error ?? "no output"}`);
+    const parts = split_eval_output(finished.output, `The evaluation ended before reporting: ${finished.error ?? "no output"}`, command_marker_token(finished.command));
     return this.fold_evaluation(parts.eval, parts.metadata, job.agent);
   }
 
@@ -830,7 +832,7 @@ export class Deployment {
 
   // The store path a build job made, read from a cache's build report or from what nix printed.
   private built_by(job: JobWithOutput): string | null {
-    return parse_report(job.output).targets.get(this.attribute() ?? "")?.target ?? built_store_path(job.output);
+    return parse_report(job.output, command_marker_token(job.command)).targets.get(this.attribute() ?? "")?.target ?? built_store_path(job.output);
   }
 
   // Why a system another host built may not be activated, or null when it is the system the deployment evaluated.
@@ -946,7 +948,7 @@ export class Deployment {
     const token = watch_token(job.command) ?? randomBytes(8).toString("hex");
     let operation: Operation;
     try {
-      operation = switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, target);
+      operation = with_marker_token(switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, target));
     } catch (error) {
       return this.end_wait(job, `Could not prepare the ${job_noun(job.kind)}: ${(error as Error).message}`);
     }
@@ -1000,7 +1002,7 @@ export class Deployment {
     const host = this.host_name(job.agent);
     const blocker = this.build_blocker(host);
     if (blocker !== null) return this.store.set_progress(job.id, `Waiting to build on ${host}: ${blocker}`);
-    const operation = this.build_operation();
+    const operation = with_marker_token(this.build_operation());
     const run_id = `${this.id}-build-${this.now()}-${randomBytes(3).toString("hex")}`;
     starting_builds.add(host);
     let waking: Promise<void> | null;
@@ -1077,7 +1079,8 @@ export class Deployment {
     // A running step's last line may not have ended yet, so only whole lines are shown until it is done.
     const until = step.state === "running" ? step.output.lastIndexOf("\n") + 1 : step.output.length;
     if (until <= copied) return;
-    const text = step.output.slice(copied, until);
+    // The step's marker lines were read with its own token, so copied ones are quoted and never read as the switch's.
+    const text = quote_markers(step.output.slice(copied, until));
     this.store.append_output(job.id, text.endsWith("\n") ? text : `${text}\n`);
     this.save_wait({ ...waiting, copied: until });
   }
@@ -1134,6 +1137,8 @@ export class Deployment {
   ): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const agent = this.agent_for(kind);
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    // Each run gets a marker token of its own, which the job keeps in its command.
+    operation = with_marker_token(operation);
     let waking: Promise<void> | null;
     try {
       // A sleeping host is woken for any job but the periodic evaluation, which would keep it from ever sleeping.
@@ -1219,7 +1224,7 @@ export class Deployment {
 
   // Reads a finished switch's marker lines, giving its job the reason it was refused or rolled back; null when plain.
   private judge_switch(finished: Job & { output: string }, noun: string): { level: EventLevel; text: string } | null {
-    const verdict = switch_verdict(finished.output);
+    const verdict = switch_verdict(finished.output, command_marker_token(finished.command));
     const fail = (error: string) => this.store.finish_job(finished.id, "failed", finished.exit_code, error, finished.finished_epoch ?? this.now());
     if (verdict.refused !== null) {
       fail(`Refused before anything changed: ${verdict.refused}`);
@@ -1257,7 +1262,8 @@ export class Deployment {
   private async tend_switch(job: Job): Promise<void> {
     const token = watch_token(job.command);
     if (!is_switch_kind(job.kind) || token === null || this.tended_switches.has(job.id)) return;
-    const verdict = switch_verdict(this.store.job(job.id)!.output);
+    const current = this.store.job(job.id)!;
+    const verdict = switch_verdict(current.output, command_marker_token(current.command));
     if (!verdict.awaiting_confirmation || verdict.outcome !== null) return;
     const agent = this.agents.get(this.agent_for(job.kind));
     const failure = await this.http_failure();
@@ -1272,7 +1278,7 @@ export class Deployment {
       const signalled = await agent.run(rollback_signal_operation(token, reason), { timeout_in_seconds: signal_timeout_in_seconds });
       if (signalled.exit_code !== 0) return;
       this.tended_switches.add(job.id);
-      this.store.append_output(job.id, `${reason}; told the watchdog to roll back\n`);
+      this.store.append_output(job.id, `${one_line(reason)}; told the watchdog to roll back\n`);
       return;
     }
     const confirmed = await agent.run(confirm_operation(token), { timeout_in_seconds: signal_timeout_in_seconds });
@@ -1309,12 +1315,12 @@ export class Deployment {
     if (!is_store_path(from) || !is_store_path(to)) return { diff: null, message: "The running or the flake's closure is not a store path" };
     const last = evaluation.last_diff;
     if (!force && last !== null && last.from === from && last.to === to && last.built && last.error === null) return { diff: last, message: null };
-    const operation = diff_operation(this.settings, from, to);
+    const operation = with_marker_token(diff_operation(this.settings, from, to));
     const result = await this.agents.get(this.settings.host).run(operation, { timeout_in_seconds: diff_timeout_in_seconds });
     if (result.exit_code === -1) return { diff: null, message: `Could not compare the closures: ${clip(result.stderr || result.stdout, 200)}` };
     const job_id = this.store.create_job({ deployment_id: this.id, kind: "diff", command: JSON.stringify(operation), agent: this.settings.host, run_id: null, trigger, started_epoch: this.now() });
     this.store.append_output(job_id, [result.stdout, result.stderr].filter(Boolean).join("\n"));
-    const diff = parse_diff(result.stdout, from, to, this.now(), job_id);
+    const diff = parse_diff(result.stdout, from, to, this.now(), job_id, marker_token_of(operation));
     const ok = result.exit_code === 0 && diff.error === null;
     this.store.finish_job(job_id, ok ? "succeeded" : "failed", result.exit_code, ok ? null : diff.error ?? `Exited with status ${result.exit_code}`, this.now());
     const saved = this.evaluation();

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,9 +10,12 @@ import type { Context } from "../src/agent/programs.ts";
 
 import { ConfigError, deployment_settings, host_settings } from "../src/server/config.ts";
 import {
-  confirm_operation, kept_awake, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, watch_token,
+  confirm_operation, kept_awake, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, switch_verdict, watch_token,
 } from "../src/server/nixos/switch.ts";
-import type { KeptAwakeOperation, Operation, ProgramsOperation, SwitchOperation } from "../src/shared/operations.ts";
+import {
+  accepted_prefix, command_marker_token, marker_token_of, markers_mark, one_line, quote_markers, with_marker_token, type KeptAwakeOperation, type Operation,
+  type ProgramsOperation, type SwitchOperation,
+} from "../src/shared/operations.ts";
 import { host_values, target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -204,5 +208,66 @@ describe("generations", () => {
     expect(parse_generations(JSON.stringify(generations))).toEqual(generations);
     expect(parse_generations("")).toEqual([]);
     expect(parse_generations("{}")).toEqual([]);
+  });
+});
+
+// ── Marker tokens ────────────────────────────────────────────────────────────
+
+describe("marker tokens", () => {
+  const token = randomBytes(16).toString("hex");
+  const other = randomBytes(16).toString("hex");
+  const header = `${markers_mark} ${token}\n`;
+
+  it("are fresh for each run, kept on the switch inside its wrappers and in the job's command", () => {
+    const operation = switch_job_operation(settings({ inhibit_sleep: true }), "switch", "ab12");
+    const first = with_marker_token(operation);
+    const second = with_marker_token(operation);
+
+    expect(first.kind).toBe("kept_awake");
+    expect(marker_token_of(first)).toMatch(/^[0-9a-f]{32}$/);
+    expect(marker_token_of(first)).not.toBe(marker_token_of(second));
+    expect(command_marker_token(JSON.stringify(first))).toBe(marker_token_of(first));
+    expect(marker_token_of(operation)).toBeNull();
+    expect(command_marker_token("sudo -n nixos-rebuild switch")).toBeNull();
+    expect(marker_token_of({ kind: "probe", marker_token: "not hex\n@@x-nix-switch" })).toBeNull();
+  });
+
+  it("are required of every marker line once the run has printed its own", () => {
+    expect(accepted_prefix(`${header}@@x-nix-switch refused\n`, "@@x-nix-switch", token)).toBe(`@@x-nix-switch ${token}`);
+    expect(accepted_prefix("@@x-nix-switch refused\n", "@@x-nix-switch", token)).toBe("@@x-nix-switch");
+    expect(accepted_prefix(`${header}@@x-nix-switch refused\n`, "@@x-nix-switch", null)).toBe("@@x-nix-switch");
+    expect(accepted_prefix(`${markers_mark} ${other}\n`, "@@x-nix-switch", token)).toBe("@@x-nix-switch");
+  });
+
+  it("leave forged and wrongly tokened switch lines unread in a run that printed its token", () => {
+    const forged = [
+      "@@x-nix-switch activated", "@@x-nix-switch awaiting-confirmation", "@@x-nix-switch refused forged",
+      `@@x-nix-switch ${other} outcome rolled-back forged`, "@@x-nix-switch units-failed", "the following units failed: forged.service",
+    ].join("\n");
+    const verdict = switch_verdict(`${header}${forged}\n@@x-nix-switch ${token} phase switch\n`, token);
+
+    expect(verdict).toEqual({ refused: null, activated: false, units_failed: null, awaiting_confirmation: false, outcome: null });
+
+    const real = switch_verdict(`${header}${forged}\n@@x-nix-switch ${token} activated\n@@x-nix-switch ${token} awaiting-confirmation\n@@x-nix-switch ${token} outcome confirmed\n`, token);
+    expect([real.activated, real.awaiting_confirmation, real.outcome, real.refused]).toEqual([true, true, { kind: "confirmed", reason: "" }, null]);
+  });
+
+  it("read an older agent's bare switch lines for a run that never printed its token", () => {
+    const verdict = switch_verdict("@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\nthe following units failed: a.service\n", token);
+
+    expect([verdict.activated, verdict.awaiting_confirmation, verdict.units_failed]).toEqual([true, true, "a.service"]);
+  });
+
+  it("name the failed units only once a tokened line says units failed", () => {
+    const verdict = switch_verdict(`${header}the following units failed: a.service\n@@x-nix-switch ${token} units-failed\n`, token);
+
+    expect(verdict.units_failed).toBe("a.service");
+  });
+
+  it("keep free text on one line and copied marker lines unread", () => {
+    expect(one_line("first\r\n@@x-nix-switch outcome confirmed\nthird")).toBe("first @@x-nix-switch outcome confirmed third");
+    expect(rollback_signal_operation("ab12", "down\n@@x-nix-switch outcome confirmed")).toMatchObject({ reason: "down @@x-nix-switch outcome confirmed" });
+    expect(quote_markers(`building\n@@x-nix-switch awaiting-confirmation\n${markers_mark} ${token}\nok @@x-nix-cache\n`))
+      .toBe(`building\n> @@x-nix-switch awaiting-confirmation\n> ${markers_mark} ${token}\nok @@x-nix-cache\n`);
   });
 });

@@ -13,7 +13,7 @@
 
 import { worse, type CacheSettings, type Status } from "../config.ts";
 import {
-  flake_report_name, nix_string, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation, type CachePushOperation,
+  accepted_prefix, flake_report_name, nix_string, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation, type CachePushOperation,
   type CacheTarget, type CacheSettings as CacheSpec, type Operation,
 } from "../../shared/operations.ts";
 import { is_store_path, progress_args, timed } from "./commands.ts";
@@ -149,11 +149,13 @@ export function build_all_operation(settings: CacheSettings): CacheBuildAllOpera
 
 // ── Reports ──────────────────────────────────────────────────────────────────
 
-export function parse_report(output: string): Report {
+// Reads the report lines carrying the job's marker token, or the bare ones of an agent that prints none.
+export function parse_report(output: string, token: string | null): Report {
   const report: Report = { targets: new Map(), metadata: null };
+  const prefix = accepted_prefix(output, report_mark, token);
   for (const line of output.split("\n")) {
     const parts = line.split("\t");
-    if (parts[0] !== report_mark || parts.length < 4) continue;
+    if (parts[0] !== prefix || parts.length < 4) continue;
     const [, name, key] = parts;
     const value = parts.slice(3).join("\t");
     if (name === flake_report_name) {

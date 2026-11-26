@@ -22,7 +22,7 @@ import { format_duration } from "@x-tech-laboratories/x-libs/durations";
 import type { DeploymentSettings } from "../config.ts";
 import { read_facts, type Generation } from "../../shared/facts.ts";
 import {
-  innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
+  accepted_prefix, innermost, marker_words, one_line, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
   type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
 import {
@@ -138,28 +138,36 @@ export function confirm_operation(token: string): ConfirmSwitchOperation {
 
 // What X-Nix asks the switch agent to tell the watchdog to roll back.
 export function rollback_signal_operation(token: string, reason: string): SignalRollbackOperation {
-  return { kind: "signal_rollback", token, reason };
+  return { kind: "signal_rollback", token, reason: one_line(reason) };
 }
 
-// Reads the marker lines of a switch's output.
-export function switch_verdict(output: string): SwitchVerdict {
+// Reads the marker lines of a switch's output that carry the job's marker token, or, for a run by an agent too old to
+// print one, the bare marker lines; the failed units a plain line names count only once a marker line says units failed.
+export function switch_verdict(output: string, token: string | null): SwitchVerdict {
   const verdict: SwitchVerdict = { refused: null, activated: false, units_failed: null, awaiting_confirmation: false, outcome: null };
+  const prefix = accepted_prefix(output, switch_mark, token);
+  const strict = prefix !== switch_mark;
+  let named: string | null = null;
+  let marked_failed = false;
   for (const line of output.split("\n")) {
     const failed = /the following units failed: (.+)$/.exec(line);
-    if (failed !== null) verdict.units_failed = failed[1]!.trim();
-    if (!line.startsWith(`${switch_mark} `)) continue;
-    const words = line.slice(switch_mark.length + 1).trim();
+    if (failed !== null) named = failed[1]!.trim();
+    const marked = marker_words(line, prefix);
+    if (marked === null) continue;
+    const words = marked.trim();
     const space = words.indexOf(" ");
     const [kind, rest] = space === -1 ? [words, ""] : [words.slice(0, space), words.slice(space + 1)];
     if (kind === "refused") verdict.refused = rest;
     else if (kind === "activated") verdict.activated = true;
-    else if (kind === "units-failed") verdict.units_failed ??= "units it did not name";
+    else if (kind === "units-failed") marked_failed = true;
     else if (kind === "awaiting-confirmation") verdict.awaiting_confirmation = true;
     else if (kind === "outcome") {
       const split = rest.indexOf(" ");
       verdict.outcome = split === -1 ? { kind: rest, reason: "" } : { kind: rest.slice(0, split), reason: rest.slice(split + 1) };
     }
   }
+  if (marked_failed) verdict.units_failed = named ?? "units it did not name";
+  else if (!strict) verdict.units_failed = named;
   return verdict;
 }
 
