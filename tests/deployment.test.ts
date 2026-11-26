@@ -5,7 +5,7 @@ import { Cache } from "../src/server/cache.ts";
 import { cache_settings, deployment_settings, flake_settings, host_settings } from "../src/server/config.ts";
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { report_mark } from "../src/server/nixos/attic.ts";
-import { Store } from "../src/server/store.ts";
+import { output_cut_line, Store } from "../src/server/store.ts";
 import {
   announcement, clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
   mark_line, rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
@@ -541,6 +541,23 @@ describe("building elsewhere", () => {
     expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
     expect(harness.store.job(outcome.job_id!)!.output).toContain("The cache holds the system; switching");
     expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+  });
+
+  it("keeps showing a build's output in its waiting switch after the build's stored output was cut", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch");
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
+    const lines = (megabytes: number) => `${"x".repeat(99)}\n`.repeat((megabytes * 2 ** 20) / 100);
+    harness.builder.write(build, lines(12));
+    await harness.deployment.cycle();
+    expect(harness.deployment.evaluation().switch_wait?.copied).toBeGreaterThan(12 * 10 ** 6);
+
+    harness.builder.write(build, `${lines(6)}after the cut\n`);
+    await harness.deployment.cycle();
+
+    const build_job = harness.store.job(harness.deployment.evaluation().switch_wait!.step_job_id!)!;
+    expect(build_job.output).toContain(output_cut_line);
+    expect(harness.store.job(outcome.job_id!)!.output.endsWith("after the cut\n")).toBe(true);
   });
 
   it("waits to build while another system builds on the same host, then builds", async () => {

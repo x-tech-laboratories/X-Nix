@@ -53,7 +53,7 @@ import { parse_probe, probe_operation, reboot_required, type ProbeFields } from 
 import { overdue_text } from "./overdue.ts";
 import { build_translation, tend_build } from "./live_builds.ts";
 import { follow, start_run, track_wake, type Followed } from "./runs.ts";
-import type { EventLevel, Job, JobKind, JobWithOutput, Store } from "./store.ts";
+import { output_cut_line, type EventLevel, type Job, type JobKind, type JobWithOutput, type Store } from "./store.ts";
 import {
   command_marker_token, marker_token_of, one_line, operation_of, quote_markers, unfetchable_exit_code, with_marker_token, type Operation,
 } from "../shared/operations.ts";
@@ -1123,7 +1123,10 @@ export class Deployment {
 
   // Shows in the switch's job what its step's job printed since the last poll, ending its last line once the step is done.
   private copy_step_output(job: Job, waiting: SwitchWait, step: Job & { output: string }): void {
-    const copied = waiting.copied ?? 0;
+    // A step's output shorter than what was copied had its middle cut, so copying goes on from the cut line.
+    const cut_at = step.output.indexOf(output_cut_line);
+    const resumed = cut_at === -1 ? 0 : cut_at + output_cut_line.length;
+    const copied = (waiting.copied ?? 0) > step.output.length ? resumed : waiting.copied ?? 0;
     // A running step's last line may not have ended yet, so only whole lines are shown until it is done.
     const until = step.state === "running" ? step.output.lastIndexOf("\n") + 1 : step.output.length;
     if (until <= copied) return;
