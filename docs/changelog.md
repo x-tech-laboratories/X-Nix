@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(provisioning): pin the target's host key on every connection of an install, and refuse an install without one
 - fix(pull): switch only to a revision that descends from the one deployed
 
 ### 2026-11-24

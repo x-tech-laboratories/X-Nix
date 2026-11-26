@@ -491,10 +491,15 @@ sequenceDiagram
     participant target as Target machine
 
     admin->>server: install (host, address, flake#configuration), address typed to confirm
+    server->>server: refuse with no host key unless trust_unknown_host
     server->>server: refuse if an install to that host or address runs
     server->>server: generate the new host's ed25519 key
     server->>agent: start install long run, private key on stdin only
     agent->>agent: write the key into a private extra-files folder
+    opt host key given
+        agent->>target: ssh with StrictHostKeyChecking=yes against the host key
+        agent->>agent: put an ssh pinned to the host key first on the PATH
+    end
     agent->>target: nixos-anywhere: kexec, disko, install, reboot
     agent->>target: nixos-generate-config (printed between markers)
     agent->>agent: remove the extra-files folder

@@ -98,7 +98,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 | `cache_build`     | Builds one target, pushes it, checks it.                                              |
 | `cache_push`      | Pushes one target, checks it.                                                         |
 | `cache_build_all` | `nix-eval-jobs` over every target, builds and pushes each as it is ready, checks all. |
-| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`.                     |
+| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`. With `host_key` it puts an `ssh` pinned to that key first on nixos-anywhere's PATH; without it, it runs only when `trust_unknown_host` is true. |
 | `media`           | Builds an ISO, netboot files or a kexec tarball and links it under `media_root_dir`.  |
 
 Collections, unchecked local flake updates and rollbacks are `programs` long runs.

@@ -351,8 +351,10 @@ export interface InstallOperation {
   agent_key_path: string | null;
   generate_hardware_config: boolean;
   stop_after_partitioning: boolean;
-  // The target's SSH host key line, which it must prove it holds before anything is sent to it; absent or null trusts whatever answers.
+  // The target's SSH host key line, which every SSH connection of the install must find; absent or null refuses the install unless trust_unknown_host.
   host_key?: string | null;
+  // Whether an install with no host key goes ahead, trusting whatever host key answers; absent means it does not.
+  trust_unknown_host?: boolean;
   extra_args: string[];
 }
 

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { generate_agent_key, parse_private_key, parse_public_key } from "@x-tech-laboratories/x-libs/agent/keys";
 
-import { host_key_check } from "../src/agent/operations/provision.ts";
+import { host_key_check, pinned_ssh_options } from "../src/agent/operations/provision.ts";
 import { run_operation } from "../src/agent/run.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { build_app, type ProvisioningView } from "../src/server/app.ts";
@@ -28,7 +28,7 @@ const folder = mkdtempSync(join(tmpdir(), "x-nix-provisioning-"));
 
 const request: InstallRequest = {
   host: "freya", address: "192.0.2.10", user: "root", port: 22, flake: "github:owner/fleet", configuration: "freya",
-  agent: null, stop_after_partitioning: false, generate_hardware_config: true, host_key: null,
+  agent: null, stop_after_partitioning: false, generate_hardware_config: true, host_key: null, trust_unknown_host: true,
 };
 
 const host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleHostKeyForXNixTestsOnly000000000000";
@@ -75,8 +75,8 @@ describe("provisioning settings", () => {
 
 describe("an install request", () => {
   it("fills in the SSH user and port, and checks each value", () => {
-    const parsed = parse_install_request({ host: "freya", address: "freya.lan", flake: "/srv/fleet", configuration: "freya" });
-    expect(parsed).toMatchObject({ user: "root", port: 22, agent: null, generate_hardware_config: true, stop_after_partitioning: false });
+    const parsed = parse_install_request({ host: "freya", address: "freya.lan", flake: "/srv/fleet", configuration: "freya", trust_unknown_host: true });
+    expect(parsed).toMatchObject({ user: "root", port: 22, agent: null, generate_hardware_config: true, stop_after_partitioning: false, trust_unknown_host: true });
     expect(parse_install_request({ ...request, host: "bad name" })).toContain("Name the new host");
     expect(parse_install_request({ ...request, address: "a;b" })).toContain("SSH address");
     expect(parse_install_request({ ...request, port: 70000 })).toContain("port");
@@ -86,9 +86,19 @@ describe("an install request", () => {
   it("takes the target's host key as ssh-keyscan prints it, and refuses anything else", () => {
     expect(parse_install_request({ ...request, host_key: `192.0.2.10 ${host_key}` })).toMatchObject({ host_key });
     expect(parse_install_request({ ...request, host_key: `${host_key} root@freya` })).toMatchObject({ host_key });
-    expect(parse_install_request({ ...request, host_key: "" })).toMatchObject({ host_key: null });
+    expect(parse_install_request({ ...request, host_key: "" })).toMatchObject({ host_key: null, trust_unknown_host: true });
+    expect(parse_install_request({ ...request, host_key, trust_unknown_host: true })).toMatchObject({ host_key, trust_unknown_host: false });
     expect(parse_install_request({ ...request, host_key: "ssh-ed25519 not;base64" })).toContain("host key");
     expect(parse_install_request({ ...request, host_key: "just words" })).toContain("host key");
+  });
+
+  it("is refused with no host key unless it trusts whatever key answers", () => {
+    for (const trust_unknown_host of [undefined, false]) {
+      const refusal = parse_install_request({ ...request, host_key: "", trust_unknown_host });
+      expect(refusal).toContain("ssh-keyscan -t ed25519 192.0.2.10");
+      expect(refusal).toContain("Trust whatever host key answers");
+    }
+    expect(parse_install_request({ ...request, trust_unknown_host: "yes" })).toContain("true or false");
   });
 });
 
@@ -149,8 +159,10 @@ describe("the install script", () => {
     expect(statSync(join(copied, "etc/x-nix-agent")).mode & 0o777).toBe(0o700);
     expect(statSync(join(copied, "etc/x-nix-agent/key")).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(copied, "etc/x-nix-agent/key"), "utf8") === key.private_text).toBe(true);
-    expect(ran.stdout).toContain("Installing github:owner/fleet#freya on root@192.0.2.10");
-    expect(parse_install_record(command)).toMatchObject({ host: "freya", public_line: key.public_line, agent_key_path: "/etc/x-nix-agent/key" });
+    expect(ran.stdout.split("\n")[0]).toBe("Installing github:owner/fleet#freya on root@192.0.2.10, trusting whatever SSH host key answers");
+    expect(ran.stdout).not.toContain(key.private_text.split("\n")[1]);
+    expect(parse_install_record(command)).toMatchObject({ host: "freya", public_line: key.public_line, agent_key_path: "/etc/x-nix-agent/key", trust_unknown_host: true });
+    expect(operation.trust_unknown_host).toBe(true);
     expect(parse_hardware_config(ran.stdout)).toContain('availableKernelModules = [ "nvme" ]');
   });
 
@@ -190,6 +202,61 @@ describe("the install script", () => {
       process.env.PATH = path;
     }
     expect(host_key_check(operation, "/tmp/known_hosts").slice(-4)).toEqual(["-p", "22", "root@192.0.2.10", "true"]);
+  });
+
+  it("puts a strict check against the pinned host key ahead of nixos-anywhere's own options on every ssh it runs", async () => {
+    const directory = mkdtempSync(join(folder, "pinned-"));
+    const ssh_key = join(directory, "ssh_key");
+    writeFileSync(ssh_key, "not a real key", { mode: 0o600 });
+    const bin = join(directory, "bin");
+    mkdirSync(bin);
+    // A stand-in ssh that records each call and answers as a target holding the pinned key would.
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf '%s ' "$@" >> "${directory}/ssh-calls"\necho >> "${directory}/ssh-calls"\nexit 0\n`);
+    chmodSync(join(bin, "ssh"), 0o755);
+    // A stand-in nixos-anywhere that logs in as the real one does, with host key checks turned off, and copies the extra files.
+    writeFileSync(join(bin, "nixos-anywhere"), `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in --extra-files) extra="$2"; shift ;; esac
+  shift
+done
+ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@192.0.2.10 true
+if [ -n "$extra" ]; then cp -a "$extra" "${directory}/copied"; fi
+`);
+    chmodSync(join(bin, "nixos-anywhere"), 0o755);
+    const key = generate_agent_key("x-nix-agent-freya");
+    const operation = install_operation(settings({ ssh_key }), { ...request, host_key, trust_unknown_host: false }, key.public_line);
+    const command = JSON.stringify(operation);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      const ran = await run_install(operation, key.private_text, bin);
+
+      expect(ran.status).toBe(0);
+      expect(ran.stdout.split("\n")[0]).toBe("Installing github:owner/fleet#freya on root@192.0.2.10, with its SSH host key pinned");
+      const [probe, installing] = readFileSync(join(directory, "ssh-calls"), "utf8").trim().split("\n");
+      expect(probe).toContain("StrictHostKeyChecking=yes");
+      const known_hosts = installing.split(" ")[3].replace(/^UserKnownHostsFile=/, "");
+      expect(installing.startsWith(`${pinned_ssh_options(known_hosts).join(" ")} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@192.0.2.10 true`)).toBe(true);
+      expect(readFileSync(join(directory, "copied/etc/x-nix-agent/key"), "utf8") === key.private_text).toBe(true);
+      expect(operation.trust_unknown_host).toBe(false);
+      expect(parse_install_record(command)).toMatchObject({ host_key, trust_unknown_host: false });
+      for (const text of [command, ran.stdout, readFileSync(join(directory, "ssh-calls"), "utf8")]) expect(text).not.toContain(key.private_text.split("\n")[1]);
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it("sends nothing when the operation has neither a host key nor trusts whatever answers", async () => {
+    const directory = mkdtempSync(join(folder, "unkeyed-"));
+    const ssh_key = join(directory, "ssh_key");
+    writeFileSync(ssh_key, "not a real key", { mode: 0o600 });
+    const operation = { ...install_operation(settings({ ssh_key }), request, generate_agent_key("x-nix-agent-freya").public_line), trust_unknown_host: undefined };
+
+    const ran = await run_install(operation, "key", fake_nixos_anywhere(directory));
+
+    expect(ran.status).toBe(2);
+    expect(ran.stdout).toContain("No SSH host key was given for 192.0.2.10, so nothing was sent to it");
+    expect(existsSync(join(directory, "arguments"))).toBe(false);
   });
 
   it("says plainly when nixos-anywhere is missing or the SSH key unreadable", async () => {
@@ -253,6 +320,7 @@ function is_link(path: string): boolean {
 describe("an install", () => {
   it("is refused until an SSH key is set, and for a host the config declares", async () => {
     expect((await make_provisioner({ ssh_key: null }).provisioner.install(request)).message).toContain("provisioning.ssh_key");
+    expect((await make_provisioner().provisioner.install({ ...request, trust_unknown_host: false })).message).toContain("ssh-keyscan");
     expect((await make_provisioner({}, { declared: ["freya"] }).provisioner.install(request)).message).toContain("already declares");
     expect((await make_provisioner().provisioner.install({ ...request, host: "host" })).message).toContain("server's own host");
   });
@@ -268,6 +336,8 @@ describe("an install", () => {
     expect(run.command).not.toContain(run.stdin!.split("\n")[1]);
     expect((await harness.provisioner.install({ ...request, host: "other" })).message).toContain("already running");
     expect(harness.provisioner.busy()).toBe(true);
+
+    expect(harness.store.events("freya")[0]).toMatchObject({ level: "warning", message: expect.stringContaining("trusting whatever host key answers") });
 
     harness.agent.end(run, install_output, 0);
     await harness.provisioner.cycle();
@@ -364,6 +434,10 @@ describe("/api/provisioning", () => {
     const cookie = String(login.headers["set-cookie"]).split(";")[0];
     const server = app;
     const post = (url: string, payload: object) => server.inject({ method: "POST", url, headers: { cookie }, payload });
+
+    const unkeyed = await post("/api/provisioning/install", { ...request, trust_unknown_host: false, confirm: "192.0.2.10" });
+    expect(unkeyed.statusCode).toBe(400);
+    expect(unkeyed.json().error).toContain("ssh-keyscan");
 
     const unconfirmed = await post("/api/provisioning/install", { ...request, confirm: "freya" });
     expect(unconfirmed.statusCode).toBe(400);

@@ -501,8 +501,10 @@ export interface InstallRecord {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  // The target's host key the install checked first; absent from an older install.
+  // The target's host key every SSH connection of the install had to find; absent from an older install.
   host_key?: string | null;
+  // Whether the install went ahead with no host key, trusting whatever key answered; absent from an older install.
+  trust_unknown_host?: boolean;
   public_line: string | null;
   agent_key_path: string;
 }
