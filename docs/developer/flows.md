@@ -462,12 +462,19 @@ flowchart TD
     away -- yes --> ask[git ls-remote each remote in order<br/>until one answers]
     ask --> first{first revision seen?}
     first -- yes --> note[only note it]
-    first -- no --> moved{head moved past the last deployed?}
+    first -- no --> moved{head differs from the deployed<br/>and the last refused revision?}
     moved -- no --> idle
-    moved -- yes --> sw[long run: nixos-rebuild switch --flake<br/>git+url?ref=refs/heads/branch&rev=…#configuration]
+    moved -- yes --> fetch[git fetch the head with its history<br/>into pull.git]
+    fetch -- failed --> idle
+    fetch --> ancestor{descends from the deployed revision?<br/>git merge-base --is-ancestor}
+    ancestor -- "no, and not allow_rewind" --> refuse[remember it as refused,<br/>keep a refusal report in pull.json]
+    ancestor -- yes --> signed{signed by an allowed signer?<br/>git verify-commit}
+    signed -- no --> refuse
+    signed -- yes --> sw[long run: nixos-rebuild switch --flake<br/>git+url?ref=refs/heads/branch&rev=…#configuration<br/>--no-update-lock-file]
     sw --> keep[keep a PullReport in pull.json]
+    refuse --> back
     keep --> back{server back?}
-    back -- yes --> send[send pulls; server records each as a job<br/>trigger agent pull, for every deployment on the host]
+    back -- yes --> send[send pulls; server records each switch as a job<br/>trigger agent pull, and each refusal as an error event,<br/>for every deployment on the host]
     send --> ack[pulls_received → drop those reports]
 ```
 

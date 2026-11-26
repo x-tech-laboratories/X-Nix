@@ -119,8 +119,11 @@ Long runs talk back to the server through lines in their output, which the parse
 
 After its `hello`, an agent that switched on its own while the server was away sends
 `pulls {pulls: PullReport[]}`. Each report names the run id, the Git remote, branch and revision, the operation, its
-times, exit code and the end of its output. The server records each as a job on every deployment of that host
-(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`.
+times, exit code and the end of its output. A report of a revision the agent refused, because it does not descend from
+the deployed revision or lacks an allowed signature, also carries `refused`, the reason, and an empty operation. The
+server records each switch as a job and each refusal as an error event on every deployment of that host
+(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`. A server that
+does not know `refused` records a refusal as a failed switch whose output is the reason.
 
 ## Adding an operation
 

@@ -10,6 +10,10 @@ version.
 
 ## Unreleased
 
+### 2026-11-26
+
+- fix(pull): switch only to a revision that descends from the one deployed
+
 ### 2026-11-24
 
 - docs(roadmap): note the flaky agent key test

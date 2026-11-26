@@ -1,5 +1,5 @@
 // Takes the switches an agent ran on its own from Git while X-Nix was unreachable into the job history of every
-// deployment on that host, once the agent is back and reports them.
+// deployment on that host, and the revisions it refused into their events, once the agent is back and reports them.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -30,18 +30,25 @@ export function read_report(raw: unknown): PullReport | null {
     finished_epoch: number("finished_epoch"),
     exit_code: number("exit_code"),
     output: (text("output") ?? "").slice(-output_limit_in_bytes),
+    refused: text("refused"),
   };
 }
 
 // ── Recording ────────────────────────────────────────────────────────────────
 
-// Adds each report as a finished switch to every deployment the host serves, once, answering with the run ids kept.
+// Adds each switch report as a finished job, and each refusal as an event, to every deployment the host serves, answering with the run ids kept.
 export function record_pulls(store: Store, deployments: Iterable<Deployment>, host: string, pulls: unknown[], now: number): string[] {
   const owners = [...deployments].filter((deployment) => deployment.settings.host === host);
   const kept: string[] = [];
   for (const raw of pulls) {
     const report = read_report(raw);
     if (report === null) continue;
+    if (report.refused) {
+      const what = `${report.revision.slice(0, 12)} of ${report.branch} from ${report.remote}`;
+      for (const deployment of owners) store.add_event(deployment.id, report.started_epoch, "error", `While X-Nix was unreachable, the agent refused ${what}: ${report.refused}`);
+      kept.push(report.run_id);
+      continue;
+    }
     for (const deployment of owners) {
       if (store.job_for_run(deployment.id, report.run_id) !== null) continue;
       const job_id = store.create_job({
