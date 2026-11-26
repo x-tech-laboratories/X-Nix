@@ -63,7 +63,9 @@ or a cache's push token, must be readable by the `x-nix-agent` user. With `local
 machine itself instead, as root through sudo rules, and needs no agent there; see [What runs as root](#what-runs-as-root).
 
 The server listens on `127.0.0.1:7720`. Put it behind a reverse proxy with HTTPS, such as nginx or Caddy, which agents
-and the browser both reach. `openFirewall = true` opens the port when you serve it directly.
+and the browser both reach. `openFirewall = true` opens the port when you serve it directly. The server limits sign-in
+tries by the visitor's address, which it reads from the proxy's `X-Forwarded-For` only when the proxy runs on the same
+machine, so a proxy on another machine makes every visitor share one limit.
 
 The module's `hosts`, `flakes`, `deployments` and `caches` take the settings in this guide, keyed by id; `provisioning`,
 `fleet` and `notifications` take theirs. Each setting has the same name as in the [configuration
@@ -82,6 +84,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `hosts`, `flakes`, `deployments`, `caches` | none | The things X-Nix watches, by id.                              |
 | `provisioning`, `fleet`, `notifications`   | none | Their settings.                                               |
 | `webhookSecretFile` | none            | Turns on the [push webhook](/user/integrations/#push-webhook).          |
+| `serverKeyFile`     | none            | The server's own key, which signs what it sends agents; see [step 6](#6-sign-what-the-server-sends-agents). |
 | `webhookDebounce`   | `10s`           | How long after the last push an evaluation starts.                      |
 | `historyRetention`  | `180d`          | How long finished jobs, builds, events and fleet runs are kept; `never` keeps them all. See [Jobs and builds](/user/jobs-and-builds/#how-long-history-is-kept). |
 | `path`              | none            | Extra programs on the PATH of the commands the server runs.             |
@@ -104,6 +107,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `X_NIX_STATE_DIR`            | `state`       | Where the database, backups and job output live.                     |
 | `X_NIX_SERVER_NAME`          | the hostname  | What the page calls the server's machine.                            |
 | `X_NIX_WEBHOOK_SECRET_FILE`  | none          | The push webhook's shared secret; the webhook is off without it.     |
+| `X_NIX_SERVER_KEY_FILE`      | none          | The server's ed25519 private key, which signs what it sends agents; without it agents tell the server only by its TLS certificate. |
 | `X_NIX_WEBHOOK_DEBOUNCE`     | `10s`         | How long after the last push to a deployment or flake it is evaluated or read. |
 | `X_NIX_HISTORY_RETENTION`    | `180d`        | How long finished jobs, builds, events and fleet runs are kept; `never` keeps them all. |
 | `X_NIX_SESSION_LIFETIME`, `X_NIX_REMEMBERED_LIFETIME` | `12h`, `30d` | How long a sign-in lasts without and with Keep me signed in. |
@@ -131,6 +135,49 @@ services.x-nix.deployments.workstation = {
   configuration = "workstation";
 };
 ```
+
+## 6. Sign what the server sends agents
+
+An agent runs what the server asks as root-equivalent, and without more it tells the server only by its TLS
+certificate. Give the server a key of its own and list its public line on every agent, and each agent then answers only
+a server that signs with that key, and refuses every message it did not sign.
+
+1. Make the key on any machine, and keep the private file as a secret, such as a sops secret:
+
+   ```sh
+   ssh-keygen -t ed25519 -N "" -C x-nix-server -f server_key
+   ```
+
+2. Give the private file to the server. It starts signing at once; agents that do not list its key keep working as
+   before.
+
+   ```nix
+   services.x-nix.serverKeyFile = config.sops.secrets.x_nix_server_key.path;
+   ```
+
+3. Put the line from `server_key.pub` in every agent's configuration, the server's own machine's agent included, and
+   deploy them. The Provision page shows the same line and its fingerprint under **Server key**.
+
+   ```nix
+   services.x-nix-agent.serverPublicKeys = [ "ssh-ed25519 AAAA... x-nix-server" ];
+   ```
+
+4. Check each host's Machine tab: **Server check** says *verifies the server's key* for an agent that checks it and
+   *TLS only* for one that does not. An agent with an empty list also gets a warning when its system is built.
+
+Give the server its key first: an agent that lists a key refuses a server that does not sign with it, so an agent
+updated before the server cannot connect until the server has its key. A server that is given a key file it cannot
+read, or one that is not ed25519, refuses to start rather than run unsigned. `localAgent = true` needs none of this for
+the server's own machine, whose built-in agent is the server itself.
+
+To change the key, make a new one, add its line beside the old one in every agent's `serverPublicKeys` and deploy them,
+switch the server's `serverKeyFile` to the new key, then drop the old line from the agents.
+
+The key signs but does not encrypt; TLS still does that. Someone who can end the agents' TLS connections, such as a
+proxy or whoever holds a certificate the agents trust, can still read everything that passes, and can change or make up
+what an agent answers the server. They cannot send an agent an operation, a long run or anything else the server did
+not sign, replay an old message or move one to another connection, and cannot log in to an agent as the server without
+the server's private key. Whoever holds that key, or controls the server, can still run anything on every agent.
 
 ## What runs as root
 

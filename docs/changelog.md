@@ -12,6 +12,10 @@ version.
 
 ### 2026-11-26
 
+- docs(auth): describe the sign-in limits and how a proxy shares them
+- feat(agents): sign what the server sends agents with a server key, and have agents check it
+- fix(auth): decide who may call a route by its matched pattern
+- build(deps): bump X-Libs to 0.89.0
 - test: raise the coverage floor to what the safer automatic update's tests reach
 - fix(jobs): keep showing a build's output in its switch after a cut, and trim an install's trailing newlines in linear time
 - fix(switch): fail a switch whose checks failed with nothing to roll back, in its job and in fleet runs

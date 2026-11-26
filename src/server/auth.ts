@@ -39,16 +39,22 @@ export function load_accounts(file_path?: string): Accounts {
   return load_accounts_from(accounts_variable, file_path);
 }
 
-// Downloads of build products and install media, which can hold secrets built into a system, and which wake a host.
-const download_routes = [/^\/api\/builds\/[^/]+\/products\/[^/]+$/, /^\/api\/provisioning\/media\/[^/]+\/download$/];
+// The routes of downloads of build products and install media, which can hold secrets built into a system, and which wake a host.
+const download_routes = new Set(["/api/builds/:id/products/:index", "/api/provisioning/media/:id/download"]);
+
+// Paths shaped like a download, for a request no route matched.
+const download_shapes = [/^\/api\/builds\/[^/]+\/products\/[^/]+\/?$/, /^\/api\/provisioning\/media\/[^/]+\/download\/?$/];
 
 // Reading is open to every user, but for downloads; anything else needs an admin. MCP is open to every user too, as
-// each tool's route is checked again on its own.
-export function needed(method: string, path: string): Need {
-  // A path still holding an escape needs an admin, so no spelling of a download reads as an open route.
-  if (path.includes("%")) return { role: "admin" };
-  if (download_routes.some((route) => route.test(path))) return { role: "admin" };
-  return method === "GET" || path === "/api/mcp" ? "any" : { role: "admin" };
+// each tool's route is checked again on its own. The decision follows the matched route's pattern, and a request no
+// route matched needs an admin unless it plainly reads a path shaped like no download.
+export function needed(method: string, path: string, route: string | null = null): Need {
+  if (route !== null) {
+    if (download_routes.has(route)) return { role: "admin" };
+    return method === "GET" || route === "/api/mcp" ? "any" : { role: "admin" };
+  }
+  if (method !== "GET" || path.includes("%") || download_shapes.some((shape) => shape.test(path))) return { role: "admin" };
+  return "any";
 }
 
 // Who a job or fleet run was started by, as its history shows it: the signed-in user, marked when they used a token.

@@ -155,7 +155,9 @@ function with_one_final_newline(text: string): string {
 // ── Snippets ─────────────────────────────────────────────────────────────────
 
 // The lines a person adds to make an installed host a deployment, and to its own configuration for its agent.
-export function install_snippets(record: InstallRecord, agent_url: string | null): { config_json: string; module_nix: string; host_nix: string } {
+export function install_snippets(
+  record: InstallRecord, agent_url: string | null, server_public_line: string | null = null,
+): { config_json: string; module_nix: string; host_nix: string } {
   const url = agent_url ?? "wss://x-nix.example/api/agent";
   const config_json = JSON.stringify({
     agents: { [record.host]: record.public_line },
@@ -169,17 +171,18 @@ export function install_snippets(record: InstallRecord, agent_url: string | null
     `  configuration = ${nix_string(record.configuration)};`,
     "};",
   ].join("\n");
-  return { config_json, module_nix, host_nix: agent_snippet(record.host, record.agent_key_path, url) };
+  return { config_json, module_nix, host_nix: agent_snippet(record.host, record.agent_key_path, url, server_public_line) };
 }
 
-// The new host's own agent settings, which its flake configuration needs before it is installed.
-export function agent_snippet(host: string, agent_key_path: string, agent_url: string): string {
+// The new host's own agent settings, which its flake configuration needs before it is installed, with the server's key when it has one.
+export function agent_snippet(host: string, agent_key_path: string, agent_url: string, server_public_line: string | null = null): string {
   return [
     "services.x-nix-agent = {",
     "  enable = true;",
     `  url = ${nix_string(agent_url)};`,
     `  keyFile = ${nix_string(agent_key_path)};`,
     `  host = ${nix_string(host)};`,
+    ...(server_public_line === null ? [] : [`  serverPublicKeys = [ ${nix_string(server_public_line)} ];`]),
     "};",
   ].join("\n");
 }

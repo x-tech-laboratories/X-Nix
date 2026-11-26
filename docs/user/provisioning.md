@@ -53,6 +53,9 @@ key. The job's first line and the install's record say which of the two an insta
 - **An agent key.** X-Nix makes the new host's key, places the private half on the new system at `agent_key_path`, and
   keeps only the public line. Once the install succeeds, X-Nix accepts that key, so the agent logs in on first boot,
   provided the configuration already enables `services.x-nix-agent` with that `keyFile`. The page shows the lines.
+  When the server has a [key of its own](/user/installing/#6-sign-what-the-server-sends-agents), the lines also list its
+  public line in `serverPublicKeys`; put them in the new host's configuration before you install, so its agent checks
+  the server from its first boot. The Provision page shows the server's public line and fingerprint under **Server key**.
 - **Config snippets** to declare the key and watch the host as a deployment. X-Nix never writes its config itself. A
   key the config declares for the same host wins.
 

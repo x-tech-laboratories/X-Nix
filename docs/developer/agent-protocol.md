@@ -19,11 +19,20 @@ Raise `protocol_version` when an agent and a server of different versions could 
 
 1. The agent opens the WebSocket with its host's name in the `x-nix-agent-host` header.
 2. The hub admits the upgrade only for a host with a key: declared in the config's `hosts[].agent_key`, or made by an
-   install (`provisioned_agents`). Config keys win.
-3. The server sends `challenge {nonce}`; the agent answers `hello {protocol, host, agent_version, runs, signature}`,
-   signing the nonce with the host's ed25519 private key.
-4. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
-   name; on failure the socket closes with one of X-Libs' `close_codes`.
+   install (`provisioned_agents`). Config keys win. Every refusal answers 401 with the same text, and the reason goes
+   to the server's log; too many sockets still logging in, from everywhere or from one address, answer 503.
+3. The server sends `challenge {nonce}`. With a server key (`X_NIX_SERVER_KEY_FILE`, read by `read_server_key` in
+   `agents/hub.ts` and given to X-Libs' hub as `server_key`) the challenge also carries the key's fingerprint and the
+   server's signature over the app, host, nonce and fingerprint.
+4. An agent with `server_keys` checks that signature against its list before signing anything, and hangs up with
+   close code 4009 on a missing or unknown key. It answers `hello {protocol, host, agent_version, runs, signature,
+   agent_nonce}`, signing both nonces and the server key's fingerprint, so the login fits only this connection and this
+   server. An agent without `server_keys` signs the plain nonce and leaves out `agent_nonce`, as before.
+5. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
+   name; on failure the socket closes with one of X-Libs' `close_codes`. A hello is at most 256 KiB before login.
+6. For an agent that sent `agent_nonce`, the hub wraps every later message in an envelope signed over both nonces, a
+   counter and the message, and the agent refuses anything unsigned, out of order or replayed. `AgentStatus` says so as
+   `signed_messages`, which the host view shows as **Server check**.
 
 The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host connects the same
 way over `ws://127.0.0.1`, unless `localAgent` has the in-process `LocalAgent` serve it, which implements the same
