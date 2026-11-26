@@ -1079,6 +1079,24 @@ describe("automatic switch", () => {
     expect(harness.deployment.running_job()?.trigger).toBe("automatic");
   });
 
+  it("warns when it switches automatically with nothing to roll a bad switch back", async () => {
+    const exposed = "Switches automatically with nothing to roll a bad switch back: turn on magic_rollback or add health checks";
+    const reading = async (values: Record<string, unknown>) => {
+      const harness = make_deployment(values);
+      await collect(harness, { probe: probe({ current: target_closure }) });
+      return harness.deployment.reading()!;
+    };
+
+    expect((await reading(automatic)).status).toBe("online");
+    const bare = await reading({ ...automatic, magic_rollback: false });
+    expect(bare.messages).toContainEqual({ level: "warning", text: exposed });
+    expect(bare.status).toBe("warning");
+    expect((await reading({ ...automatic, target_host: "root@host" })).messages).toContainEqual({ level: "warning", text: exposed });
+    for (const values of [automatic, { ...automatic, magic_rollback: false, health_commands: ["true"] }, { ...automatic, magic_rollback: false, health_urls: ["https://host.example/health"] }, { magic_rollback: false }]) {
+      expect((await reading(values)).messages.map((message) => message.text)).not.toContain(exposed);
+    }
+  });
+
   it("switches onto inputs of any age unless auto_switch_max_input_age is set", async () => {
     const harness = await drift_long_enough({ ...automatic, auto_switch_max_input_age: "2d" });
 

@@ -42,6 +42,9 @@ first sees the host drift to that exact system, which is never before the lock c
 system. Raise it to give a bad upstream commit more time to be noticed before anything switches to it; a person, a
 fleet run or a manual switch never waits for it.
 
+A deployment that switches automatically with `magic_rollback` off and no health checks warns that nothing would roll
+a bad switch back.
+
 With the fleet's `stages`, an automatic switch of a later stage waits for the earlier stages, as
 [staged automatic switches](/user/fleet/#staged-automatic-switches) describes.
 

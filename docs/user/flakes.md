@@ -55,6 +55,11 @@ naming the flake evaluates afresh, so drift shows at once.
 Update runs when you press it, daily at `update_at`, when an input check finds an input moved, and on a push to an
 input's repository through the [push webhook](/user/integrations/#push-webhook).
 
+The flake warns when updates run by themselves with `check_update` set to `none` while deployments naming it switch
+automatically, since nothing then stands between an upstream commit and those hosts. It also notes, without raising its
+status, when input checks watch every input and land each update straight on the branch, naming `watch_inputs` and,
+for a `github:` flake, `land_update`.
+
 ## Input checks
 
 Every `input_check_interval` the flake's host runs `git ls-remote` against each watched input's remote, asking only where

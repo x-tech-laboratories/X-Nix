@@ -76,6 +76,8 @@ export interface FlakeOptions {
   on_updated?: (flake: Flake) => void;
   // The attributes of the flake that deployments and caches naming it build, which an update checks before it writes the lock.
   checked_attributes?: (flake: Flake) => string[];
+  // The names of the deployments naming the flake that switch to it by themselves.
+  auto_switched_by?: (flake: Flake) => string[];
   // The time in seconds, which tests set.
   now?: () => number;
 }
@@ -90,6 +92,7 @@ export class Flake {
   private readonly agents: AgentPool;
   private readonly on_updated: (flake: Flake) => void;
   private readonly checked_attributes: (flake: Flake) => string[];
+  private readonly auto_switched_by: (flake: Flake) => string[];
   private readonly now: () => number;
   // Cycles and actions run one at a time.
   private queue: Promise<unknown> = Promise.resolve();
@@ -100,6 +103,7 @@ export class Flake {
     this.agents = options.agents;
     this.on_updated = options.on_updated ?? (() => {});
     this.checked_attributes = options.checked_attributes ?? (() => []);
+    this.auto_switched_by = options.auto_switched_by ?? (() => []);
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -231,6 +235,7 @@ export class Flake {
       raise("warning");
       messages.push({ level: "warning", text: `Scheduled update never runs: ${this.settings.url} has no lock file X-Nix can write` });
     }
+    messages.push(...this.exposure(raise));
     const reading = { ...facts, status, messages };
     const previous = this.reading();
     this.store.save_reading(this.id, reading);
@@ -238,6 +243,22 @@ export class Flake {
     const level = level_of_status[reading.status];
     const reason = messages.find((message) => message.level === level && level !== "info");
     this.store.add_event(this.id, reading.checked_epoch, level, reason ? `Now ${reading.status}: ${reason.text}` : `Now ${reading.status}`);
+  }
+
+  // What the update settings let reach the deployments without a person, as warnings and notes.
+  private exposure(raise: (next: Status) => void): Message[] {
+    const automatic = can_update(this.settings) && (this.settings.input_check_interval !== null || this.settings.update_at !== null);
+    const messages: Message[] = [];
+    const switching = automatic && this.settings.check_update === "none" ? this.auto_switched_by(this) : [];
+    if (switching.length > 0) {
+      raise("warning");
+      messages.push({ level: "warning", text: `Updates land unchecked, and ${switching.join(", ")} switch to them automatically: set check_update to build` });
+    }
+    if (this.checks_inputs() && this.settings.watch_inputs === null && this.settings.land_update !== "pull_request") {
+      const review = this.settings.url.startsWith("github:") ? ", or land_update to pull_request to review each one" : "";
+      messages.push({ level: "info", text: `Any input that moves upstream is updated and lands on the branch at once: set watch_inputs to pick which${review}` });
+    }
+    return messages;
   }
 
   // ── Input check ──────────────────────────────────────────────────────────

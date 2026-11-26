@@ -45,7 +45,7 @@ import {
   build_operation, cache_holds_operation, eval_operation, split_eval_output, switch_modes, timed_out_exit_code, type SwitchMode,
 } from "./nixos/commands.ts";
 import {
-  confirm_operation, generations_operation, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, switch_verdict, watch_token,
+  confirm_operation, generations_operation, has_health_checks, parse_generations, rollback_operation, rollback_signal_operation, switch_job_operation, switch_verdict, watch_token,
   type Generation,
 } from "./nixos/switch.ts";
 import { is_pin, local_path, parse_metadata, pinned_flake, short_revision } from "./nixos/flake.ts";
@@ -506,6 +506,10 @@ export class Deployment {
       }
     }
 
+    if (this.settings.auto_switch && !this.settings.magic_rollback && !has_health_checks(this.settings)) {
+      raise("warning");
+      messages.push({ level: "warning", text: "Switches automatically with nothing to roll a bad switch back: turn on magic_rollback or add health checks" });
+    }
     if (evaluation.metadata_error !== null) {
       raise("unavailable");
       messages.push({ level: "warning", text: `Could not read flake metadata: ${evaluation.metadata_error}` });
