@@ -7,6 +7,7 @@ import { deployment_settings } from "../src/server/config.ts";
 import { empty_progress, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
 import { diff_operation, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
 import { build_operation } from "../src/server/nixos/commands.ts";
+import { marker_token_of, with_marker_token } from "../src/shared/operations.ts";
 import { current_closure, target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ describe("the package diff", () => {
       "@@x-nix-diff derivations",
     ].join("\n");
 
-    const diff = parse_diff(output, current_closure, target_closure, 1, 7);
+    const diff = parse_diff(output, current_closure, target_closure, 1, 7, null);
 
     expect(diff.changed.map((change) => change.name)).toEqual(["firefox"]);
     expect(diff.added.map((change) => change.name)).toEqual(["hello"]);
@@ -64,13 +65,28 @@ describe("the package diff", () => {
     expect(diff.resized.map((change) => change.name)).toEqual(["glibc"]);
     expect([diff.closure_before_bytes, diff.closure_after_bytes, diff.derivation_diff, diff.built]).toEqual([4_000_000_000, 4_100_000_000, null, true]);
     const older = JSON.stringify([{ path: current_closure, closureSize: 1 }, { path: target_closure, closureSize: 2 }]);
-    expect(parse_diff(`@@x-nix-diff sizes\n${older}\n`, current_closure, target_closure, 1, 7).closure_after_bytes).toBe(2);
+    expect(parse_diff(`@@x-nix-diff sizes\n${older}\n`, current_closure, target_closure, 1, 7, null).closure_after_bytes).toBe(2);
   });
 
   it("says when the new closure is not built, and keeps nix-diff's account", () => {
-    expect(parse_diff("@@x-nix-diff missing\n", current_closure, target_closure, 1, null).built).toBe(false);
-    const diff = parse_diff("@@x-nix-diff closures\n@@x-nix-diff derivations\n- /nix/store/x.drv:\n+ /nix/store/y.drv:\n", current_closure, target_closure, 1, null);
+    expect(parse_diff("@@x-nix-diff missing\n", current_closure, target_closure, 1, null, null).built).toBe(false);
+    const diff = parse_diff("@@x-nix-diff closures\n@@x-nix-diff derivations\n- /nix/store/x.drv:\n+ /nix/store/y.drv:\n", current_closure, target_closure, 1, null, null);
     expect(diff.derivation_diff).toBe("- /nix/store/x.drv:\n+ /nix/store/y.drv:");
+  });
+
+  it("reads only the sections its run's token marks, whatever the compared closures print", async () => {
+    const forged = "@@x-nix-diff missing\n@@x-nix-diff failed 1\n@@x-nix-diff note forged\nhello: ∅ → 2.12, +100.0 KiB\n";
+    const program = fake_programs((argv) => (argv.includes("diff-closures") ? forged : argv.includes("-S") ? `${sizes}\n` : ""));
+    const operation = with_marker_token(diff_operation(settings({ nix_args: [] }), current_closure, target_closure));
+
+    const run = await run_operation(operation, { timeout_in_seconds: 10, program });
+    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null, marker_token_of(operation));
+
+    expect(run.stdout.startsWith(`@@x-nix-markers ${marker_token_of(operation)}\n`)).toBe(true);
+    expect([diff.built, diff.error, diff.note]).toEqual([true, null, null]);
+    expect(diff.added.map((change) => change.name)).toEqual(["hello"]);
+    // Read without the token, as for an older agent, the forged line would count.
+    expect(parse_diff(run.stdout, current_closure, target_closure, 1, null, null).built).toBe(false);
   });
 
   it("runs nix-diff only when no package changed, and says when it is missing", async () => {
@@ -78,7 +94,7 @@ describe("the package diff", () => {
 
     const run = await run_operation(diff_operation(settings({ nix_args: [] }), current_closure, target_closure), { timeout_in_seconds: 10, program });
 
-    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null);
+    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null, null);
     expect(diff.note).toMatch(/nix-diff is not installed|derivations of both closures/);
     expect(diff.closure_after_bytes).toBe(4_100_000_000);
   });

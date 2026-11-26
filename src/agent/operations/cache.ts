@@ -20,12 +20,12 @@ import {
   flake_report_name, fresh_lookup, missing_tool_exit_code, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation,
   type CachePushOperation, type CacheSettings, type CacheTarget,
 } from "../../shared/operations.ts";
-import { on_path, person_command, type Context } from "../programs.ts";
+import { marker, on_path, person_command, type Context } from "../programs.ts";
 
 // ── Reporting ────────────────────────────────────────────────────────────────
 
 function report(context: Context, name: string, key: string, value: string): void {
-  context.out.write(`${report_mark}\t${name}\t${key}\t${value.replace(/[\t\n]/g, " ")}\n`);
+  context.out.write(`${marker(context, report_mark)}\t${name}\t${key}\t${value.replace(/[\t\r\n]/g, " ")}\n`);
 }
 
 // The end of a program's error output, as short as a row can show.

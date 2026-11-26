@@ -13,7 +13,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { lock_holders, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
 
-import type { SwitchWatch } from "../shared/operations.ts";
+import { one_line, type SwitchWatch } from "../shared/operations.ts";
 import { link_target, real } from "./operations/reads.ts";
 import { spawn_program, type Context } from "./programs.ts";
 import { switch_lock } from "./stalls.ts";
@@ -74,8 +74,9 @@ export async function watch_switch(
   }
   deadline = now() + watch.confirm_window * 1000;
   for (;;) {
-    if (has(watch_files.confirmed)) return "confirmed";
+    // A rollback asked for by the health checks or by X-Nix wins over a confirmation that came with it.
     if (has(watch_files.rollback)) return roll_back(read(folder, watch_files.rollback));
+    if (has(watch_files.confirmed)) return "confirmed";
     if (now() >= deadline) return watch.magic_rollback ? roll_back(watch.unconfirmed_reason) : `kept ${watch.unconfirmed_reason}`;
     await sleep(look_interval_in_milliseconds);
   }
@@ -87,9 +88,10 @@ export function write_whole(path: string, text: string): void {
   renameSync(`${path}.part`, path);
 }
 
+// A file of the folder as one trimmed line, so a reason read from it can never start a second marker line.
 function read(folder: string, name: string): string {
   try {
-    return readFileSync(join(folder, name), "utf8").trim();
+    return one_line(readFileSync(join(folder, name), "utf8")).trim();
   } catch {
     return "";
   }

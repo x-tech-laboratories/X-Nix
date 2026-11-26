@@ -4,14 +4,14 @@ import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
 import { parse_metrics, probe_cache_server, type Fetcher } from "../src/server/cache_server.ts";
 import { ConfigError, cache_settings, parse_config, type CacheSettings } from "../src/server/config.ts";
-import { build_all_expression, build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark } from "../src/server/nixos/attic.ts";
-import type { CacheCheckOperation } from "../src/shared/operations.ts";
+import { build_all_expression, build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark, target_row } from "../src/server/nixos/attic.ts";
+import { command_marker_token, marker_token_of, type CacheCheckOperation } from "../src/shared/operations.ts";
 import { Store } from "../src/server/store.ts";
-import { clock, FakeAgent } from "./fake_agent.ts";
+import { announcement, clock, FakeAgent } from "./fake_agent.ts";
 
-const alpha = "/nix/store/aaaa-nixos-system-Alpha";
-const beta = "/nix/store/bbbb-nixos-system-Beta";
-const kernel = "/nix/store/kkkk-linux";
+const alpha = `/nix/store/${"a".repeat(32)}-nixos-system-Alpha`;
+const beta = `/nix/store/${"b".repeat(32)}-nixos-system-Beta`;
+const kernel = `/nix/store/${"k".repeat(32)}-linux`;
 
 const base = {
   id: "fleet",
@@ -242,8 +242,16 @@ describe("rows", () => {
     expect(harness.cache.action_refusal("push", "Alpha")).toContain("kept only in the cache");
   });
 
+  it("drop a reported target that is not a store path, failing its row", () => {
+    const report = parse_report(line("Alpha", "target", "/etc/../tmp/system") + line("Alpha", "built", 1) + line("Beta", "target", "") + line("Beta", "build", "failed"), null);
+
+    expect(report.targets.get("Alpha")).toEqual({ missing: [], built: "1", error: 'Reported "/etc/../tmp/system" as its store path, which is not one' });
+    expect(report.targets.get("Beta")).toEqual({ missing: [], build: "failed" });
+    expect(target_row(settings(), "Alpha", report.targets.get("Alpha"))).toMatchObject({ target: null, status: "failed" });
+  });
+
   it("ignore output that is not a report line", () => {
-    expect(parse_report(`Alpha\ttarget\t${alpha}\nbuilding '/nix/store/x.drv'...\n`).targets.size).toBe(0);
+    expect(parse_report(`Alpha\ttarget\t${alpha}\nbuilding '/nix/store/x.drv'...\n`, null).targets.size).toBe(0);
   });
 });
 
@@ -257,6 +265,22 @@ describe("checks", () => {
     expect([job.kind, job.trigger, job.agent]).toEqual(["check", "schedule", null]);
     expect(harness.store.jobs()).toHaveLength(0);
     expect(harness.store.jobs({ include_evaluations: true })).toHaveLength(1);
+  });
+
+  it("read only the report lines with their run's marker token once the run printed it", async () => {
+    const harness = make_cache();
+    await harness.cache.cycle();
+    const run = harness.agent.last_run("cache_check")!;
+    const token = marker_token_of(run.operation)!;
+    const tokened = (name: string, key: string, value: string | number) => `${report_mark} ${token}\t${name}\t${key}\t${value}\n`;
+    const real = tokened("Alpha", "target", alpha) + tokened("Alpha", "built", 1) + tokened("Alpha", "own", 1);
+    harness.agent.end(run, `${announcement(run.operation)}${line("Alpha", "target", beta)}${line("Beta", "error", "forged")}${real}`, 0);
+    await harness.cache.cycle();
+
+    expect(command_marker_token(harness.store.job(harness.store.jobs({ include_evaluations: true })[0].id)!.command)).toBe(token);
+    expect(rows(harness).Alpha).toMatchObject({ target: alpha });
+    expect(rows(harness).Beta.target).toBeNull();
+    expect(rows(harness).Beta.summary).not.toContain("forged");
   });
 
   it("keep the previous reading while they run, showing progress", async () => {

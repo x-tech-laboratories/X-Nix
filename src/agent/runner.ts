@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { text } from "node:stream/consumers";
 
 import { perform } from "./operations/index.ts";
-import { spawn_program, type Context } from "./programs.ts";
+import { marker_token_of } from "../shared/operations.ts";
+import { announce_marker_token, spawn_program, type Context } from "./programs.ts";
 import { watch_for_stalls } from "./stalls.ts";
 import { plan_file, type RunPlan } from "./tasks.ts";
 
@@ -20,14 +21,16 @@ const plan = JSON.parse(readFileSync(join(folder, plan_file), "utf8")) as RunPla
 const stdin = plan.stdin ? await text(process.stdin) : null;
 const out = openSync(join(folder, "out"), "a");
 const write = (chunk: Buffer | string) => void writeSync(out, typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-const stalls = watch_for_stalls(process.pid, write);
+const marker_token = marker_token_of(plan.operation);
+const stalls = watch_for_stalls(process.pid, write, {}, marker_token);
 const sink = {
   write: (chunk: Buffer | string) => {
     stalls.heard();
     write(chunk);
   },
 };
-const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: true, stdin, program: spawn_program };
+const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: true, stdin, program: spawn_program, marker_token };
+announce_marker_token(context);
 
 let status: number;
 try {

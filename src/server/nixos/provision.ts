@@ -11,7 +11,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { ProvisioningSettings } from "../config.ts";
-import { hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
+import { accepted_prefix, hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
 
 export { hardware_mark, media_mark, missing_tool_exit_code, nix_string } from "../../shared/operations.ts";
 
@@ -31,8 +31,10 @@ export interface InstallRequest {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  // The target's SSH host key line, checked before the install starts, or null to trust whatever answers.
+  // The target's SSH host key line, which every SSH connection of the install must find, or null when trust_unknown_host.
   host_key: string | null;
+  // Whether the install goes ahead with no host key, trusting whatever host key answers; never set with a host key.
+  trust_unknown_host: boolean;
 }
 
 // What the install operation records, so the job's own command says what it installs.
@@ -87,6 +89,8 @@ export function parse_install_request(body: unknown): InstallRequest | string {
   const host_key_start = host_key_words.findIndex((word) => /^(ssh-|ecdsa-|sk-)/.test(word));
   const host_key = host_key_start === -1 ? null : host_key_words.slice(host_key_start, host_key_start + 2).join(" ");
   if (host_key_words.length > 0 && (host_key === null || !host_key_pattern.test(host_key))) return "Give the target's host key as one line from ssh-keyscan, such as ssh-ed25519 AAAA...";
+  if (values.trust_unknown_host !== undefined && typeof values.trust_unknown_host !== "boolean") return "Say whether to trust whatever host key answers with true or false";
+  if (host_key === null && values.trust_unknown_host !== true) return missing_host_key(address);
   return {
     host, address, user, port,
     flake: (values.flake as string).trim(),
@@ -95,7 +99,13 @@ export function parse_install_request(body: unknown): InstallRequest | string {
     stop_after_partitioning: values.stop_after_partitioning === true,
     generate_hardware_config: values.generate_hardware_config !== false,
     host_key,
+    trust_unknown_host: host_key === null,
   };
+}
+
+// Why an install with no host key is refused, and how to find the key.
+export function missing_host_key(address: string): string {
+  return `Give the target's SSH host key, so the install talks only to ${address}: run \`ssh-keyscan -t ed25519 ${address}\` and check its fingerprint against \`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\` on the target's console, or tick "Trust whatever host key answers"`;
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -112,6 +122,7 @@ export function install_operation(settings: ProvisioningSettings, request: Insta
     generate_hardware_config: request.generate_hardware_config,
     stop_after_partitioning: request.stop_after_partitioning,
     host_key: request.host_key,
+    trust_unknown_host: request.host_key === null && request.trust_unknown_host,
     extra_args: settings.nixos_anywhere_args,
   };
 }
@@ -124,11 +135,12 @@ export function parse_install_record(command: string): InstallRecord | null {
 }
 
 // The hardware configuration an install printed, or null when it printed none.
-export function parse_hardware_config(output: string): string | null {
-  const start = output.indexOf(`\n${hardware_mark}\n`);
+export function parse_hardware_config(output: string, token: string | null): string | null {
+  const mark = accepted_prefix(output, hardware_mark, token);
+  const start = output.indexOf(`\n${mark}\n`);
   if (start === -1) return null;
-  const body_start = start + hardware_mark.length + 2;
-  const end = output.indexOf(`\n${hardware_mark} end`, body_start);
+  const body_start = start + mark.length + 2;
+  const end = output.indexOf(`\n${mark} end`, body_start);
   if (end === -1) return null;
   return output.slice(body_start, end).replace(/\n+$/, "\n");
 }
@@ -218,7 +230,8 @@ export function parse_media_record(command: string): MediaRecord | null {
 }
 
 // The store path a media build printed, or null when it printed none.
-export function parse_media_path(output: string): string | null {
-  const line = output.split("\n").filter((text) => text.startsWith(`${media_mark} `)).pop();
-  return line === undefined ? null : line.slice(media_mark.length + 1).trim() || null;
+export function parse_media_path(output: string, token: string | null): string | null {
+  const mark = accepted_prefix(output, media_mark, token);
+  const line = output.split("\n").filter((text) => text.startsWith(`${mark} `)).pop();
+  return line === undefined ? null : line.slice(mark.length + 1).trim() || null;
 }

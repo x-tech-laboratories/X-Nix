@@ -1,5 +1,6 @@
 // The cache operations the agent performs, against a scripted program runner rather than a real nix.
 
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,13 +8,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { cache_build, cache_build_all, cache_check, cache_push, nix_store } from "../src/agent/operations/cache.ts";
-import type { Context, ProgramResult, RunProgram, StreamUse } from "../src/agent/programs.ts";
+import { announce_marker_token, type Context, type ProgramResult, type RunProgram, type StreamUse } from "../src/agent/programs.ts";
 import { cache_settings, type CacheSettings } from "../src/server/config.ts";
 import { build_all_operation, build_operation, check_operation, parse_report, push_operation } from "../src/server/nixos/attic.ts";
 import type { CacheCheckOperation, CacheSettings as CacheSpec } from "../src/shared/operations.ts";
 
-const alpha = "/nix/store/aaaa-nixos-system-Alpha";
-const beta = "/nix/store/bbbb-nixos-system-Beta";
+const alpha = `/nix/store/${"a".repeat(32)}-nixos-system-Alpha`;
+const beta = `/nix/store/${"b".repeat(32)}-nixos-system-Beta`;
 const dep = "/nix/store/dddd-dep";
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -78,11 +79,26 @@ describe("check", () => {
 
     await cache_check(ran.context, check_of({ installables: { Broken: "Broken" }, upstream_keys: ["cache.nixos.org-1"] }));
 
-    const report = parse_report(ran.output());
+    const report = parse_report(ran.output(), null);
     expect(report.targets.get("Alpha")).toEqual({ target: alpha, built: "1", own: "2", missing: [dep] });
     expect(report.targets.get("Broken")?.error).toBe("error: no such attribute");
     expect(report.metadata).toBe('{"revision":"abc"}');
     expect(ran.errors()).toBe("error: no such attribute\n");
+  });
+
+  it("puts its run's marker token in every report line, so a report a build or trace forges is never read", async () => {
+    const marker_token = randomBytes(16).toString("hex");
+    const forged = `@@x-nix-cache\tAlpha\ttarget\t${beta}\n@@x-nix-cache ${randomBytes(16).toString("hex")}\tAlpha\terror\tforged\n`;
+    const ran = scripted((argv) => (has(argv, "eval") ? { stdout: alpha, stderr: forged } : { stdout: "" }));
+    ran.context.marker_token = marker_token;
+    announce_marker_token(ran.context);
+
+    await cache_check(ran.context, check_of());
+    ran.context.out.write(forged);
+
+    expect(ran.output()).toContain(`@@x-nix-cache ${marker_token}\tAlpha\ttarget\t${alpha}\n`);
+    expect(parse_report(ran.output(), marker_token).targets.get("Alpha")).toMatchObject({ target: alpha });
+    expect(parse_report(ran.output(), marker_token).targets.get("Alpha")?.error).toBeUndefined();
   });
 
   it("refreshes a remote flake only until one evaluation succeeds", async () => {
@@ -97,7 +113,7 @@ describe("check", () => {
 
     const ran = scripted((argv) => (has(argv, "eval") ? { stdout: alpha } : has(argv, "--print-invalid") ? { exit_code: 1, stderr: "unable to download" } : { exit_code: 1 }));
     await cache_check(ran.context, check_of());
-    expect(parse_report(ran.output()).targets.get("Alpha")?.cache_error).toBe("unable to download");
+    expect(parse_report(ran.output(), null).targets.get("Alpha")?.cache_error).toBe("unable to download");
     expect(ran.calls.find((argv) => has(argv, "--print-invalid"))).toEqual([
       "nix-store", "--option", "narinfo-cache-negative-ttl", "0", "--store", "https://cache.example/fleet", "--check-validity", "--print-invalid", alpha,
     ]);
@@ -120,7 +136,7 @@ describe("kept only in the cache", () => {
       return undefined;
     });
     await cache_check(ran.context, check_of({ build_root_dir: folder, build_links: { Alpha: "alpha" }, drop_pushed: ["Alpha"] }));
-    return { facts: parse_report(ran.output()).targets.get("Alpha")!, link, list_file: `${link}.closure` };
+    return { facts: parse_report(ran.output(), null).targets.get("Alpha")!, link, list_file: `${link}.closure` };
   }
 
   it("drops a fully pushed root once its closure list is written", async () => {
@@ -165,14 +181,14 @@ describe("build and push", () => {
   it("report the built target, keeping a failed build's status", async () => {
     const ran = quiet({ exit_code: 1, stdout: `${alpha}\n` });
     expect(await cache_build(ran.context, build_operation(settings({ build_args: [] }), "Alpha"))).toBe(1);
-    expect(parse_report(ran.output()).targets.get("Alpha")).toEqual({ target: alpha, built: "1", own: "1", missing: [] });
+    expect(parse_report(ran.output(), null).targets.get("Alpha")).toEqual({ target: alpha, built: "1", own: "1", missing: [] });
   });
 
   it("push what a build made before reporting, and fail the build when the push fails", async () => {
     const ran = quiet({ stdout: `${alpha}\n` }, { exit_code: 1 });
     expect(await cache_build(ran.context, build_operation(settings({ push_command: "attic push fleet" }), "Alpha"))).toBe(1);
     expect(ran.calls).toContainEqual(["/bin/sh", "-c", 'attic push fleet "$1"', "x-nix-push", alpha]);
-    expect(parse_report(ran.output()).targets.get("Alpha")?.target).toBe(alpha);
+    expect(parse_report(ran.output(), null).targets.get("Alpha")?.target).toBe(alpha);
   });
 
   it("push nothing when the build failed", async () => {
@@ -185,7 +201,7 @@ describe("build and push", () => {
     const ran = quiet(undefined, { exit_code: 2 });
     expect(await cache_push(ran.context, push_operation(settings({ push_command: "attic push fleet" }), "Alpha", alpha))).toBe(2);
     expect(ran.calls[0]).toEqual(["/bin/sh", "-c", 'attic push fleet "$1"', "x-nix-push", alpha]);
-    expect(parse_report(ran.output()).targets.get("Alpha")?.target).toBe(alpha);
+    expect(parse_report(ran.output(), null).targets.get("Alpha")?.target).toBe(alpha);
   });
 });
 
@@ -221,7 +237,7 @@ describe("build all", () => {
 
     expect(await cache_build_all(ran.context, operation)).toBe(1);
 
-    const report = parse_report(ran.output());
+    const report = parse_report(ran.output(), null);
     expect(report.targets.get("Alpha")).toMatchObject({ build: "ok", target: alpha, built: "1" });
     expect(report.targets.get("Beta")).toMatchObject({ build: "failed", target: beta, built: "0" });
     expect(report.targets.get("Broken")).toMatchObject({ build: "eval_failed", error: "error: attribute 'x' missing  at flake.nix:3" });
@@ -235,7 +251,7 @@ describe("build all", () => {
     const { program } = fake_eval_jobs([`{"attr":"t0","drvPath":"/nix/store/aaaa-alpha.drv","outputs":{"out":"${alpha}"}}`]);
     const ran = builds_and_inspects({ exit_code: 1 });
     await cache_build_all(ran.context, build_all_operation(settings({ build_args: [], push_command: "false", eval_jobs_bin: program })));
-    expect(parse_report(ran.output()).targets.get("Alpha")?.build).toBe("push_failed");
+    expect(parse_report(ran.output(), null).targets.get("Alpha")?.build).toBe("push_failed");
   });
 
   it("says plainly when nix-eval-jobs is missing", async () => {

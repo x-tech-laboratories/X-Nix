@@ -21,7 +21,7 @@ import {
 } from "./nixos/garbage.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, Store } from "./store.ts";
-import type { Operation } from "../shared/operations.ts";
+import { with_marker_token, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -226,7 +226,7 @@ export class Host {
   }
 
   private async collect(trigger: string): Promise<HostActionOutcome & { unreachable: boolean }> {
-    const operation = collect_operation(this.settings.gc!, this.settings.require_sudo);
+    const operation = with_marker_token(collect_operation(this.settings.gc!, this.settings.require_sudo));
     const command = JSON.stringify(operation);
     const run_id = `${this.settings.id}-collect-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;

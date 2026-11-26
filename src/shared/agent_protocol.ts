@@ -26,7 +26,7 @@ export const key_host_header = header_for(x_nix_app.name);
 
 // ── Pull reports ─────────────────────────────────────────────────────────────
 
-// A switch the agent ran on its own from Git while the server was unreachable, reported once the server is back.
+// A switch the agent ran on its own from Git while the server was unreachable, or a revision it refused, reported once the server is back.
 export interface PullReport {
   run_id: string;
   // The Git remote and branch the revision came from.
@@ -41,4 +41,6 @@ export interface PullReport {
   exit_code: number | null;
   // The end of what the switch printed.
   output: string;
+  // Why the revision was refused, for a report of a refusal, which ran nothing.
+  refused?: string | null;
 }

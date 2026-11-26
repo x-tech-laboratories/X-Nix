@@ -164,7 +164,9 @@ flowchart TD
 flowchart TD
     drift([drift found]) --> on{auto_switch on, evaluation ok,<br/>and not already switched to this target?}
     on -- no --> stop([no])
-    on -- yes --> newer{running generation newer<br/>than the flake's last change?}
+    on -- yes --> revision{revision_refusal: evaluated commit disagrees<br/>with a commit pin or the flake's reading on another host?}
+    revision -- yes --> ask([note why; evaluate again and read the flake again])
+    revision -- no --> newer{running generation newer<br/>than the flake's last change?}
     newer -- yes --> refuse([note: not switching, it came from elsewhere])
     newer -- no --> long{drift lasted auto_switch_after?}
     long -- no --> wait([note: switching once it has])
@@ -209,11 +211,13 @@ flowchart TD
     b2 -- running --> b_prog[copy its output into the switch job;<br/>progress: Building on host]
     b_prog --> b2
     b2 -- failed --> fail([end the wait: switch fails,<br/>host untouched])
-    b2 -- succeeded --> same{built on the switching host?}
+    b2 -- succeeded --> matches{built path is a store path<br/>and equals evaluation.target?}
+    matches -- no --> mismatch([end the wait: switch fails naming both paths,<br/>host untouched; evaluate again])
+    matches -- yes --> same{built on the switching host?}
     same -- yes --> start
     same -- no --> push[switch_wait step=push, target = built path]
     push --> holds{cache_url holds it?}
-    holds -- yes --> start[start_switch: switch_job_operation<br/>fetch from cache, then activate]
+    holds -- yes --> start[start_switch: checks the path against evaluation.target again,<br/>then switch_job_operation: fetch from cache, then activate]
     holds -- "no, under 15 min" --> wait[progress: Waiting for it to reach the cache]
     wait --> holds
     holds -- "no, 15 min passed" --> fail2([end the wait: never reached the cache])
@@ -222,11 +226,32 @@ flowchart TD
 `switch_wait` lives in the deployment's stored `Evaluation`, so a restart of the server picks up a waiting switch
 exactly where it stood. Each poll of the switch job calls `advance_wait()`.
 
+What a switch activates is tied to the evaluation in three ways:
+
+- Every build, a plain Build included, uses `evaluated_settings()`: a remote flake fixed at `evaluation.flake_revision`,
+  so a branch that moves after the evaluation never changes what is built. A cache's build of the deployment gets the
+  same fixed flake.
+- `built_refusal()` lets `advance_push()` and `start_switch()` go on only when the path the build reported is a store
+  path equal to the current `evaluation.target`; otherwise `refuse_built()` fails the switch job with both paths, records
+  the event and requests an evaluation, before any operation reaches the switching host. `parse_report()` drops a
+  reported `target` that is not a store path and fails that target's row.
+- `revision_refusal()` compares `evaluation.flake_revision` with the pin when the pin is a full commit, and otherwise with
+  the `FlakeReading` of the deployment's flake when that reading's `host` differs from `evaluation.evaluated_on`,
+  revision and `last_modified_epoch` both. `action_refusal()` returns it for every switch mode, and
+  `consider_auto_switch()` and `launch_auto_switch()` hold on it; on a disagreement `ask_about_revision()` records an
+  event, requests an evaluation and has the flake read again, once per disagreement.
+
+These checks hold against one misbehaving host only: the hosts named as `eval_agent`, build agents and cache hosts are
+as trusted as the machines they build for, and when the same host evaluates and builds, their agreement proves nothing.
+
 ## A guarded switch
 
 `src/agent/operations/switch.ts`, `src/agent/watchdog.ts`, `Deployment.tend_switch()`.
-The switch prints `@@x-nix-switch` marker lines (`phase …`, `activated`, `awaiting-confirmation`, `refused …`,
-`outcome …`), which `switch_verdict()` reads.
+The switch prints `@@x-nix-switch <token>` marker lines (`phase …`, `activated`, `awaiting-confirmation`, `refused …`,
+`outcome …`) with the run's marker token, which `switch_verdict()` reads, ignoring any line without the job's token
+once the run has printed `@@x-nix-markers <token>` (see [marker lines](/developer/agent-protocol/#marker-lines)). In its
+confirmation window the watchdog looks for a `rollback` file before a `confirmed` one, so a rollback the health checks
+or X-Nix asked for wins over a confirmation that came with it.
 
 ```mermaid
 sequenceDiagram
@@ -462,12 +487,19 @@ flowchart TD
     away -- yes --> ask[git ls-remote each remote in order<br/>until one answers]
     ask --> first{first revision seen?}
     first -- yes --> note[only note it]
-    first -- no --> moved{head moved past the last deployed?}
+    first -- no --> moved{head differs from the deployed<br/>and the last refused revision?}
     moved -- no --> idle
-    moved -- yes --> sw[long run: nixos-rebuild switch --flake<br/>git+url?ref=refs/heads/branch&rev=…#configuration]
+    moved -- yes --> fetch[git fetch the head with its history<br/>into pull.git]
+    fetch -- failed --> idle
+    fetch --> ancestor{descends from the deployed revision?<br/>git merge-base --is-ancestor}
+    ancestor -- "no, and not allow_rewind" --> refuse[remember it as refused,<br/>keep a refusal report in pull.json]
+    ancestor -- yes --> signed{signed by an allowed signer?<br/>git verify-commit}
+    signed -- no --> refuse
+    signed -- yes --> sw[long run: nixos-rebuild switch --flake<br/>git+url?ref=refs/heads/branch&rev=…#configuration<br/>--no-update-lock-file]
     sw --> keep[keep a PullReport in pull.json]
+    refuse --> back
     keep --> back{server back?}
-    back -- yes --> send[send pulls; server records each as a job<br/>trigger agent pull, for every deployment on the host]
+    back -- yes --> send[send pulls; server records each switch as a job<br/>trigger agent pull, and each refusal as an error event,<br/>for every deployment on the host]
     send --> ack[pulls_received → drop those reports]
 ```
 
@@ -484,10 +516,15 @@ sequenceDiagram
     participant target as Target machine
 
     admin->>server: install (host, address, flake#configuration), address typed to confirm
+    server->>server: refuse with no host key unless trust_unknown_host
     server->>server: refuse if an install to that host or address runs
     server->>server: generate the new host's ed25519 key
     server->>agent: start install long run, private key on stdin only
     agent->>agent: write the key into a private extra-files folder
+    opt host key given
+        agent->>target: ssh with StrictHostKeyChecking=yes against the host key
+        agent->>agent: put an ssh pinned to the host key first on the PATH
+    end
     agent->>target: nixos-anywhere: kexec, disko, install, reboot
     agent->>target: nixos-generate-config (printed between markers)
     agent->>agent: remove the extra-files folder

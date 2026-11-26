@@ -5,7 +5,7 @@
 
 import { watch_for_stalls as watch, type KnownLock, type StallWatch, type StallWatchOptions } from "@x-tech-laboratories/x-libs/agent/stalls";
 
-import { stall_mark } from "../shared/operations.ts";
+import { mark_prefix, stall_mark } from "../shared/operations.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ export const known_locks: Record<string, KnownLock> = {
 
 // ── Watching ─────────────────────────────────────────────────────────────────
 
-export function watch_for_stalls(root: number, write: (text: string) => void, options: StallWatchOptions = {}): StallWatch {
-  return watch(root, write, { known_locks, mark: stall_mark, ...options });
+// Marks each note with the run's marker token after the mark, when the server issued one.
+export function watch_for_stalls(root: number, write: (text: string) => void, options: StallWatchOptions = {}, marker_token: string | null = null): StallWatch {
+  return watch(root, write, { known_locks, mark: mark_prefix(stall_mark, marker_token), ...options });
 }

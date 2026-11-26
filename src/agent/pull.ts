@@ -1,9 +1,9 @@
 // Pull mode: once the server has been unreachable for `after`, the agent deploys from Git on its own. Every `interval` it
 // asks its remotes, in order, for the head of their branch, and switches to a revision it has not deployed yet with
-// `nixos-rebuild switch --flake`, as a long run that outlives the agent, once the revision's commit is signed by a key
-// the allowed signers file names, unless unsigned commits are allowed. The first revision it sees is only noted, so
-// starting pull mode never switches by itself. Each switch is logged and kept in `pull.json` until the server, once
-// back, has taken its report into the deployment's job history.
+// `nixos-rebuild switch --flake`, as a long run that outlives the agent, once the revision descends from the one deployed
+// last and its commit is signed by a key the allowed signers file names, unless unsigned commits are allowed. The first
+// revision it sees is only noted, so starting pull mode never switches by itself. Each switch, and each revision refused,
+// is logged and kept in `pull.json` until the server, once back, has taken its report.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +42,8 @@ export interface PullSettings {
   allowed_signers: string | null;
   // Whether a commit is switched to without a signature, when no allowed signers are given.
   allow_unsigned: boolean;
+  // Whether a revision that does not descend from the one deployed, such as an older commit or rewritten history, is switched to.
+  allow_rewind: boolean;
 }
 
 export class PullConfigError extends Error {
@@ -61,12 +63,14 @@ interface PullRecord {
   started_epoch: number;
   finished_epoch: number | null;
   exit_code: number | null;
+  // Why the revision was refused, for a record of a refusal rather than a switch.
+  refused?: string;
 }
 
 interface PullState {
   revision: string | null;
   records: PullRecord[];
-  // The last revision refused for its signature, so it is not fetched and refused again every interval.
+  // The last revision refused for its signature or its history, so it is not fetched and refused again every interval.
   refused?: string | null;
 }
 
@@ -85,8 +89,14 @@ export interface PullerOptions {
 // Remotes reached over a channel that proves the server, or on this machine; plain http:// and git:// can be tampered with.
 const remote_schemes = /^(git\+)?(https|ssh|file):\/\//;
 const ls_remote_timeout_in_seconds = 60;
-const verify_timeout_in_seconds = 600;
+const fetch_timeout_in_seconds = 600;
+const verify_timeout_in_seconds = 60;
 const report_output_limit_in_bytes = 64 * 1024;
+// At most this many refusals wait for the server, so a remote that keeps moving cannot fill the state file.
+const refusal_record_limit = 20;
+// The ref the fetched revision is kept under, so its history stays in the repository and later fetches bring only what is new.
+const pulled_ref = "refs/x-nix/pulled";
+const revision_pattern = /^[0-9a-f]{40}$/;
 
 // ── Reading settings ─────────────────────────────────────────────────────────
 
@@ -124,6 +134,7 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
   }
   if (values.allow_unsigned !== undefined && typeof values.allow_unsigned !== "boolean") throw new PullConfigError("`allow_unsigned` of the pull settings must be true or false");
   const allow_unsigned = (values.allow_unsigned as boolean | undefined) ?? false;
+  if (values.allow_rewind !== undefined && typeof values.allow_rewind !== "boolean") throw new PullConfigError("`allow_rewind` of the pull settings must be true or false");
   if (allowed_signers === null && !allow_unsigned) {
     throw new PullConfigError("Pull mode needs `allowed_signers`, the keys a commit must be signed with, or `allow_unsigned: true` to switch to unsigned commits");
   }
@@ -138,6 +149,7 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
     git_bin: text("git_bin", "git"),
     allowed_signers,
     allow_unsigned,
+    allow_rewind: (values.allow_rewind as boolean | undefined) ?? false,
   };
 }
 
@@ -147,7 +159,7 @@ export function parse_pull_settings(raw: unknown, host: string): PullSettings {
 export function parse_ls_remote(stdout: string, branch: string): string | null {
   for (const line of stdout.split("\n")) {
     const [revision, ref] = line.trim().split(/\s+/);
-    if (ref === `refs/heads/${branch}` && /^[0-9a-f]{40}$/.test(revision)) return revision;
+    if (ref === `refs/heads/${branch}` && revision_pattern.test(revision)) return revision;
   }
   return null;
 }
@@ -162,23 +174,43 @@ export function pulled_flake(remote: PullRemote, revision: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}ref=${encodeURIComponent(`refs/heads/${remote.branch}`)}&rev=${revision}`;
 }
 
-// Fetches the revision into the agent's own bare repository and checks its commit is signed by an allowed signer.
-export function verify_operation(settings: PullSettings, remote: PullRemote, revision: string, repository: string, allowed_signers: string): ProgramsOperation {
-  const git = [settings.git_bin, "-C", repository];
+// Fetches the revision with its whole history into the agent's own bare repository, unshallowing one an older agent
+// fetched with `--depth 1`; the repository is kept between runs, so later fetches bring only what is new.
+export function fetch_operation(settings: PullSettings, remote: PullRemote, revision: string, repository: string, shallow: boolean): ProgramsOperation {
+  const git = [settings.git_bin, "-C", repository, "-c", "gc.auto=0", "-c", "maintenance.auto=false"];
   return {
     kind: "programs",
     steps: [
       { argv: [settings.git_bin, "init", "--quiet", "--bare", repository] },
-      { argv: [...git, "fetch", "--quiet", "--no-tags", "--depth", "1", "--", remote.url.replace(/^git\+/, ""), revision] },
-      { argv: [...git, "-c", `gpg.ssh.allowedSignersFile=${allowed_signers}`, "verify-commit", revision] },
+      { argv: [...git, "fetch", "--quiet", "--no-tags", ...(shallow ? ["--unshallow"] : []), "--", remote.url.replace(/^git\+/, ""), `+${revision}:${pulled_ref}`] },
     ],
   };
 }
 
+// Exits 0 when the deployed revision is an ancestor of the new one, 1 when it is not, and 128 when the repository lacks it.
+export function ancestry_operation(settings: PullSettings, repository: string, deployed: string, revision: string): ProgramsOperation {
+  return { kind: "programs", steps: [{ argv: [settings.git_bin, "-C", repository, "merge-base", "--is-ancestor", "--", deployed, revision] }] };
+}
+
+// Checks the fetched revision's commit is signed by an allowed signer; only that commit's own signature is checked.
+export function verify_operation(settings: PullSettings, repository: string, revision: string, allowed_signers: string): ProgramsOperation {
+  return {
+    kind: "programs",
+    steps: [{ argv: [settings.git_bin, "-C", repository, "-c", `gpg.ssh.allowedSignersFile=${allowed_signers}`, "verify-commit", "--", revision] }],
+  };
+}
+
+// Switches with the lock file the signed tree holds, so an input missing from it fails rather than being resolved anew.
 export function pull_switch_operation(settings: PullSettings, remote: PullRemote, revision: string): Operation {
   const sudo = settings.require_sudo ? ["sudo", "-n"] : [];
   const flake = `${pulled_flake(remote, revision)}#${settings.configuration}`;
-  return { kind: "programs", steps: [{ argv: [...sudo, settings.rebuild_bin, "switch", "--flake", flake, ...settings.rebuild_args] }] };
+  const locked = settings.rebuild_args.includes("--no-update-lock-file") ? [] : ["--no-update-lock-file"];
+  return { kind: "programs", steps: [{ argv: [...sudo, settings.rebuild_bin, "switch", "--flake", flake, ...locked, ...settings.rebuild_args] }] };
+}
+
+// The end of what a failed program printed, for a log line.
+function last_lines(result: RunResult): string {
+  return (result.stderr || result.stdout).trim().split("\n").slice(-2).join(" ").slice(0, 300) || `exit ${result.exit_code}`;
 }
 
 // ── Puller ───────────────────────────────────────────────────────────────────
@@ -302,13 +334,14 @@ export class Puller {
     if (state.revision === null) {
       state.revision = revision;
       this.save(state);
-      this.options.log(`Pull mode noted ${revision} of ${remote.branch} from ${remote.url} as deployed; a later revision is switched to`);
+      this.options.log(`Pull mode noted ${revision} of ${remote.branch} from ${remote.url} as deployed; only a revision that descends from it is switched to`);
       return;
     }
     if (state.revision === revision || state.refused === revision) return;
-    if (!(await this.signed(remote, revision))) {
-      state.refused = revision;
-      this.save(state);
+    const verdict = await this.check(state.revision, remote, revision);
+    if (verdict === "retry") return;
+    if (verdict !== "allowed") {
+      this.refuse(state, remote, revision, verdict);
       return;
     }
     const operation = pull_switch_operation(this.settings, remote, revision);
@@ -330,15 +363,46 @@ export class Puller {
     this.options.log(`The server has been unreachable, so switching to ${revision} of ${remote.branch} from ${remote.url}`);
   }
 
-  // Whether the revision's commit carries an allowed signature, or is let through as unsigned commits are allowed.
-  private async signed(remote: PullRemote, revision: string): Promise<boolean> {
+  // Whether the revision may be switched to: "allowed", "retry" when Git could not be asked, or why it is refused.
+  private async check(deployed: string, remote: PullRemote, revision: string): Promise<string> {
     const allowed_signers = this.settings.allowed_signers;
-    if (allowed_signers === null) return this.settings.allow_unsigned;
-    const result = await this.run(verify_operation(this.settings, remote, revision, this.repository, allowed_signers), verify_timeout_in_seconds);
-    if (result.exit_code === 0) return true;
-    const why = (result.stderr || result.stdout).trim().split("\n").slice(-2).join(" ").slice(0, 300);
-    this.options.log(`Not switching to ${revision} of ${remote.branch} from ${remote.url}: its commit is not signed by an allowed signer (${why || `exit ${result.exit_code}`})`);
-    return false;
+    if (allowed_signers === null && !this.settings.allow_unsigned) return "no allowed signers are set";
+    if (allowed_signers === null && this.settings.allow_rewind) return "allowed";
+    const shallow = existsSync(join(this.repository, "shallow"));
+    const fetched = await this.run(fetch_operation(this.settings, remote, revision, this.repository, shallow), fetch_timeout_in_seconds);
+    if (fetched.exit_code !== 0) {
+      this.options.log(`Could not fetch ${revision} of ${remote.branch} from ${remote.url}, trying again later: ${last_lines(fetched)}`);
+      return "retry";
+    }
+    if (!this.settings.allow_rewind) {
+      if (!revision_pattern.test(deployed)) return `the deployed revision ${deployed} is not a commit name`;
+      const ancestry = await this.run(ancestry_operation(this.settings, this.repository, deployed, revision), verify_timeout_in_seconds);
+      if (ancestry.exit_code === 1) return `it does not descend from the deployed revision ${deployed}, so it is older or on other history`;
+      if (ancestry.exit_code === 128) return `the deployed revision ${deployed} is not in its history, which was rewritten`;
+      if (ancestry.exit_code !== 0) {
+        this.options.log(`Could not compare ${revision} with the deployed ${deployed}, trying again later: ${last_lines(ancestry)}`);
+        return "retry";
+      }
+    }
+    if (allowed_signers === null) return "allowed";
+    const verified = await this.run(verify_operation(this.settings, this.repository, revision, allowed_signers), verify_timeout_in_seconds);
+    return verified.exit_code === 0 ? "allowed" : `its commit is not signed by an allowed signer (${last_lines(verified)})`;
+  }
+
+  // Remembers the refused revision so it is not checked again, and keeps the refusal for the server to see.
+  private refuse(state: PullState, remote: PullRemote, revision: string, why: string): void {
+    const message = `Not switching to ${revision} of ${remote.branch} from ${remote.url}: ${why}`;
+    this.options.log(message);
+    const epoch = Math.floor(this.now() / 1000);
+    state.refused = revision;
+    state.records.push({
+      run_id: `pull-refused-${epoch}-${randomBytes(3).toString("hex")}`, remote: remote.url, branch: remote.branch, revision, command: "",
+      started_epoch: epoch, finished_epoch: epoch, exit_code: null, refused: why,
+    });
+    const refusals = state.records.filter((record) => record.refused !== undefined);
+    const dropped = new Set(refusals.slice(0, Math.max(0, refusals.length - refusal_record_limit)));
+    state.records = state.records.filter((record) => !dropped.has(record));
+    this.save(state);
   }
 
   // ── Reporting ────────────────────────────────────────────────────────────
@@ -348,6 +412,10 @@ export class Puller {
     const reports: PullReport[] = [];
     for (const record of this.load().records) {
       if (record.finished_epoch === null) continue;
+      if (record.refused !== undefined) {
+        reports.push({ ...record, output: `${record.refused}\n` });
+        continue;
+      }
       let output = "";
       try {
         const size = (await this.runs.poll(record.run_id, 0, 0)).size;
