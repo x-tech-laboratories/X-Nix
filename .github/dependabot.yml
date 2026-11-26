@@ -5,10 +5,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      # X-Libs and Halon in one pull request, so the Halon peer of X-Libs matches.
+      # X-Libs and Halon in one pull request, so the Halon peer of X-Libs matches; the only group that merges on its own, after its provenance check.
       x-tech:
         patterns: ["@x-tech-laboratories/*"]
-      # Third-party patch and minor updates in one pull request; a major update comes on its own.
+      # Third-party patch and minor updates in one pull request for a person to merge; a major update comes on its own.
       npm:
         patterns: ["*"]
         exclude-patterns: ["@x-tech-laboratories/*"]
@@ -21,7 +21,7 @@ updates:
     # Revisit once X-Libs stabilizes and releases slow down.
     cooldown:
       exclude: ["@x-tech-laboratories/*"]
-  # Keeps the workflows' actions, pinned by commit, on their latest releases.
+  # Keeps the workflows' actions, pinned by commit, on their latest releases, each for a person to merge.
   - package-ecosystem: github-actions
     directory: /
     schedule:

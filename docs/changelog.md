@@ -10,6 +10,10 @@ version.
 
 ## Unreleased
 
+### 2026-11-26
+
+- ci: merge only X-Tech packages on their own, checked by the base branch's exact provenance check, with least token permissions
+
 ### 2026-11-24
 
 - docs(roadmap): note the flaky agent key test
