@@ -288,7 +288,7 @@ in
       // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
       // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
 
-      # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
+      # Only RestrictRealtime sandboxes it, because sudo and every switch it runs inherit the unit's sandbox and must still write the system.
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
         User = "x-nix-agent";
@@ -301,6 +301,8 @@ in
         # A restart stops only the agent, so a switch run by a runner of an older agent, inside this unit, is not killed mid-activation.
         KillMode = "process";
         UMask = "0077";
+        # Real-time scheduling is refused to the agent and everything it starts, which no switch, build or activation here asks for.
+        RestrictRealtime = true;
       };
     };
   };
