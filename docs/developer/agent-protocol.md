@@ -98,7 +98,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 | `cache_build`     | Builds one target, pushes it, checks it.                                              |
 | `cache_push`      | Pushes one target, checks it.                                                         |
 | `cache_build_all` | `nix-eval-jobs` over every target, builds and pushes each as it is ready, checks all. |
-| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`.                     |
+| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`. With `host_key` it puts an `ssh` pinned to that key first on nixos-anywhere's PATH; without it, it runs only when `trust_unknown_host` is true. |
 | `media`           | Builds an ISO, netboot files or a kexec tarball and links it under `media_root_dir`.  |
 
 Collections, unchecked local flake updates and rollbacks are `programs` long runs.
@@ -160,8 +160,11 @@ no token and is read the old way.
 
 After its `hello`, an agent that switched on its own while the server was away sends
 `pulls {pulls: PullReport[]}`. Each report names the run id, the Git remote, branch and revision, the operation, its
-times, exit code and the end of its output. The server records each as a job on every deployment of that host
-(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`.
+times, exit code and the end of its output. A report of a revision the agent refused, because it does not descend from
+the deployed revision or lacks an allowed signature, also carries `refused`, the reason, and an empty operation. The
+server records each switch as a job and each refusal as an error event on every deployment of that host
+(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`. A server that
+does not know `refused` records a refusal as a failed switch whose output is the reason.
 
 ## Adding an operation
 
