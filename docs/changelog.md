@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(auth): refuse request paths that are not spelled canonically
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
 
 ### 2026-11-24

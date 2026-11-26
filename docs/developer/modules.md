@@ -61,6 +61,7 @@ flowchart TB
     app[app.ts]
     mcp[mcp.ts]
     auth[auth.ts]
+    canonical_paths[canonical_paths.ts]
     hash_password[hash_password.ts]
     webhook[webhook.ts]
     poller[poller.ts]
@@ -100,7 +101,7 @@ flowchart TB
 
     main --> app & poller & fleet & overdue & provisioning & pull_reports & webhook & hub & config & store
     hash_password --> auth
-    app --> mcp & auth & webhook & poller & fleet & provisioning & builds & cache_server
+    app --> mcp & auth & canonical_paths & webhook & poller & fleet & provisioning & builds & cache_server
     mcp --> deployment & cache & host & fleet
     webhook --> deployment & flake
     poller --> flake & deployment & host & cache
@@ -127,6 +128,7 @@ flowchart TB
 | `main.ts`          | Reads settings and the config, builds every object, starts the app and the timers.          |
 | `app.ts`           | Every HTTP route, the view shapes the page reads, and the change feed.                      |
 | `auth.ts`          | X-Libs accounts: declared admins from the password file, the `viewer` and `admin` roles, and which routes need which. |
+| `canonical_paths.ts` | Refuses with 400 any request whose path is not spelled canonically, before sign-in or any route sees it. |
 | `hash_password.ts` | The `npm run hash-password` command.                                                        |
 | `mcp.ts`           | Exposes the routes as MCP tools through X-Libs' `api_spec` and MCP server.                  |
 | `webhook.ts`       | The push webhook: checks the signature, debounces, evaluates, reads and updates.            |
