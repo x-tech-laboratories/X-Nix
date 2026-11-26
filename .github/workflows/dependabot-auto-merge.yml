@@ -2,32 +2,48 @@ name: Dependabot auto-merge
 
 on: pull_request
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
+  # Only the x-tech group, X-Libs and Halon, merges on its own; every third-party update waits for a person to merge it.
   auto-merge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      # Enabling auto-merge needs write access to the contents and the pull request.
+      contents: write
+      pull-requests: write
     steps:
       - id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The check comes from the base branch, so a pull request cannot change the check that decides its own merge.
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            package-lock.json
+          sparse-checkout-cone-mode: false
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - run: npm ci --ignore-scripts
-      - run: npm audit signatures
-      # X-Libs and Halon merge on their own only when npm's provenance shows they were built from our own repositories.
-      - if: steps.meta.outputs.dependency-group == 'x-tech'
-        run: node .github/scripts/check-provenance.mjs
-      # X-Libs and Halon merge at any version, since each 0.x minor of theirs breaks and CI with the nix build is the gate;
-      # other packages merge only for patch and minor updates. The required checks on main still decide when.
-      - if: >-
-          steps.meta.outputs.dependency-group == 'x-tech' ||
-          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        run: npm ci --ignore-scripts
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        run: npm audit signatures
+      # X-Libs and Halon merge only when npm's provenance shows each was built by its own publish workflow on main and nothing else moved.
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
+        run: node base/.github/scripts/check-provenance.ts base/package-lock.json
+      # X-Libs and Halon merge at any version, since each 0.x minor of theirs breaks and CI with the nix build is the gate; the required checks on main still decide when.
+      - if: steps.meta.outputs.dependency-group == 'x-tech' && steps.meta.outputs.package-ecosystem == 'npm_and_yarn'
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

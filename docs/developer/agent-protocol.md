@@ -19,11 +19,20 @@ Raise `protocol_version` when an agent and a server of different versions could 
 
 1. The agent opens the WebSocket with its host's name in the `x-nix-agent-host` header.
 2. The hub admits the upgrade only for a host with a key: declared in the config's `hosts[].agent_key`, or made by an
-   install (`provisioned_agents`). Config keys win.
-3. The server sends `challenge {nonce}`; the agent answers `hello {protocol, host, agent_version, runs, signature}`,
-   signing the nonce with the host's ed25519 private key.
-4. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
-   name; on failure the socket closes with one of X-Libs' `close_codes`.
+   install (`provisioned_agents`). Config keys win. Every refusal answers 401 with the same text, and the reason goes
+   to the server's log; too many sockets still logging in, from everywhere or from one address, answer 503.
+3. The server sends `challenge {nonce}`. With a server key (`X_NIX_SERVER_KEY_FILE`, read by `read_server_key` in
+   `agents/hub.ts` and given to X-Libs' hub as `server_key`) the challenge also carries the key's fingerprint and the
+   server's signature over the app, host, nonce and fingerprint.
+4. An agent with `server_keys` checks that signature against its list before signing anything, and hangs up with
+   close code 4009 on a missing or unknown key. It answers `hello {protocol, host, agent_version, runs, signature,
+   agent_nonce}`, signing both nonces and the server key's fingerprint, so the login fits only this connection and this
+   server. An agent without `server_keys` signs the plain nonce and leaves out `agent_nonce`, as before.
+5. The hub checks the signature against the public key line. On success the agent joins the `AgentPool` under its host
+   name; on failure the socket closes with one of X-Libs' `close_codes`. A hello is at most 256 KiB before login.
+6. For an agent that sent `agent_nonce`, the hub wraps every later message in an envelope signed over both nonces, a
+   counter and the message, and the agent refuses anything unsigned, out of order or replayed. `AgentStatus` says so as
+   `signed_messages`, which the host view shows as **Server check**.
 
 The sequence is drawn in [Flows](/developer/flows/#agent-connection-and-login). The server's own host connects the same
 way over `ws://127.0.0.1`, unless `localAgent` has the in-process `LocalAgent` serve it, which implements the same
@@ -98,7 +107,7 @@ programs with argument vectors through `src/agent/programs.ts`.
 | `cache_build`     | Builds one target, pushes it, checks it.                                              |
 | `cache_push`      | Pushes one target, checks it.                                                         |
 | `cache_build_all` | `nix-eval-jobs` over every target, builds and pushes each as it is ready, checks all. |
-| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`.                     |
+| `install`         | nixos-anywhere, with the agent key placed through `--extra-files`. With `host_key` it puts an `ssh` pinned to that key first on nixos-anywhere's PATH; without it, it runs only when `trust_unknown_host` is true. |
 | `media`           | Builds an ISO, netboot files or a kexec tarball and links it under `media_root_dir`.  |
 
 Collections, unchecked local flake updates and rollbacks are `programs` long runs.
@@ -107,20 +116,64 @@ Collections, unchecked local flake updates and rollbacks are `programs` long run
 
 Long runs talk back to the server through lines in their output, which the parsers in `src/server/nixos/` read:
 
-| Marker          | Written by         | Read by                       |
-| --------------- | ------------------ | ----------------------------- |
-| `@@x-nix-eval`  | `evaluate`         | `Deployment.fold_evaluation`  |
-| `@@x-nix-switch`| `switch`           | `switch_verdict()`            |
-| `@@x-nix-cache` | cache operations   | `parse_report()`              |
-| `@@x-nix-diff`  | `closure_diff`     | `parse_diff()`                |
-| `@@x-nix-stall` | the runner (`stalls.ts`), `close_nix_lock_holders` | `overdue.ts`, which names what an overdue job waits for |
+| Marker                    | Written by         | Read by                       |
+| ------------------------- | ------------------ | ----------------------------- |
+| `@@x-nix-markers`         | the runner and `run.ts`, first | `accepted_prefix()` in `operations.ts` |
+| `@@x-nix-eval`            | `evaluate`         | `split_eval_output()`         |
+| `@@x-nix-switch`          | `switch`           | `switch_verdict()`            |
+| `@@x-nix-cache`           | cache operations   | `parse_report()`              |
+| `@@x-nix-diff`            | `closure_diff`     | `parse_diff()`                |
+| `@@x-nix-stall`           | the runner (`stalls.ts`), `close_nix_lock_holders` | `stall_note()` in `overdue.ts`, which names what an overdue job waits for |
+| `@@x-nix-hardware-config` | `install`          | `parse_hardware_config()`     |
+| `@@x-nix-media`           | `media`            | `parse_media_path()`          |
+
+The same output carries text the run does not control: nix's evaluation messages, such as `builtins.trace` from any
+flake input, build logs, activation scripts, `post_switch`, Git and SSH. So that none of it can pass for a marker line,
+each run gets a marker token:
+
+- The server puts a fresh token of 128 random bits, as hex, in `marker_token` on the operation inside any wrappers,
+  with `with_marker_token()`, wherever it starts a long run (`Deployment.launch`, `start_switch`, the held build,
+  `Cache.launch`, `Provisioner.launch`, the flake update, the host's collection) and for the closure diff. The job's
+  `command` keeps the operation, so `command_marker_token()` gives every parser the token of the job whose output it
+  reads.
+- An agent that knows tokens prints `@@x-nix-markers <token>` before anything else the run prints, then writes every
+  marker line as `<mark> <token> <words…>` (`marker()` in `programs.ts`; report lines keep their tabs after
+  `<mark> <token>`). Free text in a marker line, such as a rollback's reason, is kept to one line with `one_line()`.
+- A parser reads only lines starting with `<mark> <token>` once the job's output holds the `@@x-nix-markers` line
+  with its token. Without that line the run's agent is one too old to know tokens, which ignores the field and prints
+  bare `<mark> <words…>` lines, so the parser reads those instead, for that job only. A new agent prints the line
+  before anything else, so its run can never be read the old way once it has printed anything at all.
+- A switch built on another host shows the build's output in its own job: the build's report is read with the build
+  job's token first, and the copied lines that look like marker lines are quoted with `> ` (`quote_markers()`).
+- Pull reports are stored as finished jobs that no parser reads.
+
+The token is no secret from the host running the job, which holds the operation; it only has to be unknown to what
+the run's programs print. A program running as the agent's user, such as an impure evaluation, or as root, such as an
+activation script, can read the run's folder and so the token; such code can do anything the agent can anyway.
+
+Old and new agents and servers mix without a new `protocol_version`, which would make the server refuse every agent not
+yet upgraded:
+
+| Agent | Server | What happens |
+| ----- | ------ | ------------ |
+| old   | old    | Bare marker lines, read as before. |
+| new   | old    | No token in the operation, so the agent prints bare marker lines, read as before. |
+| old   | new    | The agent ignores the token and prints bare lines without `@@x-nix-markers`; the server reads them the old way for that job. |
+| new   | new    | Tokened lines after `@@x-nix-markers`; bare and wrongly tokened lines are ignored. |
+
+A run in flight across an upgrade keeps the runner it started with: a switch that installs a new agent is still
+printed by the old runner, without `@@x-nix-markers`, and is read the old way; a job started by an older server has
+no token and is read the old way.
 
 ## Pull reports
 
 After its `hello`, an agent that switched on its own while the server was away sends
 `pulls {pulls: PullReport[]}`. Each report names the run id, the Git remote, branch and revision, the operation, its
-times, exit code and the end of its output. The server records each as a job on every deployment of that host
-(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`.
+times, exit code and the end of its output. A report of a revision the agent refused, because it does not descend from
+the deployed revision or lacks an allowed signature, also carries `refused`, the reason, and an empty operation. The
+server records each switch as a job and each refusal as an error event on every deployment of that host
+(`pull_reports.ts`) and answers `pulls_received {run_ids}`; the agent then drops those from `pull.json`. A server that
+does not know `refused` records a refusal as a failed switch whose output is the reason.
 
 ## Adding an operation
 

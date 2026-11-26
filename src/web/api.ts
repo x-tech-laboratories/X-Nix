@@ -259,7 +259,8 @@ export interface Host {
   display_name: string;
   own: boolean;
   agent_key: boolean;
-  agent: { agent_version: string; connected_epoch: number } | null;
+  // Its agent's connection, with whether every message to it is signed with the server's key, or null when it is not connected.
+  agent: { agent_version: string; connected_epoch: number; signed_messages: boolean } | null;
   wake: { mac: string; broadcast: string; via: string | null; timeout: number } | null;
   keep_awake: boolean;
   interval: number;
@@ -485,7 +486,7 @@ export interface EventRow {
 // A host with a declared agent key, and its agent when connected.
 export interface AgentEntry {
   host: string;
-  status: { host: string; agent_version: string; connected_epoch: number } | null;
+  status: { host: string; agent_version: string; connected_epoch: number; built_in: boolean; signed_messages: boolean } | null;
 }
 
 export type MediaFormat = "iso" | "netboot" | "kexec";
@@ -501,8 +502,10 @@ export interface InstallRecord {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  // The target's host key the install checked first; absent from an older install.
+  // The target's host key every SSH connection of the install had to find; absent from an older install.
   host_key?: string | null;
+  // Whether the install went ahead with no host key, trusting whatever key answered; absent from an older install.
+  trust_unknown_host?: boolean;
   public_line: string | null;
   agent_key_path: string;
 }
@@ -541,6 +544,8 @@ export interface Provisioning {
   agent_key_path: string;
   media_root_dir: string;
   agent_snippet: string;
+  // The server's public key, which every agent lists to check the server, or null when the server signs nothing.
+  server_key: { public_line: string; fingerprint: string } | null;
   installs: InstallView[];
   media: MediaView[];
   provisioned_agents: ProvisionedAgent[];

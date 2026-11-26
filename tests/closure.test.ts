@@ -4,9 +4,10 @@ import type { RunProgram } from "../src/agent/programs.ts";
 import { run_operation } from "../src/agent/run.ts";
 
 import { deployment_settings } from "../src/server/config.ts";
-import { empty_progress, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
+import { empty_progress, max_log_line_length, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
 import { diff_operation, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
 import { build_operation } from "../src/server/nixos/commands.ts";
+import { marker_token_of, with_marker_token } from "../src/shared/operations.ts";
 import { current_closure, target_closure } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ describe("the package diff", () => {
       "@@x-nix-diff derivations",
     ].join("\n");
 
-    const diff = parse_diff(output, current_closure, target_closure, 1, 7);
+    const diff = parse_diff(output, current_closure, target_closure, 1, 7, null);
 
     expect(diff.changed.map((change) => change.name)).toEqual(["firefox"]);
     expect(diff.added.map((change) => change.name)).toEqual(["hello"]);
@@ -64,13 +65,28 @@ describe("the package diff", () => {
     expect(diff.resized.map((change) => change.name)).toEqual(["glibc"]);
     expect([diff.closure_before_bytes, diff.closure_after_bytes, diff.derivation_diff, diff.built]).toEqual([4_000_000_000, 4_100_000_000, null, true]);
     const older = JSON.stringify([{ path: current_closure, closureSize: 1 }, { path: target_closure, closureSize: 2 }]);
-    expect(parse_diff(`@@x-nix-diff sizes\n${older}\n`, current_closure, target_closure, 1, 7).closure_after_bytes).toBe(2);
+    expect(parse_diff(`@@x-nix-diff sizes\n${older}\n`, current_closure, target_closure, 1, 7, null).closure_after_bytes).toBe(2);
   });
 
   it("says when the new closure is not built, and keeps nix-diff's account", () => {
-    expect(parse_diff("@@x-nix-diff missing\n", current_closure, target_closure, 1, null).built).toBe(false);
-    const diff = parse_diff("@@x-nix-diff closures\n@@x-nix-diff derivations\n- /nix/store/x.drv:\n+ /nix/store/y.drv:\n", current_closure, target_closure, 1, null);
+    expect(parse_diff("@@x-nix-diff missing\n", current_closure, target_closure, 1, null, null).built).toBe(false);
+    const diff = parse_diff("@@x-nix-diff closures\n@@x-nix-diff derivations\n- /nix/store/x.drv:\n+ /nix/store/y.drv:\n", current_closure, target_closure, 1, null, null);
     expect(diff.derivation_diff).toBe("- /nix/store/x.drv:\n+ /nix/store/y.drv:");
+  });
+
+  it("reads only the sections its run's token marks, whatever the compared closures print", async () => {
+    const forged = "@@x-nix-diff missing\n@@x-nix-diff failed 1\n@@x-nix-diff note forged\nhello: ∅ → 2.12, +100.0 KiB\n";
+    const program = fake_programs((argv) => (argv.includes("diff-closures") ? forged : argv.includes("-S") ? `${sizes}\n` : ""));
+    const operation = with_marker_token(diff_operation(settings({ nix_args: [] }), current_closure, target_closure));
+
+    const run = await run_operation(operation, { timeout_in_seconds: 10, program });
+    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null, marker_token_of(operation));
+
+    expect(run.stdout.startsWith(`@@x-nix-markers ${marker_token_of(operation)}\n`)).toBe(true);
+    expect([diff.built, diff.error, diff.note]).toEqual([true, null, null]);
+    expect(diff.added.map((change) => change.name)).toEqual(["hello"]);
+    // Read without the token, as for an older agent, the forged line would count.
+    expect(parse_diff(run.stdout, current_closure, target_closure, 1, null, null).built).toBe(false);
   });
 
   it("runs nix-diff only when no package changed, and says when it is missing", async () => {
@@ -78,7 +94,7 @@ describe("the package diff", () => {
 
     const run = await run_operation(diff_operation(settings({ nix_args: [] }), current_closure, target_closure), { timeout_in_seconds: 10, program });
 
-    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null);
+    const diff = parse_diff(run.stdout, current_closure, target_closure, 1, null, null);
     expect(diff.note).toMatch(/nix-diff is not installed|derivations of both closures/);
     expect(diff.closure_after_bytes).toBe(4_100_000_000);
   });
@@ -242,6 +258,44 @@ describe("live build progress", () => {
       // One the host could not read needs nothing, so it is not asked for again.
       expect(progress.planned[drv].needs).toEqual([]);
       expect(needs_operation(progress)).toBeNull();
+    });
+  });
+
+  describe("from a hostile agent", () => {
+    const hostile = [
+      "@nix null", "@nix 5", "@nix \"text\"", "@nix []", "@nix [1, 2]", "@nix true", "@nix {", "@nix ",
+      nix_line({ action: "msg", msg: 5 }), nix_line({ action: "msg", msg: null }), nix_line({ action: "msg", msg: "hi", level: "high" }),
+      nix_line({ action: 7 }), nix_line({ action: "start", type: "105", fields: [drv] }), nix_line({ action: "start", type: 105, fields: "not a list" }),
+      nix_line({ action: "start", id: 9, type: 105, fields: [{ toString: 1 }] }), nix_line({ action: "start", id: 9, type: 105, fields: [null], text: 5 }),
+      nix_line({ action: "result", id: 9, type: 101, fields: [{ valueOf: 1, toString: 1 }] }), nix_line({ action: "result", id: 9, type: 104, fields: [[1, [2]]] }),
+      nix_line({ action: "result", id: 1, type: 105, fields: [0, "2"] }), nix_line({ action: "result", id: 1, type: 106, fields: [105, -1] }),
+      nix_line({ action: "stop", id: { nested: true } }), nix_line({ action: "start", id: "__proto__", type: 105, fields: [drv] }),
+      '@nix {"__proto__": {"polluted": true}, "action": "start", "id": 4, "type": 105, "fields": ["/nix/store/__proto__"]}',
+      '@nix {"action": "result", "id": 4, "type": 104, "fields": ["constructor"], "constructor": 1}',
+      `@nix ${"[".repeat(100_000)}${"]".repeat(100_000)}`,
+      `@nix ${JSON.stringify({ action: "msg", level: 0, msg: `builder for '${"x".repeat(50_000)}`.repeat(20) })}`,
+      `@nix ${JSON.stringify({ action: "msg", level: 0, msg: "y".repeat(max_log_line_length) })}`,
+    ];
+
+    it("never throws, and keeps any line it cannot read as plain text", () => {
+      const progress = empty_progress();
+      const started = performance.now();
+      let text = "";
+      for (const line of hostile) text += read_build_log(progress, `${line}\n`, false, 100);
+      text += read_build_log(progress, "@nix null", true, 100);
+      expect(performance.now() - started).toBeLessThan(3000);
+      expect(text).toContain("@nix null\n");
+      expect(text).toContain(`${nix_line({ action: "msg", msg: 5 })}\n`);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(progress.builds_failed).toBe(0);
+      expect(() => summarise(progress)).not.toThrow();
+    });
+
+    it("lets a line that never ends through once it passes the limit, so the carry stays bounded", () => {
+      const progress = empty_progress();
+      const text = read_build_log(progress, `@nix ${"z".repeat(max_log_line_length + 10)}`, false);
+      expect(text.length).toBeGreaterThan(max_log_line_length);
+      expect(progress.carry).toBe("");
     });
   });
 });

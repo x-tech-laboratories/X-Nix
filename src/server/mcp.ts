@@ -185,7 +185,8 @@ export const routes: Record<string, RouteToolSpec> = {
     route: "POST /api/jobs/:id/stop",
     description:
       "Stops a running job by ending its processes on its host, and answers once they have ended; the job then fails as stopped. " +
-      "A switch stopped during activation can leave the host part-way between systems, so check the deployment afterwards.",
+      "A guarded switch that has already activated is not stopped but its watchdog is told to roll back, and the job ends with its outcome; " +
+      "a switch stopped during activation can leave the host part-way between systems, so check the deployment afterwards.",
     params: [{ name: "id", schema: whole }],
   },
   list_samples: {

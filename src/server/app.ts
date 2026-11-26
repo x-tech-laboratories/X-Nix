@@ -13,9 +13,10 @@ import { register_security_headers } from "@x-tech-laboratories/x-libs/server/se
 import { register_web_folder } from "@x-tech-laboratories/x-libs/server/web_folder";
 
 import type { AgentPool } from "./agents/agent.ts";
-import { agent_statuses, type Hub } from "./agents/hub.ts";
+import { agent_statuses, server_key_view, type Hub, type ServerKeyView } from "./agents/hub.ts";
 import { register_auth, started_by, type Accounts, type SignInSettings } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
+import { register_canonical_paths } from "./canonical_paths.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
 import { fleet_settings, type DeploymentSettings, type DirectOn, type TimeOfDay } from "./config.ts";
@@ -72,6 +73,8 @@ export interface ProvisioningView {
   media_root_dir: string;
   // What the new host's configuration needs for its agent, with its name left as a placeholder.
   agent_snippet: string;
+  // The server's public key, which every agent lists to check the server, or null when the server signs nothing.
+  server_key: ServerKeyView | null;
   installs: InstallView[];
   media: MediaView[];
   provisioned_agents: ProvisionedAgentView[];
@@ -147,8 +150,8 @@ export interface HostView {
   // Whether it is the server's own host served by the server itself, which needs no agent.
   own: boolean;
   agent_key: boolean;
-  // Its agent's connection, or null when it is not connected.
-  agent: { agent_version: string; connected_epoch: number } | null;
+  // Its agent's connection, with whether every message to it is signed with the server's key, or null when it is not connected.
+  agent: { agent_version: string; connected_epoch: number; signed_messages: boolean } | null;
   wake: { mac: string; broadcast: string; via: string | null; timeout: number } | null;
   keep_awake: boolean;
   interval: number;
@@ -365,7 +368,7 @@ function host_view(host: Host, poller: Poller, hub: Hub | undefined, own_host: s
     display_name: settings.name,
     own: host.name === own_host,
     agent_key: settings.agent_key !== null,
-    agent: connection === null ? null : { agent_version: connection.agent_version, connected_epoch: connection.connected_epoch },
+    agent: connection === null ? null : { agent_version: connection.agent_version, connected_epoch: connection.connected_epoch, signed_messages: connection.signed_messages },
     wake: settings.wake === null ? null : { mac: settings.wake.mac, broadcast: settings.wake.broadcast, via: settings.wake.via, timeout: settings.wake.timeout },
     keep_awake: settings.keep_awake,
     interval: settings.interval,
@@ -443,6 +446,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const started_epoch = Math.floor(Date.now() / 1000);
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
+  // A path the router would read differently from how it is spelled is refused before sign-in or any route sees it.
+  register_canonical_paths(app);
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   // Every answer keeps the page to its own scripts and out of other sites' frames.
   register_security_headers(app);
@@ -680,7 +685,11 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   }));
 
   // The ids a selector such as "web-* @canary" picks.
-  app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request) => fleet.select(request.query.selector ?? "").map((deployment) => deployment.id));
+  app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request, reply) => {
+    const selector = String(request.query.selector ?? "");
+    const problem = fleet.selector_problem(selector);
+    return problem === null ? fleet.select(selector).map((deployment) => deployment.id) : reply.code(400).send({ error: problem });
+  });
 
   app.post<{ Body: FleetRequest }>("/api/fleet/runs", async (request, reply) => {
     const outcome = await fleet.start(request.body ?? {}, started_by(request.viewer));
@@ -755,6 +764,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
 
   const provisioner = options.provisioner;
   if (provisioner !== undefined) {
+    const server_key = server_key_view(options.hub);
     app.get("/api/provisioning", async (): Promise<ProvisioningView> => ({
       own_host: provisioner.own_host,
       install_refusal: provisioner.install_refusal(),
@@ -762,7 +772,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
       ssh_key: provisioner.settings.ssh_key,
       agent_key_path: provisioner.settings.agent_key_path,
       media_root_dir: provisioner.media_root_dir,
-      agent_snippet: agent_snippet("<host>", provisioner.settings.agent_key_path, provisioner.settings.agent_url ?? "wss://x-nix.example/api/agent"),
+      agent_snippet: agent_snippet("<host>", provisioner.settings.agent_key_path, provisioner.settings.agent_url ?? "wss://x-nix.example/api/agent", server_key?.public_line ?? null),
+      server_key,
       installs: provisioner.installs(),
       media: provisioner.media(),
       provisioned_agents: provisioner.provisioned_agents(),

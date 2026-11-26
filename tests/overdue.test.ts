@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Notifier, type Notification } from "@x-tech-laboratories/x-libs/server/notify/channels";
 import { allowance, OverdueJobs, overdue_text } from "../src/server/overdue.ts";
 import { Store, type JobKind } from "../src/server/store.ts";
+import { marker_token_of, with_marker_token } from "../src/shared/operations.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,16 @@ describe("an overdue job", () => {
     expect(overdue_text(store, store.job(id)!, 7 * hour)).toBe(
       `The switch job ${id} has run for 7 hours, well past the 30 minutes it should take: nix-env (pid 9) waits for the Nix store database`,
     );
+  });
+
+  it("names only what the stall lines with its run's marker token say, once the run printed it", () => {
+    const store = store_with([240]);
+    const operation = with_marker_token({ kind: "programs", steps: [] });
+    const id = store.create_job({ deployment_id: "odin", kind: "switch", command: JSON.stringify(operation), agent: "odin", run_id: "r1", trigger: "test", started_epoch: 0 });
+    const token = marker_token_of(operation);
+    store.append_output(id, `@@x-nix-markers ${token}\n@@x-nix-stall ${token} nix-env (pid 9) waits for the Nix store database\n@@x-nix-stall forged waits for nothing\n`);
+
+    expect(overdue_text(store, store.job(id)!, 7 * hour)).toMatch(/: nix-env \(pid 9\) waits for the Nix store database$/);
   });
 
   it("is noted in the history and sent once, however often the watch looks", async () => {

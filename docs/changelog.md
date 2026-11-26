@@ -12,6 +12,22 @@ version.
 
 ### 2026-11-26
 
+- docs(auth): describe the sign-in limits and how a proxy shares them
+- feat(agents): sign what the server sends agents with a server key, and have agents check it
+- fix(auth): decide who may call a route by its matched pattern
+- build(deps): bump X-Libs to 0.89.0
+- fix(auth): refuse request paths that are not spelled canonically
+- fix(jobs): read only marker lines that carry the run's own token
+- fix(deployment): switch only to the evaluated system, built at the evaluated commit
+- fix(provisioning): pin the target's host key on every connection of an install, and refuse an install without one
+- fix(pull): switch only to a revision that descends from the one deployed
+- fix(jobs): have stopping a guarded switch after its activation roll it back through its watchdog
+- fix(builds): read any structured log line nix did not write as plain text instead of failing the job
+- fix(hosts): hold reboots and collections off while a deployment switches, and switches while a collection runs
+- fix(store): cap a job's output, prune old history and bound pull reports
+- fix(nixos): bound the agent output lines parsers run patterns on
+- fix(fleet): match selectors with a glob matcher and cap their length and terms
+- ci: merge only X-Tech packages on their own, checked by the base branch's exact provenance check, with least token permissions
 - feat(nix): refuse real-time scheduling to the agent's unit
 - feat(nix): refuse private keys in the server's settings and warn about other inline secrets
 - feat(nix): narrow the sudo rules to the command lines X-Nix runs and let hosts drop the groups they do not use

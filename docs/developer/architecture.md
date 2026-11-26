@@ -164,14 +164,17 @@ flowchart TB
 
 `main.ts` builds everything in this order, because later pieces need earlier ones:
 
-1. Read settings from the environment (`read_server_config`) and the config file (`load_config`).
+1. Read settings from the environment (`read_server_config`) and the config file (`load_config`), and read the server
+   key `X_NIX_SERVER_KEY_FILE` names, refusing to start when it cannot be used.
 2. Take a staged restore if one waits beside the database, then open the `Store`.
 3. Set up daily backups (`sqlite_backups`, `keep_backing_up`).
-4. Make the `LocalAgent` and the `AgentPool`, give it the Wake-on-LAN settings, and make the hub that admits agents.
+4. Make the `LocalAgent` and the `AgentPool`, give it the Wake-on-LAN settings, and make the hub that admits agents,
+   signing for them with the server key when there is one.
 5. Make the `Provisioner` and give the hub the accepted agent keys: the config's, plus the ones X-Nix made.
 6. Make a `Host`, `Cache`, `Deployment` and `Flake` for each config entry.
-7. Make the `Poller` over all of them, the `Fleet`, `OverdueJobs` and the `Webhook`.
-8. Build the Fastify app, listen, then start the poller, the fleet timer and the overdue watch.
+7. Make the `Poller` over all of them, the `Fleet`, `OverdueJobs` and the `Webhook`, and start pruning the history (`keep_pruning`).
+8. Build the Fastify app, warn once when there is no server key, listen, then start the poller, the fleet timer and
+   the overdue watch.
 
 ### Owners
 

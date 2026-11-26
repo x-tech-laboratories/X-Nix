@@ -1,5 +1,5 @@
 // Starts the X-Nix agent from its environment: the server's URL, the file holding this host's private key, the host it
-// logs in as, the folder long runs keep their output in, and the optional pull and run unit settings files.
+// logs in as, the folder long runs keep their output in, and the optional pull, run unit and server keys files.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 
-import { AgentConfigError, start_agent } from "./agent.ts";
+import { AgentConfigError, read_server_keys_file, start_agent } from "./agent.ts";
 import { parse_pull_settings, PullConfigError, type PullSettings } from "./pull.ts";
 import { parse_run_unit_settings, run_unit, RunUnitConfigError, type RunUnitSettings } from "./tasks.ts";
 import { switch_folders_variable } from "../shared/operations.ts";
@@ -60,6 +60,12 @@ function run_unit_settings(): RunUnitSettings | undefined {
   return parse_run_unit_settings(raw);
 }
 
+// The server keys from the JSON list X_NIX_AGENT_SERVER_KEYS_FILE names; without it the agent tells the server by TLS alone.
+function server_keys(): string[] | undefined {
+  const file = process.env.X_NIX_AGENT_SERVER_KEYS_FILE;
+  return file ? read_server_keys_file(file) : undefined;
+}
+
 // ── Start ────────────────────────────────────────────────────────────────────
 
 try {
@@ -71,6 +77,7 @@ try {
   const agent = start_agent({
     url: required("X_NIX_AGENT_URL"),
     key_file: required("X_NIX_AGENT_KEY_FILE"),
+    server_keys: server_keys(),
     state_directory,
     host,
     agent_version: agent_version(),

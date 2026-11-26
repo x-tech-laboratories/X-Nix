@@ -15,6 +15,7 @@ import type { DeploymentSettings, FleetSettings } from "./config.ts";
 import type { Deployment } from "./deployment.ts";
 import { switch_verdict } from "./nixos/switch.ts";
 import type { Store } from "./store.ts";
+import { command_marker_token } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -99,7 +100,8 @@ export interface FleetOptions {
   // Asks the deployment's cycle to come soon, so a started job or a switch's evaluation is followed quickly.
   poke?: (deployment: Deployment) => void;
   // Stops a running job, for a stop that also ends the jobs already running; such a stop is refused without it.
-  stop_job?: (job_id: number, by: string) => Promise<{ ok: boolean; message: string }>;
+  // A guarded switch past its activation answers with rolling_back set, as its watchdog was told to roll back instead.
+  stop_job?: (job_id: number, by: string) => Promise<{ ok: boolean; message: string; rolling_back?: boolean }>;
   // The time in seconds, which tests set.
   now?: () => number;
 }
@@ -110,16 +112,59 @@ const active_states = new Set<FleetHostState>(["running", "verifying"]);
 
 // ── Selectors ────────────────────────────────────────────────────────────────
 
+// The longest selector a request may give, in characters.
+export const max_selector_length = 1000;
+
+// The most terms one selector may hold, and the most stage selectors a staged run may name.
+export const max_selector_terms = 100;
+
 // The terms of a selector, split on spaces and commas, such as "web-* @canary".
 export function selector_terms(selector: string): string[] {
   return selector.split(/[\s,]+/).filter(Boolean);
 }
 
+// Why a selector from a request is refused, or null when it is within the limits.
+export function selector_problem(selector: string): string | null {
+  if (selector.length > max_selector_length) return `A selector may be at most ${max_selector_length} characters long`;
+  if (selector_terms(selector).length > max_selector_terms) return `A selector may hold at most ${max_selector_terms} terms`;
+  return null;
+}
+
+// Characters a wildcard does not stand for, the line terminators, as a regular expression's dot never matched them.
+const line_terminators = new Set(["\n", "\r", "\u2028", "\u2029"]);
+
+// Whether a glob matches the whole text, case-sensitively, `*` standing for any run of characters and `?` for one, in time bounded by the product of their lengths.
+export function glob_matches(glob: string, text: string): boolean {
+  let glob_index = 0;
+  let text_index = 0;
+  // The position just past the last `*` seen, and the text position it was last tried from.
+  let star_index = -1;
+  let star_text_index = 0;
+  while (text_index < text.length) {
+    const wanted = glob_index < glob.length ? glob[glob_index] : null;
+    const character = text[text_index];
+    const one_fits = wanted === "?" ? !line_terminators.has(character) : wanted !== "*" && wanted === character;
+    if (one_fits) {
+      glob_index++;
+      text_index++;
+    } else if (wanted === "*") {
+      star_index = ++glob_index;
+      star_text_index = text_index;
+    } else if (star_index !== -1 && !line_terminators.has(text[star_text_index])) {
+      glob_index = star_index;
+      text_index = ++star_text_index;
+    } else {
+      return false;
+    }
+  }
+  while (glob_index < glob.length && glob[glob_index] === "*") glob_index++;
+  return glob_index === glob.length;
+}
+
 // Whether one term picks the deployment: @tag by its tags, anything else as a glob on its id or name.
 export function term_matches(term: string, settings: Pick<DeploymentSettings, "id" | "name" | "tags">): boolean {
   if (term.startsWith("@")) return settings.tags.includes(term.slice(1));
-  const pattern = new RegExp(`^${term.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*").replaceAll("?", ".")}$`);
-  return pattern.test(settings.id) || pattern.test(settings.name);
+  return glob_matches(term, settings.id) || glob_matches(term, settings.name);
 }
 
 export function selector_matches(selector: string, settings: Pick<DeploymentSettings, "id" | "name" | "tags">): boolean {
@@ -153,6 +198,11 @@ export class Fleet {
     return [...this.deployments.values()].filter((deployment) => selector_matches(selector, deployment.settings));
   }
 
+  // Why a selector from a request is refused, or null when it may be used.
+  selector_problem(selector: string): string | null {
+    return selector_problem(selector);
+  }
+
   // Every tag any deployment has, sorted.
   tags(): string[] {
     return [...new Set([...this.deployments.values()].flatMap((deployment) => deployment.settings.tags))].sort();
@@ -183,6 +233,8 @@ export class Fleet {
       selector = picked.map((deployment) => deployment.id).join(" ");
     } else if (typeof request.selector === "string" && request.selector.trim() !== "") {
       selector = request.selector.trim();
+      const problem = selector_problem(selector);
+      if (problem !== null) return refuse(problem);
       picked = this.select(selector);
     } else {
       return refuse("Pick deployments with a selector such as \"web-* @canary\", or a list of ids");
@@ -196,6 +248,9 @@ export class Fleet {
       if (request.stages !== undefined && request.stages !== null && (!Array.isArray(request.stages) || !request.stages.every((stage) => typeof stage === "string"))) {
         return refuse("`stages` must be a list of selectors");
       }
+      if (Array.isArray(request.stages) && request.stages.length > max_selector_terms) return refuse(`A run may name at most ${max_selector_terms} stages`);
+      const stage_problem = ((request.stages as string[] | undefined) ?? []).map(selector_problem).find((problem) => problem !== null);
+      if (stage_problem !== undefined) return refuse(stage_problem);
       stages = ((request.stages as string[] | undefined) ?? this.settings.stages).map((stage) => stage.trim()).filter(Boolean);
     }
     const soak = soak_of(request.soak, this.settings.soak);
@@ -229,16 +284,16 @@ export class Fleet {
       if (run.state !== "running") return { ok: false, message: `Fleet run #${id} has already ended`, run };
       if (options.jobs === true && this.stop_job === undefined) return { ok: false, message: "This server cannot stop jobs", run };
       run.stop_requested = true;
-      const failures = options.jobs === true ? await this.stop_running_jobs(run, options.by ?? "manual") : [];
+      const notes = options.jobs === true ? await this.stop_running_jobs(run, options.by ?? "manual") : { failures: [], rolling_back: [] };
       await this.advance_run(run);
       const message = options.jobs === true ? `Fleet run #${id} is stopping, with its running jobs` : `Fleet run #${id} is stopping`;
-      return { ok: failures.length === 0, message: [message, ...failures].join("; "), run: this.run(id) };
+      return { ok: notes.failures.length === 0, message: [message, ...notes.rolling_back, ...notes.failures].join("; "), run: this.run(id) };
     });
   }
 
-  // Stops the job of every host still running, all at once, and answers with why any could not be stopped; a Build still
-  // held for its host ends there, before it has a run.
-  private async stop_running_jobs(run: FleetRun, by: string): Promise<string[]> {
+  // Stops the job of every host still running, all at once, and answers with why any could not be stopped and which
+  // guarded switches roll back instead; a Build still held for its host ends there, before it has a run.
+  private async stop_running_jobs(run: FleetRun, by: string): Promise<{ failures: string[]; rolling_back: string[] }> {
     const running = run.hosts.filter((host) => host.state === "running" && host.job_id !== null);
     const stop = async (host: FleetHost) => {
       const held = await this.deployments.get(host.deployment_id)?.stop_held_build(host.job_id!, by);
@@ -246,16 +301,18 @@ export class Fleet {
     };
     const outcomes = await Promise.all(running.map(async (host) => ({ host, outcome: await stop(host) })));
     const failures: string[] = [];
+    const rolling_back: string[] = [];
     for (const { host, outcome } of outcomes) {
       if (!outcome.ok) {
         failures.push(`${host.name}: ${outcome.message}`);
         continue;
       }
+      if ("rolling_back" in outcome && outcome.rolling_back === true) rolling_back.push(`${host.name}: ${outcome.message}`);
       run.stopped_jobs = [...(run.stopped_jobs ?? []), host.job_id!];
       const deployment = this.deployments.get(host.deployment_id);
       if (deployment !== undefined) this.poke(deployment);
     }
-    return failures;
+    return { failures, rolling_back };
   }
 
   // Lets a run held for approval start its next stage, once any soak still running has passed.
@@ -393,7 +450,7 @@ export class Fleet {
     }
     if (job.state === "failed" && run.stopped_jobs?.includes(job.id)) return this.finish_host(host, "skipped", job.error ?? "Stopped", now);
     if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? "The job failed", now);
-    const outcome = run.action === "switch" ? switch_verdict(job.output).outcome : null;
+    const outcome = run.action === "switch" ? switch_verdict(job.output, command_marker_token(job.command)).outcome : null;
     if (outcome?.kind === "deferred") return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);
     if (!(run.staged && run.action === "switch")) return this.finish_host(host, "succeeded", "Finished", now);
     host.state = "verifying";

@@ -13,7 +13,7 @@ import { format_age, format_duration } from "@x-tech-laboratories/x-libs/duratio
 
 import { level_of_status, worse, type GcSettings, type Status } from "../config.ts";
 import { latest_slot, type Message } from "../deployment.ts";
-import { read_facts, type GcFields, type Profile } from "../../shared/facts.ts";
+import { parsable_line, read_facts, type GcFields, type Profile } from "../../shared/facts.ts";
 import { show_argv, type Argv, type Operation } from "../../shared/operations.ts";
 
 export type { GcFields, Profile } from "../../shared/facts.ts";
@@ -50,7 +50,8 @@ export interface StoreReading {
   next_epoch: number | null;
 }
 
-const summary_pattern = /(\d+)\s+store paths deleted,\s+([\d.]+)\s*(\w+)\s+freed/;
+// A count may not start inside a longer run of digits, and every run is bounded, so a hostile line is matched in linear time.
+const summary_pattern = /(?<!\d)(\d{1,20})\s{1,20}store paths deleted,\s{1,20}([\d.]{1,32})\s{0,20}(\w{1,16})\s{1,20}freed/;
 
 // systemd logs exactly one of these when a run ends, so the journal, not the unit's Result, which a daemon re-exec
 // resets to success, decides the outcome.
@@ -85,7 +86,7 @@ export function parse_gc_probe(stdout: string): GcFields | null {
 // This cycle's reading of the last collection, or null when nothing on the host records that one ever ran.
 export function observed_collection(fields: GcFields): Collection | null {
   const outcome_epoch = log_epoch(fields.outcome);
-  const summary = summary_pattern.exec(fields.summary);
+  const summary = summary_in(fields.summary);
   const summary_epoch = summary ? log_epoch(fields.summary) : null;
   // The unit's own stop bounds the run when the journal has rotated past every line of it.
   const epochs = [outcome_epoch, summary_epoch, systemd_epoch(fields.svc_exit)].filter((epoch): epoch is number => epoch !== null);
@@ -130,7 +131,7 @@ export function fold_collection(stored: Collection | null, seen: Collection | nu
 // A finished collection job as the same record the journal gives.
 export function finished_collection(output: string, succeeded: boolean, error: string | null, epoch: number): Collection {
   const lines = output.split("\n").reverse();
-  const summary = lines.map((line) => summary_pattern.exec(line)).find((match) => match !== null) ?? null;
+  const summary = lines.map(summary_in).find((match) => match !== null) ?? null;
   return {
     epoch, succeeded, error,
     deleted: summary ? Number(summary[1]) : null,
@@ -265,6 +266,12 @@ export function bytes_from(amount: string, unit: string): number | null {
   const factor = size_units[unit.toLowerCase()];
   const value = Number(amount);
   return factor === undefined || !Number.isFinite(value) ? null : value * factor;
+}
+
+// The summary a collection printed on one line, or null when the line is none or too long to be one.
+function summary_in(line: unknown): RegExpExecArray | null {
+  const text = parsable_line(line);
+  return text === null ? null : summary_pattern.exec(text);
 }
 
 function whole(text: string | undefined): number | null {

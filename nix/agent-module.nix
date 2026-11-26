@@ -34,6 +34,7 @@ let
     require_sudo = cfg.pull.requireSudo;
     allowed_signers = if cfg.pull.allowedSignersFile == null then null else toString cfg.pull.allowedSignersFile;
     allow_unsigned = cfg.pull.allowUnsigned;
+    allow_rewind = cfg.pull.allowRewind;
   };
 
   # The agent's own scheduling, which each run's unit is given too unless runUnits.properties says otherwise.
@@ -47,6 +48,8 @@ let
   ];
 
   run_unit_file = json.generate "x-nix-agent-run-unit.json" { inherit (cfg.runUnits) slice properties; };
+
+  server_keys_file = json.generate "x-nix-agent-server-keys.json" cfg.serverPublicKeys;
 
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
@@ -79,6 +82,19 @@ in
         File holding this host's unencrypted OpenSSH ed25519 private key, made with
         `ssh-keygen -t ed25519 -N "" -C x-nix-agent-<host>`; read at runtime, never copied to the
         store. The server declares its public line under `agents`.
+      '';
+    };
+
+    serverPublicKeys = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "ssh-ed25519 AAAA... x-nix-server" ];
+      description = ''
+        The OpenSSH public lines of the server keys the agent accepts, from the server's
+        `serverKeyFile`, as the Provision page shows them. The agent then answers only a server that
+        signs with one of them and refuses every unsigned message; list a new key beside the old one
+        before the server switches to it. Public, so it may live in the store. Empty, the agent tells
+        the server only by its TLS certificate.
       '';
     };
 
@@ -138,8 +154,8 @@ in
       enable = mkEnableOption ''
         pull mode: once the server has been unreachable for `after`, the agent asks `remotes` every
         `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own once
-        its commit is signed by a key in `allowedSignersFile`, reporting each switch to the server
-        once it is back
+        it descends from the revision deployed last and its commit is signed by a key in
+        `allowedSignersFile`, reporting each switch and each refusal to the server once it is back
       '';
 
       remotes = mkOption {
@@ -215,6 +231,17 @@ in
           remote, or impersonate one while the server is unreachable, then gets root on this host.
         '';
       };
+
+      allowRewind = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Switch to a revision that does not descend from the one deployed last, such as an older
+          commit or a branch whose history was rewritten. Anyone who can move the branch can then roll
+          this host back to any commit an allowed signer once signed, with its old vulnerabilities.
+          Turn it on only for as long as a rewritten branch needs it.
+        '';
+      };
     };
   };
 
@@ -228,7 +255,21 @@ in
         assertion = !cfg.pull.enable || cfg.pull.allowedSignersFile != null || cfg.pull.allowUnsigned;
         message = "services.x-nix-agent.pull needs allowedSignersFile, the keys its commits are signed with, or allowUnsigned = true.";
       }
+      {
+        assertion = builtins.all (line: builtins.match "ssh-ed25519 [A-Za-z0-9+/]+={0,2}( .*)?" line != null) cfg.serverPublicKeys;
+        message = "services.x-nix-agent.serverPublicKeys takes OpenSSH public lines such as \"ssh-ed25519 AAAA... x-nix-server\".";
+      }
     ];
+
+    warnings =
+      lib.optional (cfg.pull.enable && cfg.pull.allowRewind) (
+        "services.x-nix-agent.pull.allowRewind lets anyone who can move the branch roll this host back to an older "
+        + "signed commit; turn it off once the rewritten branch is deployed."
+      )
+      ++ lib.optional (cfg.serverPublicKeys == [ ]) (
+        "services.x-nix-agent.serverPublicKeys is empty, so the agent tells the server only by its TLS certificate; "
+        + "set it to the public line of the server's services.x-nix.serverKeyFile, which the Provision page shows."
+      );
 
     users.users.x-nix-agent = {
       isSystemUser = true;
@@ -285,6 +326,7 @@ in
         # Node keeps its own CA list, so the system bundle, which holds security.pki.certificates, is added to it.
         NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
       }
+      // lib.optionalAttrs (cfg.serverPublicKeys != [ ]) { X_NIX_AGENT_SERVER_KEYS_FILE = toString server_keys_file; }
       // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
       // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
 

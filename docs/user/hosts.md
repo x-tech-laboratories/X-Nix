@@ -19,6 +19,13 @@ store and its boot entries. Its page has these tabs:
 
 A deployment's Reboot reboots its host.
 
+While a deployment on the host builds, switches, tests, rolls back or dry-activates, and after a guarded switch that
+activated but printed no outcome, until its watchdog's window (`activation_timeout`, `confirm_timeout` and
+`health_timeout` together) has passed, the host refuses Reboot, Set next boot with a reboot and Collect Garbage, so
+neither can pull the system from under a switch or delete the generation its watchdog would roll back to. A daily
+`collect_at` collection waits for a later cycle instead. In turn, a deployment refuses a switch or a rollback, and
+holds off an automatic switch, while a collection runs on its host.
+
 ## The Nix store
 
 ![A host's Store tab](/assets/screenshots/store.png)

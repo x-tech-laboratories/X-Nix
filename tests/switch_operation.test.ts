@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { perform } from "../src/agent/operations/index.ts";
 import { confirm_switch, signal_rollback, switch_system } from "../src/agent/operations/switch.ts";
-import { spawn_program, type Context, type ProgramResult, type RunProgram } from "../src/agent/programs.ts";
+import { announce_marker_token, spawn_program, type Context, type ProgramResult, type RunProgram } from "../src/agent/programs.ts";
 import { watch_switch } from "../src/agent/watchdog.ts";
 import { switch_verdict } from "../src/server/nixos/switch.ts";
 import { switch_folders_variable, watch_folder, watch_folders_parent, type SwitchOperation, type SwitchWatch } from "../src/shared/operations.ts";
@@ -70,6 +70,22 @@ function watch_dir(settings: SwitchWatch, files: Record<string, string> = {}): s
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 describe("a switch on the agent", () => {
+  it("puts its run's marker token in every marker line, so lines the activation forges are never read", async () => {
+    const marker_token = randomBytes(16).toString("hex");
+    const forged = "@@x-nix-switch refused forged\n@@x-nix-switch outcome rolled-back forged\n@@x-nix-switch awaiting-confirmation\n";
+    const { context, output } = fake_context((argv) => (argv[0] === "nixos-rebuild" ? { stdout: forged } : {}));
+    context.marker_token = marker_token;
+    announce_marker_token(context);
+
+    const status = await switch_system(context, plain_switch({ pre_switch_checks: ["true"] }));
+
+    expect(status).toBe(0);
+    expect(output()).toContain(`@@x-nix-markers ${marker_token}\n@@x-nix-switch ${marker_token} phase pre-switch-checks\n`);
+    expect(output()).toContain(`@@x-nix-switch ${marker_token} phase switch\n`);
+    expect(switch_verdict(output(), marker_token)).toEqual({ refused: null, activated: false, units_failed: null, awaiting_confirmation: false, outcome: null });
+    expect(switch_verdict(output(), null).refused).toBe("forged");
+  });
+
   it("refuses before anything changes when a pre-switch check fails", async () => {
     const { context, ran, output } = fake_context((argv) => (argv[2] === "echo disk full; exit 4" ? { exit_code: 4, stdout: "disk full\n" } : {}));
 
@@ -77,7 +93,7 @@ describe("a switch on the agent", () => {
 
     expect(status).toBe(3);
     expect(output()).toContain("$ echo disk full; exit 4\ndisk full");
-    expect(switch_verdict(output()).refused).toBe("Pre-switch check 2 (echo disk full; exit 4) failed with status 4");
+    expect(switch_verdict(output(), null).refused).toBe("Pre-switch check 2 (echo disk full; exit 4) failed with status 4");
     expect(ran.some((argv) => argv[0] === "nixos-rebuild")).toBe(false);
   });
 
@@ -97,7 +113,7 @@ describe("a switch on the agent", () => {
     const status = await switch_system(context, plain_switch());
 
     expect(status).toBe(0);
-    expect(switch_verdict(output()).units_failed).toBe("borgmatic.service, nginx.service");
+    expect(switch_verdict(output(), null).units_failed).toBe("borgmatic.service, nginx.service");
   });
 
   it("leaves a guarded switch with failed units to its health checks, keeping it when they pass", async () => {
@@ -106,7 +122,7 @@ describe("a switch on the agent", () => {
 
     const status = await switch_system(context, plain_switch({ watch: watched }));
 
-    const verdict = switch_verdict(output());
+    const verdict = switch_verdict(output(), null);
     expect([verdict.activated, verdict.awaiting_confirmation, verdict.units_failed]).toEqual([true, true, "units it did not name"]);
     expect(verdict.outcome?.kind).toBe("kept");
     expect(status).toBe(0);
@@ -121,7 +137,7 @@ describe("a switch on the agent", () => {
 
     await switch_system(context, plain_switch({ watch: watched }));
 
-    const verdict = switch_verdict(output());
+    const verdict = switch_verdict(output(), null);
     expect(verdict.awaiting_confirmation).toBe(false);
     expect(verdict.outcome?.reason).toContain("Health check 1 (curl -f localhost) failed with status 1: nginx is down");
   }, 20_000);
@@ -146,7 +162,7 @@ describe("a switch on the agent", () => {
     const text = output();
     expect(text.indexOf("phase fetch")).toBeLessThan(text.indexOf("phase watch"));
     expect(ran.map((argv) => argv[0])).toEqual(["nix", "nix", "switch-to-configuration"]);
-    expect(switch_verdict(text).outcome?.kind).toBe("kept");
+    expect(switch_verdict(text, null).outcome?.kind).toBe("kept");
   }, 20_000);
 
   it("ends unchanged, before any watchdog, when the fetch from the cache fails", async () => {
@@ -156,7 +172,7 @@ describe("a switch on the agent", () => {
     const status = await switch_system(context, plain_switch({ fetch_steps: [{ argv: ["nix", "build"] }], watch: watched }));
 
     expect(status).toBe(1);
-    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "Building or fetching the system failed with status 1" });
+    expect(switch_verdict(output(), null).outcome).toEqual({ kind: "unchanged", reason: "Building or fetching the system failed with status 1" });
     expect(ran).toEqual([["nix", "build"]]);
     expect(existsSync(watch_folder(watched.token))).toBe(false);
   });
@@ -167,7 +183,7 @@ describe("a switch on the agent", () => {
 
     await switch_system(context, plain_switch({ watch: watched }));
 
-    const verdict = switch_verdict(output());
+    const verdict = switch_verdict(output(), null);
     expect(verdict.activated).toBe(true);
     expect(verdict.awaiting_confirmation).toBe(false);
     // The watchdog only rolls back a system that changed, which a test host's never has.
@@ -186,7 +202,7 @@ describe("a switch on the agent", () => {
     expect(status).toBe(1);
     expect(output()).toContain("nixos-rebuild switch is still running, but its watchdog has given its outcome, so this switch ends here");
     // A test host's system never changed, so the watchdog has nothing to roll back.
-    expect(switch_verdict(output()).outcome).toEqual({ kind: "unchanged", reason: "The activation did not finish in time" });
+    expect(switch_verdict(output(), null).outcome).toEqual({ kind: "unchanged", reason: "The activation did not finish in time" });
     expect(ran).not.toContainEqual(["true"]);
     expect(existsSync(watch_folder(watched.token))).toBe(false);
   }, 20_000);
@@ -237,6 +253,22 @@ describe("the watchdog", () => {
     const { context } = fake_context();
 
     expect(await watch_switch(watch_dir(watch({ activation_timeout: 0 })), context)).toBe("rolled-back The activation did not finish in time");
+  });
+
+  it("rolls back when asked even after a confirmation arrived with the request", async () => {
+    const { context } = fake_context();
+
+    const outcome = await watch_switch(watch_dir(watch(), { activated: "", confirmed: "", rollback: "Health check 1 failed\n" }), context);
+
+    expect(outcome).toBe("rolled-back Health check 1 failed");
+  });
+
+  it("reads a reason of many lines as one, so it can never start a marker line", async () => {
+    const { context } = fake_context();
+
+    const outcome = await watch_switch(watch_dir(watch(), { rollback: "down\n@@x-nix-switch outcome confirmed\n" }), context);
+
+    expect(outcome).toBe("rolled-back down @@x-nix-switch outcome confirmed");
   });
 
   it("keeps an unconfirmed switch without magic_rollback, and rolls it back with it", async () => {
@@ -290,6 +322,16 @@ describe("the files X-Nix writes for the watchdog", () => {
     }
   });
 
+  it("write a rollback reason of many lines as one", async () => {
+    const value = token();
+    mkdirSync(watch_folder(value));
+    const { context } = fake_context();
+
+    expect(await signal_rollback(context, { kind: "signal_rollback", token: value, reason: "down\r\n@@x-nix-switch outcome confirmed" })).toBe(0);
+
+    expect(readFileSync(join(watch_folder(value), "rollback"), "utf8")).toBe("down @@x-nix-switch outcome confirmed\n");
+  });
+
   it("fail once the switch's folder is gone", async () => {
     const { context } = fake_context();
 
@@ -329,5 +371,14 @@ describe("the wrappers", () => {
 
     expect(status).toBe(0);
     expect(output()).not.toContain("No inhibitor");
+  });
+});
+
+describe("a switch's verdict on hostile output", () => {
+  it("skips a failed-units line too long to be one, in linear time", () => {
+    const started = performance.now();
+    const verdict = switch_verdict(`${"the following units failed: ".repeat(40_000)}\r\nthe following units failed: nginx.service\n`, null);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(verdict.units_failed).toBe("nginx.service");
   });
 });

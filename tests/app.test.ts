@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
@@ -9,7 +10,8 @@ import { cache_settings, flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
 import type { Host } from "../src/server/host.ts";
 import { Poller } from "../src/server/poller.ts";
-import type { AgentRunView } from "../src/server/runs.ts";
+import { stop_overdue_rollbacks, type AgentRunView } from "../src/server/runs.ts";
+import { switch_mark } from "../src/shared/operations.ts";
 import { clock, FakeAgent, generations_result, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -155,6 +157,17 @@ describe("/api/deployments", () => {
   });
 });
 
+describe("/api/fleet/select", () => {
+  it("lists what a selector picks, and refuses one over the limits with 400", async () => {
+    const { inject } = await start_app();
+
+    expect((await inject("GET", "/api/fleet/select?selector=host-*")).json()).toEqual(["host-deploy"]);
+    const refused = await inject("GET", `/api/fleet/select?selector=${"*".repeat(2000)}`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toContain("characters");
+  });
+});
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 describe("/api/jobs/:id/stop", () => {
@@ -198,6 +211,66 @@ describe("/api/jobs/:id/stop", () => {
 
     expect(refused.statusCode).toBe(409);
     expect(harness.store.job(job_id)?.error).not.toBe("Stopped by admin");
+  });
+});
+
+describe("stopping a guarded switch", () => {
+  // A guarded switch started from the page, its run having printed the given marker lines, and the poll that copied them.
+  async function guarded_switch(markers: string[]) {
+    const harness = make_deployment({ magic_rollback: true });
+    const app_session = await start_app(harness, [], [], [], harness.agents);
+    const { job_id } = (await app_session.inject("POST", "/api/deployments/host-deploy/actions/switch")).json<{ job_id: number }>();
+    const run = harness.agent.last_run("nixos-rebuild")!;
+    harness.agent.write(run, markers.map((marker) => `${switch_mark} ${marker}\n`).join(""));
+    await harness.deployment.cycle();
+    return { harness, inject: app_session.inject, job_id, run };
+  }
+
+  it("after the activation tells the watchdog to roll back, letting the run end with its outcome", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated"]);
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().message).toContain("watchdog was told to roll back");
+    const signal = harness.agent.operations.find((operation) => operation.kind === "signal_rollback");
+    expect(signal).toMatchObject({ reason: "Stopped by admin after the activation" });
+    expect(run.alive).toBe(true);
+    expect((await inject("POST", `/api/jobs/${job_id}/stop`)).json().message).toContain("is rolling back");
+
+    harness.agent.end(run, `${switch_mark} outcome rolled-back Stopped by admin after the activation\n`, 1);
+    await harness.deployment.cycle();
+    expect(harness.store.job(job_id)).toMatchObject({ state: "failed", exit_code: 1 });
+    expect(harness.store.job(job_id)!.output).toContain("told its watchdog to roll back");
+  });
+
+  it("is stopped outright once no outcome came in the watchdog's window", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated", "awaiting-confirmation"]);
+    await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    await stop_overdue_rollbacks(() => clock.now + 3600);
+
+    expect(run.stopped).toBe(true);
+    expect(harness.store.events("host-deploy")[0].message).toContain("its watchdog gave no outcome in its window");
+  });
+
+  it("is stopped outright when the signal cannot reach the watchdog, saying nothing will roll it back", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated"]);
+    harness.agent.answers.push(["signal_rollback", result(1, "", "the watch folder is gone")]);
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    expect(stopped.json().message).toContain("nothing will roll the host back");
+    expect(run.stopped).toBe(true);
+    expect(harness.store.job(job_id)!.output).toContain("the watch folder is gone");
+  });
+
+  it("before the activation is a plain stop", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch([]);
+
+    expect((await inject("POST", `/api/jobs/${job_id}/stop`)).json().message).toBe(`Stopped job #${job_id}`);
+    expect(run.stopped).toBe(true);
+    expect(harness.agent.operations.some((operation) => operation.kind === "signal_rollback")).toBe(false);
   });
 });
 
@@ -286,6 +359,18 @@ describe("logging in", () => {
     expect(refused.json()).toMatchObject({ error: "Too many tries; wait a few minutes." });
   });
 
+  it("refuses every try from an address after twenty failures in five minutes, whatever names they give", async () => {
+    const { server } = await start_app();
+    const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
+
+    for (let count = 0; count < 20; count++) expect((await attempt(`guess-${count}`, "wrong")).statusCode).toBe(401);
+    const refused = await attempt("operator", "another password");
+
+    expect(refused.statusCode).toBe(429);
+    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
+    expect(refused.json()).toEqual({ error: "Too many tries; wait a few minutes." });
+  });
+
   it("signs each user in with their own password and tells the page who they are", async () => {
     const { server } = await start_app();
     const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
@@ -317,6 +402,84 @@ describe("logging in", () => {
     await inject("POST", "/api/logout");
 
     expect((await inject("GET", "/api/deployments")).statusCode).toBe(401);
+  });
+});
+
+describe("a path not spelled canonically", () => {
+  // Sends one raw request line over a socket, as a client may send a target the test injector would rewrite.
+  async function raw_request(server: FastifyInstance, target: string): Promise<string> {
+    const address = new URL(await server.listen({ host: "127.0.0.1", port: 0 }));
+    const socket = connect(Number(address.port), address.hostname);
+    socket.end(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+    let answer = "";
+    for await (const chunk of socket) answer += String(chunk);
+    return answer.split("\r\n")[0];
+  }
+
+  it("is refused without a session before any route runs", async () => {
+    const harness = make_deployment();
+    const { server } = await start_app(harness, [], [], [harness.host]);
+    const targets: ["GET" | "POST", string][] = [
+      ["GET", "/%61pi/hosts"], ["POST", "/%61pi/hosts/host/actions/reboot"], ["POST", "/%61pi/deployments/host-deploy/actions/switch"],
+      ["GET", "/%61pi/users"], ["GET", "/api/%68osts"], ["GET", "//api/hosts"], ["GET", "/api;x/hosts"], ["GET", "/%2561pi/hosts"],
+      ["GET", "/%61Pi/hosts"], ["GET", "/%41pi/hosts"], ["POST", "/api/hosts/host/actions/%72eboot"], ["GET", "/api/./hosts"],
+    ];
+
+    for (const [method, url] of targets) {
+      const response = await server.inject({ method, url });
+      expect([400, 401], `${method} ${url}`).toContain(response.statusCode);
+    }
+    expect(harness.store.jobs()).toEqual([]);
+    expect(harness.agent.commands).toEqual([]);
+  });
+
+  it("is refused when sent as an absolute URL", async () => {
+    const { server } = await start_app();
+
+    expect(await raw_request(server, "http://localhost/api/hosts")).toBe("HTTP/1.1 400 Bad Request");
+  });
+
+  it("does not let a viewer download", async () => {
+    const { server, inject } = await start_app();
+    await inject("POST", "/api/users", { name: "vera", role: "viewer", access: null, password: "a long viewer password" });
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "vera", password: "a long viewer password" } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    for (const url of ["/api/builds/1/%70roducts/0", "/api/provisioning/media/1/%64ownload?path=nixos.iso", "/api/builds/1/products/%30%2F"]) {
+      const response = await server.inject({ method: "GET", url, headers });
+      expect([400, 403], url).toContain(response.statusCode);
+    }
+    expect((await server.inject({ method: "GET", url: "/api/hosts", headers })).statusCode).toBe(200);
+  });
+
+  it("lets a viewer read a name holding an escape, but refuses an escaped slash in it, which X-Libs alone would let through", async () => {
+    const { server, inject } = await start_app();
+    await inject("POST", "/api/users", { name: "vera", role: "viewer", access: null, password: "a long viewer password" });
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "vera", password: "a long viewer password" } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    const spaced = await server.inject({ method: "GET", url: "/api/hosts/no%20such%20host", headers });
+    const questioned = await server.inject({ method: "GET", url: "/api/hosts/a%3Fb", headers });
+    const slashed = await server.inject({ method: "GET", url: "/api/hosts/a%2Fb", headers });
+    const download = await server.inject({ method: "GET", url: "/api/builds/1/products/0%3F", headers });
+
+    expect(spaced.json()).toEqual({ error: "No host named 'no such host'" });
+    expect(questioned.json()).toEqual({ error: "No host named 'a?b'" });
+    expect([slashed.statusCode, slashed.json()]).toEqual([400, { error: "The path escapes a character that needs no escaping." }]);
+    expect(download.statusCode).toBe(403);
+  });
+
+  it("leaves canonical paths, escaped names and query strings as they were", async () => {
+    const harness = make_deployment();
+    const { server, inject } = await start_app(harness, [], [], [harness.host]);
+
+    expect((await server.inject({ method: "GET", url: "/api/health?x=%61" })).statusCode).toBe(200);
+    expect((await server.inject({ method: "POST", url: "/api/webhook" })).statusCode).toBe(404);
+    expect((await server.inject({ method: "GET", url: "/api/hosts" })).statusCode).toBe(401);
+    expect((await inject("GET", "/api/hosts/host")).statusCode).toBe(200);
+    expect((await inject("GET", "/api/hosts/no%20such%20host")).json()).toEqual({ error: "No host named 'no such host'" });
+    expect((await inject("GET", "/api/hosts/h%C3%B6st")).json()).toEqual({ error: "No host named 'höst'" });
+    expect((await inject("GET", "/api/deployments/host-deploy?view=%61")).statusCode).toBe(200);
   });
 });
 

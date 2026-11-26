@@ -52,6 +52,9 @@ export function ProvisionView() {
       <Section title="Installs">
         <Stack><Loaded resource={installs}>{(found) => (found.length === 0 ? <Empty title="No installs yet." /> : found.map((install) => <InstallCard key={install.job.id} install={install} />))}</Loaded></Stack>
       </Section>
+      <Section title="Server key">
+        <Stack><Loaded resource={install_form}>{(found) => <ServerKey provisioning={found.provisioning} />}</Loaded></Stack>
+      </Section>
       <Section title="Agent keys for unnamed hosts">
         <Stack><Loaded resource={keys}>{(found) => <KeysTable agents={found} done={done} />}</Loaded></Stack>
       </Section>
@@ -63,6 +66,20 @@ export function ProvisionView() {
       </Section>
     </div>
   );
+}
+
+// ── Server key ───────────────────────────────────────────────────────────────
+
+// The server's public key, which each agent's serverPublicKeys lists so it answers only this server.
+function ServerKey({ provisioning }: { provisioning: Provisioning }) {
+  const key = provisioning.server_key;
+  if (key === null) {
+    return <Empty title="The server has no key, so agents tell it only by its TLS certificate." hint="Set services.x-nix.serverKeyFile to sign what the server sends agents." />;
+  }
+  return <>
+    <Facts layout="rows" rows={[["Public key", <code className="small">{key.public_line}</code>], ["Fingerprint", <code className="small">{key.fingerprint}</code>]]} />
+    <p className="muted small">Each agent lists the public key in serverPublicKeys, and refuses any message this key did not sign; the Machine tab of each host shows whether its agent does.</p>
+  </>;
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -77,11 +94,14 @@ const text_field = { type: "text", autoComplete: "off", spellCheck: false } as c
 function InstallFields({ provisioning, health, agents, done }: { provisioning: Provisioning; health: Health; agents: AgentEntry[]; done: () => void }) {
   const [address, set_address] = useState("");
   const [confirm, set_confirm] = useState("");
+  const [host_key, set_host_key] = useState("");
+  const [trust_unknown_host, set_trust_unknown_host] = useState(false);
   const [busy, set_busy] = useState(false);
   const default_agent = provisioning.install_agent ?? health.server_name;
   const runners = [health.server_name, ...agents.filter((agent) => agent.status !== null).map((agent) => agent.host)];
   if (!runners.includes(default_agent)) runners.push(default_agent);
-  const ready = provisioning.install_refusal === null && address.trim() !== "" && confirm === address.trim();
+  const keyed = host_key.trim() !== "" || trust_unknown_host;
+  const ready = provisioning.install_refusal === null && address.trim() !== "" && confirm === address.trim() && keyed;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -92,7 +112,7 @@ function InstallFields({ provisioning, health, agents, done }: { provisioning: P
       const outcome = await api<ActionOutcome>("/api/provisioning/install", "POST", {
         host: field(form, "host"), address: address.trim(), user: field(form, "user"), port: Number(form.get("port")), flake: field(form, "flake"),
         configuration: field(form, "configuration"), agent: agent === health.server_name ? null : agent, stop_after_partitioning: form.has("stop"),
-        generate_hardware_config: form.has("hardware"), host_key: field(form, "host_key"), confirm,
+        generate_hardware_config: form.has("hardware"), host_key: host_key.trim(), trust_unknown_host: host_key.trim() === "" && trust_unknown_host, confirm,
       });
       job_toast(outcome.message, outcome.job_id);
       set_confirm("");
@@ -113,8 +133,18 @@ function InstallFields({ provisioning, health, agents, done }: { provisioning: P
         <FormRow label="SSH address" id="install-address" hint="A hostname or IP address of a running Linux system, reached with the key in provisioning.ssh_key.">
           <input {...text_field} id="install-address" name="address" required placeholder="192.0.2.10" value={address} onChange={(event) => set_address(event.currentTarget.value)} />
         </FormRow>
-        <FormRow label="SSH host key" id="install-host-key" hint="Optional: a line from ssh-keyscan of the target. The target must prove it holds it before its agent key is sent; nixos-anywhere itself trusts any host key.">
-          <input {...text_field} id="install-host-key" name="host_key" placeholder="ssh-ed25519 AAAA..." />
+        <FormRow
+          label="SSH host key" id="install-host-key"
+          hint={`A line from ssh-keyscan -t ed25519 ${address.trim() || "<address>"}, its fingerprint checked against ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the target's console. Every SSH connection of the install must find this key, so the new host's agent key reaches only the target.`}
+        >
+          <input {...text_field} id="install-host-key" name="host_key" placeholder="ssh-ed25519 AAAA..." value={host_key} onChange={(event) => set_host_key(event.currentTarget.value)} />
+        </FormRow>
+        <FormRow
+          label="Trust whatever host key answers" id="install-trust-unknown-host"
+          hint="Installs with no host key: anyone between the host running nixos-anywhere and the target can then take over the install and the new host's agent key."
+          hidden={host_key.trim() !== ""}
+        >
+          <input id="install-trust-unknown-host" name="trust_unknown_host" type="checkbox" checked={trust_unknown_host} onChange={(event) => set_trust_unknown_host(event.currentTarget.checked)} />
         </FormRow>
         <FormRow label="SSH user" id="install-user"><input {...text_field} id="install-user" name="user" defaultValue="root" /></FormRow>
         <FormRow label="SSH port" id="install-port"><input id="install-port" name="port" type="number" min="1" max="65535" defaultValue="22" /></FormRow>
@@ -160,6 +190,7 @@ function InstallCard({ install }: { install: InstallView }) {
       <Facts rows={[
         ["Configuration", record ? <code>{`${record.flake}#${record.configuration}`}</code> : "—"],
         ["What", record?.stop_after_partitioning ? "Partition only" : "Full install"],
+        ["Host key", record?.host_key ? <code className="small">{record.host_key}</code> : record?.trust_unknown_host ? "Not checked: trusted whatever answered" : "—"],
         ["Ran on", job.agent ?? "this server"],
         ["Started", <Age epoch={job.started_epoch} />],
         ["Agent key", record?.public_line ? install.key_accepted ? "Accepted" : job.state === "succeeded" ? "Not accepted" : "Accepted once it succeeds" : "None"],

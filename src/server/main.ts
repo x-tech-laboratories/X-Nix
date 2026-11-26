@@ -14,7 +14,7 @@ import { sqlite_backups, take_staged_restore } from "@x-tech-laboratories/x-libs
 
 import { operation_runner } from "../agent/tasks.ts";
 import { AgentPool } from "./agents/agent.ts";
-import { create_hub } from "./agents/hub.ts";
+import { create_hub, read_server_key, server_key_view, ServerKeyError } from "./agents/hub.ts";
 import { Cache } from "./cache.ts";
 import { build_app } from "./app.ts";
 import { load_accounts, type SignInSettings } from "./auth.ts";
@@ -28,6 +28,7 @@ import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
+import { keep_pruning } from "./retention.ts";
 import { stop_job } from "./runs.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
@@ -44,11 +45,19 @@ const settings = read_server_config({
     state_dir: { variable: "X_NIX_STATE_DIR", help: "where the database and job output live", placeholder: "<folder>", default: "state" },
     server_name: { variable: "X_NIX_SERVER_NAME", help: "what the page calls this machine", placeholder: "<name>", default: hostname() },
     webhook_secret_file: { variable: "X_NIX_WEBHOOK_SECRET_FILE", help: "the push webhook's shared secret; the webhook is off without it", placeholder: "<file>" },
+    server_key_file: {
+      variable: "X_NIX_SERVER_KEY_FILE", help: "the server's ed25519 private key, which signs what it sends agents; without it agents tell the server only by its TLS certificate",
+      placeholder: "<file>",
+    },
     webhook_debounce: { variable: "X_NIX_WEBHOOK_DEBOUNCE", help: "how long after the last push an evaluation starts", placeholder: "<duration>", default: "10s" },
     session_lifetime: { variable: "X_NIX_SESSION_LIFETIME", help: "how long a sign-in lasts without keep me signed in", placeholder: "<duration>", default: "12h" },
     remembered_lifetime: { variable: "X_NIX_REMEMBERED_LIFETIME", help: "how long a kept sign-in lasts", placeholder: "<duration>", default: "30d" },
     token_lifetime: { variable: "X_NIX_TOKEN_LIFETIME", help: "the longest a token lasts, in whole days, or never", placeholder: "<duration|never>", default: "90d" },
     admin_second_factor: { variable: "X_NIX_ADMIN_SECOND_FACTOR", help: "yes to have admins set up a second factor before they change anything", placeholder: "<yes|no>", default: "yes" },
+    history_retention: {
+      variable: "X_NIX_HISTORY_RETENTION", help: "how long finished jobs, builds, events and fleet runs are kept, or never to keep them all",
+      placeholder: "<duration|never>", default: "180d",
+    },
     local_agent: {
       variable: "X_NIX_LOCAL_AGENT", help: "yes to work on this machine from the server itself, which needs sudo rules, rather than through its own agent",
       placeholder: "<yes|no>", default: "no",
@@ -75,7 +84,23 @@ const sign_in: SignInSettings = {
   token_days: token_lifetime === "never" ? null : Math.max(1, Math.round(parse_duration(token_lifetime, "X_NIX_TOKEN_LIFETIME") / 86400)),
   admin_second_factor: yes_or_no(settings.values.admin_second_factor, "yes", "X_NIX_ADMIN_SECOND_FACTOR"),
 };
+const history_retention = settings.values.history_retention || "180d";
+const history_retention_in_seconds = history_retention === "never" ? null : parse_duration(history_retention, "X_NIX_HISTORY_RETENTION");
 const local_agent_setting = yes_or_no(settings.values.local_agent, "no", "X_NIX_LOCAL_AGENT") ? "yes" : "no";
+const server_key_file = settings.values.server_key_file;
+
+// A server key file that is named but cannot be used stops the server, so agents are never left checking nothing by mistake.
+const read_named_server_key = (file: string | undefined) => {
+  if (!file) return null;
+  try {
+    return read_server_key(file);
+  } catch (error) {
+    if (!(error instanceof ServerKeyError)) throw error;
+    console.error(error.message);
+    process.exit(2);
+  }
+};
+const server_key = read_named_server_key(server_key_file);
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +129,7 @@ const agents = new AgentPool(server_name, local_agent);
 agents.set_wake(config.wake_on_lan, config.keep_awake);
 // Every other host's agent dials in, and joins the pool once it proves its declared key.
 const hub = create_hub(agents, local_agent, {
+  server_key,
   // Switches an agent ran on its own while the server was away join its deployments' job history once it reconnects.
   on_pulls: (host, pulls) => {
     const kept = record_pulls(store, poller.deployments.values(), host, pulls, Math.floor(Date.now() / 1000));
@@ -115,13 +141,19 @@ const hub = create_hub(agents, local_agent, {
 const accept_agent_keys = (provisioned: Map<string, string>) => hub.set_agent_keys(new Map([...provisioned, ...config.agents]));
 const provisioner = new Provisioner(config.provisioning, {
   store, agents, default_media_root_dir: resolve(state_directory, "media"),
-  declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys,
+  declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys, server_public_line: () => server_key_view(hub)?.public_line ?? null,
 });
 accept_agent_keys(provisioner.agent_keys());
-const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents })]));
+// A host holds off its reboot and collection while a deployment on it switches, which the deployment refuses in turn while it collects.
+const deployments_on = (host_name: string) => () => config.deployments.filter((deployment) => (deployment.host ?? server_name) === host_name);
+const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents, deployments: deployments_on(settings.id) })]));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const deployments = config.deployments.map((settings) => new Deployment(settings, {
   store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),
+  read_flake: (flake_id) => {
+    const flake = flakes.find((candidate) => candidate.id === flake_id);
+    if (flake !== undefined) void poller.refresh(flake);
+  },
 }));
 // An update or a push that changed a flake has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {
@@ -158,7 +190,11 @@ const app = await build_app({
   backups: { backups, schedule: backup_schedule, on_schedule_change: () => void automatic_backups.check() },
 });
 
+// History older than the retention is pruned now and then, keeping what anything still names.
+const stop_pruning = keep_pruning(store, history_retention_in_seconds, (message) => app.log.info(message));
+
 app.addHook("onClose", async () => {
+  stop_pruning();
   poller.stop();
   fleet.stop_timer();
   overdue_jobs.stop();
@@ -167,6 +203,8 @@ app.addHook("onClose", async () => {
 
 if (webhook !== undefined) app.log.info("The push webhook takes deliveries at /api/webhook");
 if (!config_path) app.log.warn("X_NIX_CONFIG is not set, so there are no deployments to watch");
+if (server_key === null) app.log.warn("X_NIX_SERVER_KEY_FILE is not set, so agents can tell this server only by its TLS certificate");
+else app.log.info(`Agents that list this server's key check it by ${hub.server_key_fingerprint()}`);
 app.log.info(`Watching ${hosts.size} hosts, ${flakes.length} flakes, ${deployments.length} deployments and ${caches.length} caches`);
 
 await app.listen({ host, port });

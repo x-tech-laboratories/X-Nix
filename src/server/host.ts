@@ -11,7 +11,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
-import { level_of_status, type HostSettings, type Status } from "./config.ts";
+import { level_of_status, type DeploymentSettings, type HostSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
 import { boot_probe_operation, next_boot_operation, parse_boot, type Boot } from "./nixos/boot.ts";
 import { reboot_operation } from "./nixos/commands.ts";
@@ -19,9 +19,10 @@ import {
   assess_store, collect_operation, finished_collection, fold_collection, observed_collection, parse_gc_probe, store_probe_operation, unread_store,
   type Collection, type StoreReading,
 } from "./nixos/garbage.ts";
+import { switch_verdict, watch_token } from "./nixos/switch.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
-import type { Job, Store } from "./store.ts";
-import type { Operation } from "../shared/operations.ts";
+import type { Job, JobKind, Store } from "./store.ts";
+import { command_marker_token, with_marker_token, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -57,11 +58,19 @@ export interface HostActionOutcome {
 export interface HostOptions {
   store: Store;
   agents: AgentPool;
+  // The settings of the deployments on this host, whose running jobs and unsettled switches hold off its reboot and collection.
+  deployments?: () => DeploymentSettings[];
   // The time in seconds, which tests set.
   now?: () => number;
 }
 
 const probe_timeout_in_seconds = 60;
+
+// The jobs of a deployment on the host that a reboot or a collection must not cut across.
+const busy_deployment_kinds: JobKind[] = ["build", "switch", "boot", "test", "dry-activate", "rollback"];
+
+// The jobs that may leave a guarded switch's watchdog running after them.
+const watched_kinds: JobKind[] = ["switch", "boot", "test"];
 const command_timeout_in_seconds = 60;
 
 // ── Host ─────────────────────────────────────────────────────────────────────
@@ -70,6 +79,7 @@ export class Host {
   readonly settings: HostSettings;
   private readonly store: Store;
   private readonly agents: AgentPool;
+  private readonly deployments: () => DeploymentSettings[];
   private readonly now: () => number;
   // Cycles and actions run one at a time.
   private queue: Promise<unknown> = Promise.resolve();
@@ -78,6 +88,7 @@ export class Host {
     this.settings = settings;
     this.store = options.store;
     this.agents = options.agents;
+    this.deployments = options.deployments ?? (() => []);
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
@@ -116,7 +127,35 @@ export class Host {
     }
     if (action === "collect" && this.settings.gc === null) return "The store is not watched on this host; its gc is off";
     if (this.running_job() !== null) return "A collection is already running on this host";
+    return this.deployment_refusal();
+  }
+
+  // Why a deployment on the host holds off a reboot or a collection: a job of it running, or a guarded switch whose
+  // watchdog may still be waiting for its outcome; null when none does.
+  deployment_refusal(): string | null {
+    for (const settings of this.deployments()) {
+      const running = this.store.running_job(settings.id, busy_deployment_kinds);
+      if (running !== null) return `${settings.name}'s ${running.kind} job #${running.id} is running on this host; try again once it ends`;
+      const unsettled = this.unsettled_switch(settings);
+      if (unsettled !== null) return `${settings.name}'s guarded ${unsettled.kind} #${unsettled.id} activated without an outcome, and its watchdog may still roll it back; try again once that window has passed`;
+    }
     return null;
+  }
+
+  // Why a deployment on the host may not switch now, which is while a collection runs, or null when it may.
+  collection_refusal(): string | null {
+    const job = this.running_job();
+    return job === null ? null : `A garbage collection, job #${job.id}, is running on ${this.name}; try again once it ends`;
+  }
+
+  // The deployment's newest switch when it was guarded, activated and ended without an outcome within its watchdog's window.
+  private unsettled_switch(settings: DeploymentSettings): Job | null {
+    const latest = this.store.jobs({ deployment_id: settings.id, limit: 20 }).find((job) => watched_kinds.includes(job.kind)) ?? null;
+    if (latest === null || latest.state === "running" || watch_token(latest.command) === null) return null;
+    const window = settings.activation_timeout + settings.confirm_timeout + settings.health_timeout;
+    if (this.now() - (latest.finished_epoch ?? latest.started_epoch) > window) return null;
+    const verdict = switch_verdict(this.store.job(latest.id)?.output ?? "", command_marker_token(latest.command));
+    return verdict.activated && verdict.outcome === null ? latest : null;
   }
 
   // Why the next boot cannot be set to this entry now, or null when it can.
@@ -136,7 +175,8 @@ export class Host {
       const job = this.running_job();
       if (job !== null) return this.poll_job(job);
       const slot = this.collection_due();
-      if (slot !== null) return this.collect_scheduled(slot);
+      // A daily collection due while a deployment switches waits for a later cycle, and the store is read meanwhile.
+      if (slot !== null && this.deployment_refusal() === null) return this.collect_scheduled(slot);
       return this.read();
     });
   }
@@ -226,7 +266,7 @@ export class Host {
   }
 
   private async collect(trigger: string): Promise<HostActionOutcome & { unreachable: boolean }> {
-    const operation = collect_operation(this.settings.gc!, this.settings.require_sudo);
+    const operation = with_marker_token(collect_operation(this.settings.gc!, this.settings.require_sudo));
     const command = JSON.stringify(operation);
     const run_id = `${this.settings.id}-collect-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
@@ -274,7 +314,7 @@ export class Host {
   // Sets the entry the host boots into once, then reboots when asked; a command rather than a job, as a reboot ends it.
   set_next_boot(entry: string, reboot: boolean, trigger = "manual"): Promise<HostActionOutcome> {
     return this.serial(async () => {
-      const refusal = this.next_boot_refusal(entry);
+      const refusal = this.next_boot_refusal(entry) ?? (reboot ? this.deployment_refusal() : null);
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       const reading = this.reading()!;
       const boot = reading.boot!;

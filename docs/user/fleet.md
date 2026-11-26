@@ -13,6 +13,9 @@ The Hosts page runs Build, Switch or Reboot across many deployments at once.
 Tick them, or search with space-separated terms. Each term is a glob on the id or name, such as `web-*`, or a tag, such
 as `@canary`; a deployment matching any term is picked. Tags come from each deployment's `tags`.
 
+Matching is case-sensitive, `*` stands for any run of characters and `?` for one. A selector may be at most 1000
+characters and 100 terms long, and a staged run may name at most 100 stages; a longer one is refused.
+
 The Hosts table shows each host's NixOS version, when it last switched, its pin, and whether it waits on a rebuild
 (drift) or a sync (an evaluation running or due).
 

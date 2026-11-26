@@ -8,7 +8,7 @@ import { Host } from "../src/server/host.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
 import { Store } from "../src/server/store.ts";
 import type { GcFields, ProbeFields } from "../src/shared/facts.ts";
-import { innermost, operation_of, show_argv, type Operation } from "../src/shared/operations.ts";
+import { innermost, mark_prefix, marker_token_of, markers_mark, operation_of, show_argv, type Operation } from "../src/shared/operations.ts";
 
 // ── Store paths ──────────────────────────────────────────────────────────────
 
@@ -85,13 +85,25 @@ export function metadata(options: MetadataOptions = {}): RunResult {
   }));
 }
 
-// What the evaluation script prints once both of its commands have run.
-export function eval_output(evaluation: RunResult, flake_metadata: RunResult): string {
-  let output = "";
+// What the evaluation prints once both of its commands have run, as an agent that knows marker tokens prints it for a
+// run with this token, or as an older agent prints it without one.
+export function eval_output(evaluation: RunResult, flake_metadata: RunResult, token: string | null = null): string {
+  const mark = mark_prefix(eval_mark, token);
+  let output = token === null ? "" : `${markers_mark} ${token}\n`;
   for (const [name, part] of [["eval", evaluation], ["metadata", flake_metadata]] as const) {
-    output += `${eval_mark} ${name} stderr\n${part.stderr}\n${eval_mark} ${name} stdout\n${part.stdout}\n${eval_mark} ${name} exit\n${part.exit_code}\n`;
+    output += `${mark} ${name} stderr\n${part.stderr}\n${mark} ${name} stdout\n${part.stdout}\n${mark} ${name} exit\n${part.exit_code}\n`;
   }
   return output;
+}
+
+// The line an agent that knows marker tokens prints first for a run whose operation carries one.
+export function announcement(operation: Operation): string {
+  return `${markers_mark} ${marker_token_of(operation)}\n`;
+}
+
+// A marker line as an agent that knows marker tokens prints it for the run of this operation.
+export function mark_line(operation: Operation, mark: string, words: string): string {
+  return `${mark_prefix(mark, marker_token_of(operation))} ${words}\n`;
 }
 
 // What the generations read prints for these generations, the newest the running and profile's one.
@@ -243,17 +255,17 @@ export function make_deployment(
   values: Record<string, unknown> = {},
   existing: {
     store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings>; caches?: Cache[];
-    check_cache?: (cache: Cache) => void;
+    check_cache?: (cache: Cache) => void; read_flake?: (flake_id: string) => void;
   } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
   const [own, of_host] = host_values(values);
-  const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now });
+  const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now, deployments: () => [settings] });
   const caches = new Map((existing.caches ?? []).map((cache) => [cache.id, cache.settings]));
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...own }, 0, existing.flakes, () => host.settings, caches);
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache });
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache, read_flake: existing.read_flake });
   return { deployment, host, agent, store, agents };
 }
 
@@ -304,7 +316,7 @@ export async function collect(harness: Harness, options: CollectOptions = {}): P
   const evaluation = options.evaluation ?? result(0, `${target_closure}\n`);
   const flake_metadata = options.metadata ?? metadata();
   const exit_code = evaluation.exit_code === 0 && flake_metadata.exit_code === 0 ? 0 : 1;
-  harness.agent.end(launched, eval_output(evaluation, flake_metadata), exit_code);
+  harness.agent.end(launched, eval_output(evaluation, flake_metadata, marker_token_of(launched.operation)), exit_code);
   await cycle(harness);
 }
 

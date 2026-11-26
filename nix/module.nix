@@ -178,6 +178,19 @@ in
       description = "A file holding the users who may log in, one `name:hash` line each, written by `npm run hash-password`; read at runtime, never copied to the store.";
     };
 
+    serverKeyFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = lib.literalExpression "config.sops.secrets.x_nix_server_key.path";
+      description = ''
+        A file holding the server's unencrypted OpenSSH ed25519 private key, made with
+        `ssh-keygen -t ed25519 -N "" -C x-nix-server`; read at runtime, never copied to the store.
+        The server signs what it sends every agent with it, and an agent listing its public line in
+        `services.x-nix-agent.serverPublicKeys` refuses anything it did not sign. Agents tell the
+        server only by its TLS certificate when null.
+      '';
+    };
+
     flakes = mkOption {
       type = types.attrsOf json.type;
       default = { };
@@ -299,6 +312,12 @@ in
       type = types.str;
       default = "10s";
       description = "How long after the last push to a deployment its evaluation starts.";
+    };
+
+    historyRetention = mkOption {
+      type = types.str;
+      default = "180d";
+      description = "How long finished jobs, builds, events and fleet runs are kept, or \"never\" to keep them all; the newest of each kind are kept whatever their age.";
     };
 
     path = mkOption {
@@ -435,6 +454,7 @@ in
         X_NIX_PASSWORD_HASH_FILE = "${credentials_directory}/password-hash";
         X_NIX_STATE_DIR = "/var/lib/x-nix";
         X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
+        X_NIX_HISTORY_RETENTION = cfg.historyRetention;
         X_NIX_LOCAL_AGENT = if cfg.localAgent then "yes" else "no";
         X_NIX_SESSION_LIFETIME = cfg.signIn.sessionLifetime;
         X_NIX_REMEMBERED_LIFETIME = cfg.signIn.rememberedLifetime;
@@ -444,6 +464,9 @@ in
       // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
       // lib.optionalAttrs (cfg.webhookSecretFile != null) {
         X_NIX_WEBHOOK_SECRET_FILE = "${credentials_directory}/webhook-secret";
+      }
+      // lib.optionalAttrs (cfg.serverKeyFile != null) {
+        X_NIX_SERVER_KEY_FILE = "${credentials_directory}/server-key";
       };
 
       # With the built-in agent it is left unsandboxed, because sudo inherits the unit's sandbox and a switch run under it
@@ -477,7 +500,8 @@ in
         LoadCredential = [
           "password-hash:${cfg.passwordHashFile}"
         ]
-        ++ lib.optional (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}";
+        ++ lib.optional (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}"
+        ++ lib.optional (cfg.serverKeyFile != null) "server-key:${cfg.serverKeyFile}";
         Restart = "on-failure";
         RestartSec = "5s";
         # A restart stops only the server, so a running switch carries on and is followed again from its output.

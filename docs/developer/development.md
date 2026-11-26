@@ -51,8 +51,21 @@ Run one file with `npx vitest run tests/deployment.test.ts`, or one test with `-
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `npm ci`, `npm audit signatures`,
 `npm run build`, `npm run coverage`, a check that any raised coverage floor is committed, and `npm run lint`. `main`
-changes only through pull requests with passing CI. Dependabot's X-Libs and Halon bumps merge on their own only when
-npm's provenance shows they were built from our own repositories (`.github/scripts/check-provenance.mjs`).
+changes only through pull requests with passing CI. Each workflow's token can only read the repository, unless a job
+needs more: Pages publishing and Dependabot auto-merge.
+
+## Dependabot
+
+Dependabot opens weekly pull requests: one for the `x-tech` group (X-Libs and Halon together), one grouping third-party
+patch and minor updates, one for each third-party major, and one for each GitHub Actions bump. Only the `x-tech` pull
+request merges on its own, and only once `.github/workflows/dependabot-auto-merge.yml` has passed `npm audit signatures`
+and `.github/scripts/check-provenance.ts`. That script is taken from the base branch, not from the pull request. It
+refuses the merge unless every `@x-tech-laboratories/*` package in the lock is listed in its `expected_builds` table and
+its npm provenance names that package's repository (by URL and GitHub id), publish workflow, `refs/heads/main`, a push
+event, a commit of main as its source and a GitHub-hosted runner, for exactly the tarball the lock holds. It also
+refuses when the update moves any package outside the scope. Auto-merge then waits for the required checks, the nix
+build among them. A new package of ours needs a row in `expected_builds` before it can merge on its own. Everything
+else waits for a person to merge it.
 
 `.github/workflows/pages.yml` builds this documentation site from `docs/` with the X-Libs site framework and publishes
 it to GitHub Pages on every push to `main` that touches `docs/`.
