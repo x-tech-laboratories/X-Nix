@@ -66,4 +66,17 @@ describe("stall notes", () => {
     );
     expect(lines[2]).toMatch(/^@@x-nix-stall .*close_nix_lock_holders/);
   });
+
+  it("carry the run's marker token after the mark when the server issued one", () => {
+    let clock = 0;
+    let written = "";
+    const marker_token = "c".repeat(32);
+    const stalls = watch_for_stalls(100, (text) => (written += text), { now: () => clock, proc: fake_proc(), lock_files: { [nix_database_lock]: database } }, marker_token);
+
+    clock = 300_000;
+    stalls.look();
+    stalls.stop();
+
+    expect(written.trimEnd().split("\n").every((line) => line.startsWith(`@@x-nix-stall ${marker_token} `))).toBe(true);
+  });
 });

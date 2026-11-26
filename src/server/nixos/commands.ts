@@ -6,7 +6,7 @@
 import type { RunResult } from "../agents/agent.ts";
 import type { DeploymentSettings, FlakeSettings } from "../config.ts";
 import {
-  eval_mark, is_store_path, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type RemoteHeadsOperation,
+  accepted_prefix, eval_mark, is_store_path, marker_words, type Argv, type BuildOperation, type CacheHoldsOperation, type EvaluateOperation, type Operation, type RemoteHeadsOperation,
   type Step, type TimedOperation, type UpdateCheck,
 } from "../../shared/operations.ts";
 import { github_repository, local_path, refs_to_ask, type InputRemote } from "./flake.ts";
@@ -51,14 +51,17 @@ export function eval_operation(settings: DeploymentSettings, attribute: string |
   return timed(settings.eval_timeout, evaluate);
 }
 
-// Splits a finished evaluation's output back into one result per command; one never reported on fails with `missing`.
-export function split_eval_output(output: string, missing: string): Record<"eval" | "metadata", RunResult> {
+// Splits a finished evaluation's output back into one result per command, reading only marker lines with the job's
+// marker token unless its agent prints none; one never reported on fails with `missing`.
+export function split_eval_output(output: string, missing: string, token: string | null): Record<"eval" | "metadata", RunResult> {
   const sections = new Map<string, string[]>();
+  const prefix = accepted_prefix(output, eval_mark, token);
   let current: string[] | null = null;
   for (const line of output.split("\n")) {
-    if (line.startsWith(`${eval_mark} `)) {
+    const words = marker_words(line, prefix);
+    if (words !== null) {
       current = [];
-      sections.set(line.slice(eval_mark.length + 1), current);
+      sections.set(words, current);
     } else {
       current?.push(line);
     }

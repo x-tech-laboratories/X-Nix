@@ -24,7 +24,7 @@ import {
   build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark, rows_status, target_row, targets, type Report, type TargetRow,
 } from "./nixos/attic.ts";
 import { timed_out_exit_code } from "./nixos/commands.ts";
-import type { Operation } from "../shared/operations.ts";
+import { command_marker_token, with_marker_token, type Operation } from "../shared/operations.ts";
 import { parse_metadata } from "./nixos/flake.ts";
 import { latest_slot } from "./deployment.ts";
 import { build_translation, tend_build } from "./live_builds.ts";
@@ -216,7 +216,7 @@ export class Cache {
       return;
     }
     const finished = this.store.job(job.id)!;
-    const report = parse_report(finished.output);
+    const report = parse_report(finished.output, command_marker_token(finished.command));
     // The last line is often a report line, which says nothing to a person.
     const last_line = finished.output.split("\n").map((text) => text.trim()).filter((text) => text !== "" && !text.startsWith(report_mark)).pop();
     if (job.kind === "check") this.store.set_progress(job.id, `${report.targets.size} of ${targets(this.settings).length} targets evaluated`);
@@ -364,6 +364,8 @@ export class Cache {
     kind: JobKind, operation: Operation, trigger = kind === "check" ? "schedule" : "manual", chosen?: string | null,
   ): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
     const run_id = `${this.id}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    // Each run gets a marker token of its own, which the job keeps in its command.
+    operation = with_marker_token(operation);
     // A sleeping host is woken for a build or push, but not for the periodic check.
     const wake = kind !== "check";
     const host = chosen !== undefined ? chosen : this.host(wake);

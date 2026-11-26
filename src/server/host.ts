@@ -22,7 +22,7 @@ import {
 import { switch_verdict, watch_token } from "./nixos/switch.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
 import type { Job, JobKind, Store } from "./store.ts";
-import type { Operation } from "../shared/operations.ts";
+import { command_marker_token, with_marker_token, type Operation } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -154,7 +154,7 @@ export class Host {
     if (latest === null || latest.state === "running" || watch_token(latest.command) === null) return null;
     const window = settings.activation_timeout + settings.confirm_timeout + settings.health_timeout;
     if (this.now() - (latest.finished_epoch ?? latest.started_epoch) > window) return null;
-    const verdict = switch_verdict(this.store.job(latest.id)?.output ?? "");
+    const verdict = switch_verdict(this.store.job(latest.id)?.output ?? "", command_marker_token(latest.command));
     return verdict.activated && verdict.outcome === null ? latest : null;
   }
 
@@ -266,7 +266,7 @@ export class Host {
   }
 
   private async collect(trigger: string): Promise<HostActionOutcome & { unreachable: boolean }> {
-    const operation = collect_operation(this.settings.gc!, this.settings.require_sudo);
+    const operation = with_marker_token(collect_operation(this.settings.gc!, this.settings.require_sudo));
     const command = JSON.stringify(operation);
     const run_id = `${this.settings.id}-collect-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;

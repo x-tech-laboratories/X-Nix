@@ -15,6 +15,7 @@ import type { DeploymentSettings, FleetSettings } from "./config.ts";
 import type { Deployment } from "./deployment.ts";
 import { switch_verdict } from "./nixos/switch.ts";
 import type { Store } from "./store.ts";
+import { command_marker_token } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -449,7 +450,7 @@ export class Fleet {
     }
     if (job.state === "failed" && run.stopped_jobs?.includes(job.id)) return this.finish_host(host, "skipped", job.error ?? "Stopped", now);
     if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? "The job failed", now);
-    const outcome = run.action === "switch" ? switch_verdict(job.output).outcome : null;
+    const outcome = run.action === "switch" ? switch_verdict(job.output, command_marker_token(job.command)).outcome : null;
     if (outcome?.kind === "deferred") return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);
     if (!(run.staged && run.action === "switch")) return this.finish_host(host, "succeeded", "Finished", now);
     host.state = "verifying";

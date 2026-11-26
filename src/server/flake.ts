@@ -17,7 +17,7 @@ import { format_age, format_duration } from "@x-tech-laboratories/x-libs/duratio
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { level_of_status, worse, type FlakeSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
-import type { RemoteHeads } from "../shared/operations.ts";
+import { with_marker_token, type RemoteHeads } from "../shared/operations.ts";
 import { can_update, metadata_operation, remote_heads_operation, update_operation } from "./nixos/commands.ts";
 import { parse_metadata, resolve_ref, short_revision, type LockedInput } from "./nixos/flake.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
@@ -39,6 +39,8 @@ export interface FlakeReading {
   inputs: LockedInput[];
   // Why the last read failed, or null when it worked.
   metadata_error: string | null;
+  // The host that read it, the server's own when null; absent from older readings.
+  host?: string | null;
 }
 
 // How the last update ended.
@@ -191,6 +193,7 @@ export class Flake {
       inputs_last_modified_epoch: metadata?.inputs_last_modified_epoch ?? previous?.inputs_last_modified_epoch ?? null,
       inputs: metadata?.inputs ?? previous?.inputs ?? [],
       metadata_error: error,
+      host: this.settings.host,
     });
     return metadata !== null && previous !== null
       && (metadata.revision !== previous.revision || metadata.last_modified_epoch !== previous.last_modified_epoch);
@@ -318,7 +321,7 @@ export class Flake {
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   private async launch(trigger: string): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
-    const operation = update_operation(this.settings, this.checked_attributes(this));
+    const operation = with_marker_token(update_operation(this.settings, this.checked_attributes(this)));
     const run_id = `${this.id}-update-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {

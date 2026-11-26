@@ -32,7 +32,7 @@ describe("a job's output", () => {
     expect(job.output.split(output_cut_line)).toHaveLength(2);
     expect(job.output.split("\n").every((text) => text === "" || text === output_cut_line.trim() || text.length === 99 || text.startsWith(switch_mark) || text === "first line")).toBe(true);
     expect(job.output_offset).toBe(99);
-    expect(switch_verdict(job.output).outcome).toEqual({ kind: "rolled-back", reason: "Health checks failed" });
+    expect(switch_verdict(job.output, null).outcome).toEqual({ kind: "rolled-back", reason: "Health checks failed" });
   });
 
   it("is cut to the head and the tail even when it has no line breaks at all", () => {

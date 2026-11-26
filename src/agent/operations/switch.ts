@@ -15,10 +15,10 @@ import { fileURLToPath } from "node:url";
 import { descendants, lock_file_id, lock_holders, read_locks, read_processes, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
 
 import {
-  is_store_path, shared_watch_folder_parent, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
+  is_store_path, one_line, shared_watch_folder_parent, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
   type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
-import { person_command, run_steps, type Context } from "../programs.ts";
+import { marker, person_command, run_steps, type Context } from "../programs.ts";
 import { nix_database_lock } from "../stalls.ts";
 import { system_profile, watch_files, write_whole } from "../watchdog.ts";
 import { link_target, real } from "./reads.ts";
@@ -44,7 +44,7 @@ export const units_failed_status = 4;
 // ── Switch ───────────────────────────────────────────────────────────────────
 
 export async function switch_system(context: Context, operation: SwitchOperation, now: () => number = () => Date.now()): Promise<number> {
-  const mark = (words: string) => context.out.write(`${switch_mark} ${words}\n`);
+  const mark = (words: string) => context.out.write(`${marker(context, switch_mark)} ${one_line(words)}\n`);
   const say = (line: string) => context.out.write(`${line}\n`);
 
   if (operation.pre_switch_checks.length > 0) {
@@ -176,7 +176,7 @@ function nix_lock_clearing(context: Context, sudo: boolean, now: () => number): 
     const daemon = (info: ProcessInfo) => info.name === "nix-daemon" && processes.get(info.ppid)?.name !== "nix-daemon";
     const holders = lock_holders(nix_database_lock, own).filter((info) => !daemon(info));
     if (holders.length === 0) return;
-    context.out.write(`${stall_mark} close_nix_lock_holders: stopping what holds the Nix store database open: ${show_holders(holders)}\n`);
+    context.out.write(`${marker(context, stall_mark)} close_nix_lock_holders: stopping what holds the Nix store database open: ${show_holders(holders)}\n`);
     await context.program(context, [...raise, "kill", "-TERM", ...holders.map((info) => String(info.pid))], { echo: true });
     await sleep(nix_lock_grace_in_milliseconds);
     const left = lock_holders(nix_database_lock, own).filter((info) => holders.some((holder) => holder.pid === info.pid));
@@ -186,7 +186,7 @@ function nix_lock_clearing(context: Context, sudo: boolean, now: () => number): 
 
 // Runs the health commands every health_period until they all pass, answering the last failure once health_timeout passes.
 async function health_checks(context: Context, watch: SwitchWatch, folder: string, now: () => number): Promise<string> {
-  context.out.write(`${switch_mark} phase health-checks\n`);
+  context.out.write(`${marker(context, switch_mark)} phase health-checks\n`);
   const started = now();
   for (;;) {
     let failure = "";
@@ -286,7 +286,7 @@ export async function signal_rollback(context: Context, operation: SignalRollbac
 }
 
 function signal_rollback_in(folder: string, reason: string): void {
-  write_whole(join(folder, watch_files.rollback), `${reason}\n`);
+  write_whole(join(folder, watch_files.rollback), `${one_line(reason)}\n`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

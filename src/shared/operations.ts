@@ -2,6 +2,10 @@
 // runs only plain programs with their arguments, never a shell script; the only shell left runs a command a person
 // wrote into the config, such as a health check, exactly as written.
 
+// ── Imports ──────────────────────────────────────────────────────────────────
+
+import { randomBytes } from "node:crypto";
+
 // ── Programs ─────────────────────────────────────────────────────────────────
 
 // A program and its arguments.
@@ -368,11 +372,18 @@ export interface MediaOperation extends NixSettings {
 
 // ── Operations ───────────────────────────────────────────────────────────────
 
-export type Operation =
+// The token the server issues for one run, kept on the operation inside any wrappers; the run puts it after the mark of
+// every marker line it prints, and the server reads only marker lines that carry it. Absent from an older server's operation.
+export interface Marked {
+  marker_token?: string;
+}
+
+export type Operation = (
   | ProbeOperation | StoreProbeOperation | BootProbeOperation | GenerationsOperation | ProductsOperation | LocateOperation | PieceOperation
   | DerivationsOperation | CacheHoldsOperation | ClosureDiffOperation | RemoteHeadsOperation | ProgramsOperation | WakeOperation | KeptAwakeOperation | TimedOperation
   | NixConfigOperation | EvaluateOperation | BuildOperation | SwitchOperation | GithubUpdateOperation | LocalUpdateOperation | ConfirmSwitchOperation | SignalRollbackOperation
-  | CacheCheckOperation | CacheBuildOperation | CachePushOperation | CacheBuildAllOperation | InstallOperation | MediaOperation;
+  | CacheCheckOperation | CacheBuildOperation | CachePushOperation | CacheBuildAllOperation | InstallOperation | MediaOperation
+) & Marked;
 
 export type OperationKind = Operation["kind"];
 
@@ -477,6 +488,68 @@ export const hardware_mark = "@@x-nix-hardware-config";
 
 // Starts the line naming the store path a media build made.
 export const media_mark = "@@x-nix-media";
+
+// Starts the line a run prints before anything else when its operation carries a marker token, which shows the server
+// that the run's agent puts the token in every marker line.
+export const markers_mark = "@@x-nix-markers";
+
+// What every mark starts with, so copied output can be kept from being read as marker lines.
+const mark_start = "@@x-nix-";
+
+// How many random bytes a marker token holds.
+const marker_token_bytes = 16;
+
+// The operation with a fresh marker token on the operation inside any wrappers.
+export function with_marker_token(operation: Operation): Operation {
+  if (operation.kind === "kept_awake" || operation.kind === "timed" || operation.kind === "nix_config") {
+    return { ...operation, operation: with_marker_token(operation.operation) };
+  }
+  return { ...operation, marker_token: randomBytes(marker_token_bytes).toString("hex") };
+}
+
+// The marker token on the operation inside any wrappers, or null when the server issued none or one that is not plain hex.
+export function marker_token_of(operation: Operation): string | null {
+  const token = innermost(operation).marker_token;
+  return typeof token === "string" && /^[0-9a-f]{24,}$/.test(token) ? token : null;
+}
+
+// The marker token a job's command carries, or null for a command without one.
+export function command_marker_token(command: string): string | null {
+  const operation = operation_of(command);
+  return operation === null ? null : marker_token_of(operation);
+}
+
+// The start of a run's marker lines of one mark: the mark, then the run's token when it has one.
+export function mark_prefix(mark: string, token: string | null): string {
+  return token === null ? mark : `${mark} ${token}`;
+}
+
+// The text as one line, so free text inside a marker line can never start another.
+export function one_line(text: string): string {
+  return text.replace(/[\r\n]+/g, " ");
+}
+
+// Whether a run's output holds the line its agent prints first when it puts the token in every marker line.
+export function prints_marker_token(output: string, token: string): boolean {
+  return `\n${output}\n`.includes(`\n${markers_mark} ${token}\n`);
+}
+
+// The start a job's marker lines of one mark must have to be read: the mark and the job's token once its run showed that
+// its agent prints the token, else the bare mark that an agent too old to know tokens prints.
+export function accepted_prefix(output: string, mark: string, token: string | null): string {
+  return mark_prefix(mark, token !== null && prints_marker_token(output, token) ? token : null);
+}
+
+// The words after the accepted prefix of a marker line, or null for any other line.
+export function marker_words(line: string, prefix: string): string | null {
+  if (line === prefix) return "";
+  return line.startsWith(`${prefix} `) ? line.slice(prefix.length + 1) : null;
+}
+
+// Indents each line of copied output that looks like a marker line, so it is shown but never read as one.
+export function quote_markers(text: string): string {
+  return text.replace(new RegExp(`^(?=${mark_start})`, "gm"), "> ");
+}
 
 // The exit status `timeout` gives a run it stopped.
 export const timed_out_exit_code = 124;

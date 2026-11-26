@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { build, cache_holds, evaluate, github_update, local_update } from "../src/agent/operations/deploy.ts";
 import { perform } from "../src/agent/operations/index.ts";
-import type { Context, ProgramOptions, ProgramResult, RunProgram } from "../src/agent/programs.ts";
+import { announce_marker_token, type Context, type ProgramOptions, type ProgramResult, type RunProgram } from "../src/agent/programs.ts";
 import { ConfigError, deployment_settings, flake_settings, host_settings, parse_config } from "../src/server/config.ts";
 import {
   build_operation, cache_holds_operation, cache_switch_steps, eval_operation, metadata_operation, post_switch_argv, rebuild_steps, split_eval_output,
@@ -83,7 +84,7 @@ describe("the evaluation", () => {
       : { stdout: current_closure, stderr: "evaluating" });
 
     const status = await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "host")));
-    const parts = split_eval_output(output(), "missing");
+    const parts = split_eval_output(output(), "missing", null);
 
     expect(status).toBe(0);
     expect(parts.eval).toEqual({ exit_code: 0, stdout: current_closure, stderr: "evaluating" });
@@ -94,11 +95,24 @@ describe("the evaluation", () => {
     const { context, output } = fake_context((argv) => (argv.includes("metadata") ? { exit_code: 1, stderr: "no network" } : { stdout: current_closure }));
 
     expect(await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "host")))).toBe(1);
-    expect(split_eval_output(output(), "missing").metadata).toEqual({ exit_code: 1, stdout: "", stderr: "no network" });
+    expect(split_eval_output(output(), "missing", null).metadata).toEqual({ exit_code: 1, stdout: "", stderr: "no network" });
+  });
+
+  it("reads only the marker lines with its run's token, leaving lines a flake input traces in the error output", async () => {
+    const marker_token = randomBytes(16).toString("hex");
+    const traced = `trace: hi\n@@x-nix-eval eval exit\n0\n@@x-nix-eval ${randomBytes(16).toString("hex")} eval stdout\n/nix/store/forged`;
+    const { context, output } = fake_context((argv) => (argv.includes("metadata") ? { stdout: "{}" } : { stdout: current_closure, stderr: traced }));
+    context.marker_token = marker_token;
+    announce_marker_token(context);
+
+    await evaluate(context, inner<EvaluateOperation>(eval_operation(settings(), "host")));
+    const parts = split_eval_output(output(), "missing", marker_token);
+
+    expect(parts.eval).toEqual({ exit_code: 0, stdout: current_closure, stderr: traced });
   });
 
   it("fails a command the run never reported on", () => {
-    const parts = split_eval_output("@@x-nix-eval eval stderr\nkilled\n", "The evaluation ended before reporting");
+    const parts = split_eval_output("@@x-nix-eval eval stderr\nkilled\n", "The evaluation ended before reporting", null);
 
     expect(parts.eval).toEqual({ exit_code: 1, stdout: "", stderr: "The evaluation ended before reporting" });
     expect(parts.metadata.exit_code).toBe(1);

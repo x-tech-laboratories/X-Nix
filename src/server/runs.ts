@@ -7,7 +7,7 @@ import { follow_run, type Followed, type RunSink } from "@x-tech-laboratories/x-
 import { StoppedBeforeStart, type AgentPool, type LongRun } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
 import { rollback_signal_operation, switch_verdict, watch_token } from "./nixos/switch.ts";
-import { innermost, operation_of, type Operation } from "../shared/operations.ts";
+import { command_marker_token, innermost, operation_of, type Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Following ────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ function guarded_window(command: string, output: string): number | null {
   const operation = operation_of(command);
   const inner = operation === null ? null : innermost(operation);
   if (inner?.kind !== "switch" || !inner.watch) return null;
-  const verdict = switch_verdict(output);
+  const verdict = switch_verdict(output, command_marker_token(command));
   if (!verdict.activated || verdict.outcome !== null) return null;
   // The run waits this long for the watchdog's outcome after the activation, which bounds the rollback too.
   return inner.watch.activation_timeout + inner.watch.confirm_window + 120;

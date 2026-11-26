@@ -6,7 +6,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { DeploymentSettings } from "../config.ts";
-import { diff_mark, type Operation } from "../../shared/operations.ts";
+import { accepted_prefix, diff_mark, marker_words, type Operation } from "../../shared/operations.ts";
 import { nix } from "./commands.ts";
 
 export { diff_mark, is_store_path } from "../../shared/operations.ts";
@@ -63,16 +63,20 @@ export function diff_operation(settings: DeploymentSettings, from: string, to: s
   return { kind: "closure_diff", nix: nix(settings), from, to };
 }
 
-export function parse_diff(output: string, from: string, to: string, checked_epoch: number, job_id: number | null): ClosureDiff {
+// Reads a closure diff's sections after the marker lines carrying the job's marker token, or the bare ones of an agent that prints none.
+export function parse_diff(output: string, from: string, to: string, checked_epoch: number, job_id: number | null, token: string | null): ClosureDiff {
   const diff: ClosureDiff = {
     from, to, checked_epoch, job_id, built: true, added: [], removed: [], changed: [], resized: [],
     closure_before_bytes: null, closure_after_bytes: null, derivation_diff: null, note: null, error: null,
   };
   const sections = new Map<string, string[]>();
   let current: string[] | null = null;
-  for (const raw of strip_colours(output).split("\n")) {
-    if (raw.startsWith(`${diff_mark} `)) {
-      const words = raw.slice(diff_mark.length + 1).trim();
+  const text = strip_colours(output);
+  const prefix = accepted_prefix(text, diff_mark, token);
+  for (const raw of text.split("\n")) {
+    const marked = marker_words(raw, prefix);
+    if (marked !== null) {
+      const words = marked.trim();
       if (words === "missing") diff.built = false;
       else if (words.startsWith("note ")) diff.note = words.slice(5);
       else if (words.startsWith("failed ")) diff.error = `nix store diff-closures exited ${words.split(" ").pop()}`;

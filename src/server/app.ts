@@ -16,6 +16,7 @@ import type { AgentPool } from "./agents/agent.ts";
 import { agent_statuses, type Hub } from "./agents/hub.ts";
 import { register_auth, started_by, type Accounts, type SignInSettings } from "./auth.ts";
 import { download_refusal, locate_product, product_stream } from "./builds.ts";
+import { register_canonical_paths } from "./canonical_paths.ts";
 import { cache_action_ids, type Cache, type CacheActionId, type CacheReading } from "./cache.ts";
 import type { CacheServerReading } from "./cache_server.ts";
 import { fleet_settings, type DeploymentSettings, type DirectOn, type TimeOfDay } from "./config.ts";
@@ -443,6 +444,8 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   const started_epoch = Math.floor(Date.now() / 1000);
   const server_name = options.server_name ?? hostname();
   const { store, poller } = options;
+  // A path the router would read differently from how it is spelled is refused before sign-in or any route sees it.
+  register_canonical_paths(app);
   // Errors answer as JSON { error }, as does an unknown path when the page is not served.
   // Every answer keeps the page to its own scripts and out of other sites' frames.
   register_security_headers(app);
