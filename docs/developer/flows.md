@@ -164,7 +164,9 @@ flowchart TD
 flowchart TD
     drift([drift found]) --> on{auto_switch on, evaluation ok,<br/>and not already switched to this target?}
     on -- no --> stop([no])
-    on -- yes --> newer{running generation newer<br/>than the flake's last change?}
+    on -- yes --> revision{revision_refusal: evaluated commit disagrees<br/>with a commit pin or the flake's reading on another host?}
+    revision -- yes --> ask([note why; evaluate again and read the flake again])
+    revision -- no --> newer{running generation newer<br/>than the flake's last change?}
     newer -- yes --> refuse([note: not switching, it came from elsewhere])
     newer -- no --> long{drift lasted auto_switch_after?}
     long -- no --> wait([note: switching once it has])
@@ -209,11 +211,13 @@ flowchart TD
     b2 -- running --> b_prog[copy its output into the switch job;<br/>progress: Building on host]
     b_prog --> b2
     b2 -- failed --> fail([end the wait: switch fails,<br/>host untouched])
-    b2 -- succeeded --> same{built on the switching host?}
+    b2 -- succeeded --> matches{built path is a store path<br/>and equals evaluation.target?}
+    matches -- no --> mismatch([end the wait: switch fails naming both paths,<br/>host untouched; evaluate again])
+    matches -- yes --> same{built on the switching host?}
     same -- yes --> start
     same -- no --> push[switch_wait step=push, target = built path]
     push --> holds{cache_url holds it?}
-    holds -- yes --> start[start_switch: switch_job_operation<br/>fetch from cache, then activate]
+    holds -- yes --> start[start_switch: checks the path against evaluation.target again,<br/>then switch_job_operation: fetch from cache, then activate]
     holds -- "no, under 15 min" --> wait[progress: Waiting for it to reach the cache]
     wait --> holds
     holds -- "no, 15 min passed" --> fail2([end the wait: never reached the cache])
@@ -221,6 +225,24 @@ flowchart TD
 
 `switch_wait` lives in the deployment's stored `Evaluation`, so a restart of the server picks up a waiting switch
 exactly where it stood. Each poll of the switch job calls `advance_wait()`.
+
+What a switch activates is tied to the evaluation in three ways:
+
+- Every build, a plain Build included, uses `evaluated_settings()`: a remote flake fixed at `evaluation.flake_revision`,
+  so a branch that moves after the evaluation never changes what is built. A cache's build of the deployment gets the
+  same fixed flake.
+- `built_refusal()` lets `advance_push()` and `start_switch()` go on only when the path the build reported is a store
+  path equal to the current `evaluation.target`; otherwise `refuse_built()` fails the switch job with both paths, records
+  the event and requests an evaluation, before any operation reaches the switching host. `parse_report()` drops a
+  reported `target` that is not a store path and fails that target's row.
+- `revision_refusal()` compares `evaluation.flake_revision` with the pin when the pin is a full commit, and otherwise with
+  the `FlakeReading` of the deployment's flake when that reading's `host` differs from `evaluation.evaluated_on`,
+  revision and `last_modified_epoch` both. `action_refusal()` returns it for every switch mode, and
+  `consider_auto_switch()` and `launch_auto_switch()` hold on it; on a disagreement `ask_about_revision()` records an
+  event, requests an evaluation and has the flake read again, once per disagreement.
+
+These checks hold against one misbehaving host only: the hosts named as `eval_agent`, build agents and cache hosts are
+as trusted as the machines they build for, and when the same host evaluates and builds, their agreement proves nothing.
 
 ## A guarded switch
 

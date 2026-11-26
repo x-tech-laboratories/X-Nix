@@ -16,7 +16,9 @@
 // things up: Build and a switch, started by a person, a fleet run or the drift, build where direct_on says. Built on the
 // switching host, a switch runs nixos-rebuild at once; built elsewhere, its job builds there first, waiting while any other
 // system build runs on that host, the build pushes the
-// system to cache_url, and the switch fetches and activates it. A new action ends a switch still building first.
+// system to cache_url, and the switch fetches and activates it, but only when the build made the store path the
+// evaluation named. Builds and switches use the commit last evaluated, and a switch waits for a fresh evaluation when
+// that commit disagrees with the pin or with the flake's own reading on another host. A new action ends a switch still building first.
 // Rollback activates any earlier generation of the system profile. Before a switch the page asks for the package diff between the running and the built closure,
 // which runs as a job and is kept with the evaluation, and the closure browser reads any generation's dependency graph.
 // With build_progress, a Build and a switch building on its host read nix's structured log into counts and a tree of what is
@@ -31,6 +33,7 @@ import { format_age, format_duration } from "@x-tech-laboratories/x-libs/duratio
 import { AgentError, type AgentPool, type RunResult } from "./agents/agent.ts";
 import { built_store_path, record_builds } from "./builds.ts";
 import type { Cache } from "./cache.ts";
+import type { FlakeReading } from "./flake.ts";
 import type { Host } from "./host.ts";
 import { build_operation as cache_build_operation, parse_report } from "./nixos/attic.ts";
 import { level_of_status, worse, type DeploymentSettings, type Status, type TimeOfDay } from "./config.ts";
@@ -71,6 +74,8 @@ export interface Evaluation {
   eval_unreachable: boolean;
   metadata_error: string | null;
   flake_revision: string | null;
+  // The host that read flake_revision, the server's own when null; absent when unknown.
+  evaluated_on?: string | null;
   flake_last_modified_epoch: number | null;
   oldest_input: string | null;
   inputs_last_modified_epoch: number | null;
@@ -150,6 +155,8 @@ export interface DeploymentOptions {
   host?: Host;
   // Has the cache that evaluates for this deployment check now, as a push or a person asks.
   check_cache?: (cache: Cache) => void;
+  // Has the flake with this id read its metadata again now, so its revision can be compared with the evaluation's.
+  read_flake?: (flake_id: string) => void;
 }
 
 // What a request for the package diff answers: the diff, or why there is none.
@@ -211,6 +218,9 @@ export class Deployment {
   private readonly caches: Cache[];
   readonly host: Host | null;
   private readonly check_cache: (cache: Cache) => void;
+  private readonly read_flake: (flake_id: string) => void;
+  // The disagreement between the evaluation's revision and the flake's own reading last asked about, so each is asked about once.
+  private revision_mismatch_asked: string | null = null;
   // Switch jobs this server has confirmed or told to roll back, which need nothing more from it.
   private readonly tended_switches = new Set<number>();
   // When each switch first waited for its HTTP checks.
@@ -225,6 +235,7 @@ export class Deployment {
     this.caches = options.caches ?? [];
     this.host = options.host ?? null;
     this.check_cache = options.check_cache ?? (() => {});
+    this.read_flake = options.read_flake ?? (() => {});
   }
 
   get id(): string {
@@ -280,7 +291,46 @@ export class Deployment {
     // An action takes the place of a switch still building first, whose build is the running job until it ends.
     const replaceable = waiting !== undefined && running !== null && (running.id === waiting.job_id || running.id === waiting.step_job_id);
     if (running !== null && !(action !== "reboot" && replaceable)) return "A job is already running for this deployment";
+    if (is_switch_kind(action) && this.build_step() !== null && this.evaluation().target === null) {
+      return `The flake has not been evaluated yet, and a system built on ${this.host_name(this.agent_for("build"))} is only activated once it matches the evaluation`;
+    }
+    if (is_switch_kind(action)) return this.revision_refusal();
     return null;
+  }
+
+  // Why the evaluation's revision disagrees with what the deployment's pin or the flake's own host says, or null when nothing independent disagrees.
+  revision_refusal(evaluation: Evaluation = this.evaluation()): string | null {
+    const revision = evaluation.flake_revision;
+    if (revision === null) return null;
+    const pin = this.pin();
+    if (pin !== null) {
+      if (!/^[0-9a-f]{40}$/.test(pin) || revision === pin) return null;
+      return `The evaluation reports revision ${short_revision(revision)}, but the deployment is pinned at ${short_revision(pin)}`;
+    }
+    if (this.settings.flake_id === null || local_path(this.settings.flake) !== null) return null;
+    const reading = this.store.reading<FlakeReading>(this.settings.flake_id);
+    // Only a reading by another host than the evaluating one is independent of it.
+    if (reading === null || reading.host === undefined || reading.revision === null || evaluation.evaluated_on === undefined) return null;
+    if (this.same_host(reading.host, evaluation.evaluated_on)) return null;
+    const reader = this.host_name(reading.host);
+    const evaluator = this.host_name(evaluation.evaluated_on);
+    if (reading.revision !== revision) {
+      return `${evaluator} evaluated revision ${short_revision(revision)}, but ${reader} reads the flake at ${short_revision(reading.revision)}`;
+    }
+    const stamp = evaluation.flake_last_modified_epoch;
+    if (reading.last_modified_epoch !== null && stamp !== null && reading.last_modified_epoch !== stamp) {
+      return `${evaluator} reports revision ${short_revision(revision)} last changed at ${stamp}, but ${reader} reads ${reading.last_modified_epoch}`;
+    }
+    return null;
+  }
+
+  // Evaluates again and has the flake read again, once for each disagreement, recording it as an event.
+  private ask_about_revision(mismatch: string): void {
+    if (this.revision_mismatch_asked === mismatch) return;
+    this.revision_mismatch_asked = mismatch;
+    this.store.add_event(this.id, this.now(), "warning", `Not switching: ${mismatch}; evaluating again`);
+    this.request_evaluation();
+    if (this.settings.flake_id !== null) this.read_flake(this.settings.flake_id);
   }
 
   // ── Pin ──────────────────────────────────────────────────────────────────
@@ -296,7 +346,7 @@ export class Deployment {
     return this.evaluation().pin_override !== undefined;
   }
 
-  // The settings with the flake reference fixed at the pin, which evaluation, build and switch use.
+  // The settings with the flake reference fixed at the pin, which evaluation uses, and build and switch before any evaluation.
   effective_settings(): DeploymentSettings {
     const pin = this.pin();
     const flake = pin === null ? null : pinned_flake(this.settings.flake, pin);
@@ -549,6 +599,7 @@ export class Deployment {
       evaluation.eval_unreachable = false;
     }
     evaluation.flake_revision = reading.revision;
+    evaluation.evaluated_on = row.host;
     evaluation.flake_last_modified_epoch = reading.flake?.last_modified_epoch ?? evaluation.flake_last_modified_epoch;
     evaluation.oldest_input = reading.flake?.oldest_input ?? evaluation.oldest_input;
     evaluation.inputs_last_modified_epoch = reading.flake?.inputs_last_modified_epoch ?? evaluation.inputs_last_modified_epoch;
@@ -562,7 +613,7 @@ export class Deployment {
     const launched = await this.launch("eval", eval_operation(this.effective_settings(), this.attribute()), "schedule", false);
     if (launched.job_id !== null) return null;
     const failure: RunResult = { exit_code: launched.unreachable ? -1 : 1, stdout: "", stderr: `Could not start the evaluation: ${launched.error}` };
-    return this.fold_evaluation(failure, failure);
+    return this.fold_evaluation(failure, failure, this.agent_for("eval"));
   }
 
   // Advances the running evaluation, answering with its result once it has ended.
@@ -570,16 +621,16 @@ export class Deployment {
     const followed = await this.follow(job);
     if (followed.outcome === "unreachable") {
       const unreachable: RunResult = { exit_code: -1, stdout: "", stderr: `Could not poll the running evaluation: ${followed.error}` };
-      return this.fold_evaluation(unreachable, unreachable);
+      return this.fold_evaluation(unreachable, unreachable, job.agent);
     }
     if (followed.outcome === "running") return null;
     const finished = this.store.job(job.id)!;
     const parts = split_eval_output(finished.output, `The evaluation ended before reporting: ${finished.error ?? "no output"}`);
-    return this.fold_evaluation(parts.eval, parts.metadata);
+    return this.fold_evaluation(parts.eval, parts.metadata, job.agent);
   }
 
   // Folds an evaluation and the flake metadata into the stored state, keeping the last good values of a half that failed.
-  private fold_evaluation(eval_result: RunResult, metadata_result: RunResult): Evaluation {
+  private fold_evaluation(eval_result: RunResult, metadata_result: RunResult, evaluated_on: string | null): Evaluation {
     const evaluation = this.evaluation();
     evaluation.evaluated_epoch = this.now();
     const out = eval_result.stdout.trim();
@@ -594,6 +645,7 @@ export class Deployment {
     const metadata = metadata_result.exit_code === 0 ? parse_metadata(metadata_result.stdout) : null;
     if (metadata !== null) {
       evaluation.flake_revision = metadata.revision;
+      evaluation.evaluated_on = evaluated_on;
       evaluation.flake_last_modified_epoch = metadata.last_modified_epoch;
       evaluation.oldest_input = metadata.oldest_input;
       evaluation.inputs_last_modified_epoch = metadata.inputs_last_modified_epoch;
@@ -609,6 +661,12 @@ export class Deployment {
   // Decides whether this drift switches on the next cycle, answering with messages that explain a hold.
   private consider_auto_switch(fields: ProbeFields, evaluation: Evaluation, target: string, now: number): Message[] {
     if (!this.settings.auto_switch || evaluation.eval_error !== null || evaluation.auto_switch_target === target) return [];
+    // The evaluation is saved after this, so the revision is judged from the one being assembled.
+    const mismatch = this.revision_refusal(evaluation);
+    if (mismatch !== null) {
+      this.ask_about_revision(mismatch);
+      return [{ level: "warning", text: `Not switching automatically: ${mismatch}; evaluating again` }];
+    }
     const created = fields.profile_created_epoch ?? fields.switched_epoch;
     // A generation newer than the flake came from elsewhere, such as an unpushed checkout, and switching would undo it.
     if (created === null || evaluation.flake_last_modified_epoch === null || evaluation.flake_last_modified_epoch <= created) {
@@ -624,6 +682,8 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
+    const mismatch = this.revision_refusal();
+    if (mismatch !== null) return this.ask_about_revision(mismatch);
     const operation = this.operation_for("switch");
     // Built elsewhere, the switch builds there first, as any switch does.
     const waiting = await this.wait_for_dependencies("switch", operation, "automatic");
@@ -701,6 +761,11 @@ export class Deployment {
   act(action: ActionId, trigger = "manual"): Promise<ActionOutcome> {
     return this.serial(async () => {
       const refusal = this.action_refusal(action);
+      const mismatch = is_switch_kind(action) ? this.revision_refusal() : null;
+      if (refusal !== null && refusal === mismatch) {
+        this.ask_about_revision(mismatch);
+        return { ok: false, message: `${mismatch}; evaluating again before switching`, job_id: null };
+      }
       if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       if (action === "reboot") return this.host === null ? { ok: false, message: "No host to reboot", job_id: null } : this.host.act("reboot", trigger);
       const building = this.waiting_build();
@@ -755,10 +820,10 @@ export class Deployment {
     return this.settings.target_host !== null || this.same_host(this.agent_for("build"), this.agent_for("switch")) ? null : "build";
   }
 
-  // What a build runs: its cache's build, which pushes what it built, at the deployment's pin when it has one.
+  // What a build runs: its cache's build, which pushes what it built, at the commit last evaluated, else at the deployment's pin.
   private build_operation(): Operation {
     const building = this.building_cache();
-    const settings = this.effective_settings();
+    const settings = this.evaluated_settings();
     if (building === null) return build_operation(settings, this.attribute());
     return cache_build_operation({ ...building.cache.settings, flake: settings.flake }, building.name);
   }
@@ -766,6 +831,21 @@ export class Deployment {
   // The store path a build job made, read from a cache's build report or from what nix printed.
   private built_by(job: JobWithOutput): string | null {
     return parse_report(job.output).targets.get(this.attribute() ?? "")?.target ?? built_store_path(job.output);
+  }
+
+  // Why a system another host built may not be activated, or null when it is the system the deployment evaluated.
+  private built_refusal(built: string): string | null {
+    if (!is_store_path(built)) return `The build named ${JSON.stringify(clip(built, 200))} as the system it built, which is not a store path`;
+    const target = this.evaluation().target;
+    if (target === null) return `The build made ${built}, but there is no evaluation to check it against`;
+    if (built !== target) return `The build made ${built}, but the flake evaluates to ${target}; only the evaluated system is activated`;
+    return null;
+  }
+
+  // Fails a waiting switch whose build did not make the evaluated system, and evaluates again.
+  private refuse_built(job: Job, reason: string): void {
+    this.end_wait(job, `${reason}; nothing was activated, so evaluate and switch again`);
+    this.request_evaluation();
   }
 
   // Starts a switch as a job that runs what it depends on first, or answers null when the switch can start at once; it
@@ -840,6 +920,8 @@ export class Deployment {
   // Waits for a system built on another host to reach the cache, as a store watcher there pushes it.
   private async advance_push(job: Job, waiting: SwitchWait): Promise<void> {
     const target = waiting.target!;
+    const refusal = this.built_refusal(target);
+    if (refusal !== null) return this.refuse_built(job, refusal);
     const checker = this.agents.pick([job.agent, ...this.build_agents()], false);
     const holds = await this.cache_holds(target, checker).catch(() => "absent" as const);
     if (holds === "held") {
@@ -859,9 +941,17 @@ export class Deployment {
 
   // Starts the waiting switch's own run, fetching and activating the store path its build made.
   private async start_switch(job: Job, target: string): Promise<void> {
-    this.save_wait(null);
+    const refusal = this.built_refusal(target);
+    if (refusal !== null) return this.refuse_built(job, refusal);
     const token = watch_token(job.command) ?? randomBytes(8).toString("hex");
-    this.store.set_command(job.id, JSON.stringify(switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, target)));
+    let operation: Operation;
+    try {
+      operation = switch_job_operation(this.effective_settings(), job.kind as SwitchMode, token, target);
+    } catch (error) {
+      return this.end_wait(job, `Could not prepare the ${job_noun(job.kind)}: ${(error as Error).message}`);
+    }
+    this.save_wait(null);
+    this.store.set_command(job.id, JSON.stringify(operation));
     const command = this.store.job(job.id)!.command;
     let waking: Promise<void> | null;
     try {
@@ -1011,13 +1101,12 @@ export class Deployment {
   private operation_for(kind: JobAction): Operation {
     if (kind === "build") return this.build_operation();
     // Each switch has its own token, naming the folder its watchdog and X-Nix share on the host.
-    return switch_job_operation(this.switch_settings(), kind, randomBytes(8).toString("hex"));
+    return switch_job_operation(this.evaluated_settings(), kind, randomBytes(8).toString("hex"));
   }
 
-  // The settings with a remote flake fixed at the commit last evaluated, so a switch's build and its nixos-rebuild read
-  // the same system even when the branch moves between them; otherwise nixos-rebuild builds the newer one inside the
-  // activation_timeout that only the activation should use.
-  private switch_settings(): DeploymentSettings {
+  // The settings with a remote flake fixed at the commit last evaluated, so every build and switch reads the system the
+  // evaluation named even when the branch moves after it.
+  private evaluated_settings(): DeploymentSettings {
     const settings = this.effective_settings();
     const revision = this.evaluation().flake_revision;
     if (revision === null || !/^[0-9a-f]{40}$/.test(revision) || local_path(settings.flake) !== null) return settings;

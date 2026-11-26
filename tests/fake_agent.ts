@@ -243,7 +243,7 @@ export function make_deployment(
   values: Record<string, unknown> = {},
   existing: {
     store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings>; caches?: Cache[];
-    check_cache?: (cache: Cache) => void;
+    check_cache?: (cache: Cache) => void; read_flake?: (flake_id: string) => void;
   } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
@@ -253,7 +253,7 @@ export function make_deployment(
   const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now });
   const caches = new Map((existing.caches ?? []).map((cache) => [cache.id, cache.settings]));
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...own }, 0, existing.flakes, () => host.settings, caches);
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache });
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache, read_flake: existing.read_flake });
   return { deployment, host, agent, store, agents };
 }
 

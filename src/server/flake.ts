@@ -39,6 +39,8 @@ export interface FlakeReading {
   inputs: LockedInput[];
   // Why the last read failed, or null when it worked.
   metadata_error: string | null;
+  // The host that read it, the server's own when null; absent from older readings.
+  host?: string | null;
 }
 
 // How the last update ended.
@@ -191,6 +193,7 @@ export class Flake {
       inputs_last_modified_epoch: metadata?.inputs_last_modified_epoch ?? previous?.inputs_last_modified_epoch ?? null,
       inputs: metadata?.inputs ?? previous?.inputs ?? [],
       metadata_error: error,
+      host: this.settings.host,
     });
     return metadata !== null && previous !== null
       && (metadata.revision !== previous.revision || metadata.last_modified_epoch !== previous.last_modified_epoch);

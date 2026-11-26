@@ -12,8 +12,8 @@ import { cache_settings, type CacheSettings } from "../src/server/config.ts";
 import { build_all_operation, build_operation, check_operation, parse_report, push_operation } from "../src/server/nixos/attic.ts";
 import type { CacheCheckOperation, CacheSettings as CacheSpec } from "../src/shared/operations.ts";
 
-const alpha = "/nix/store/aaaa-nixos-system-Alpha";
-const beta = "/nix/store/bbbb-nixos-system-Beta";
+const alpha = `/nix/store/${"a".repeat(32)}-nixos-system-Alpha`;
+const beta = `/nix/store/${"b".repeat(32)}-nixos-system-Beta`;
 const dep = "/nix/store/dddd-dep";
 
 // ── Harness ──────────────────────────────────────────────────────────────────

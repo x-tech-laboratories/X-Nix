@@ -16,7 +16,7 @@ import {
   flake_report_name, nix_string, report_mark, type CacheBuildAllOperation, type CacheBuildOperation, type CacheCheckOperation, type CachePushOperation,
   type CacheTarget, type CacheSettings as CacheSpec, type Operation,
 } from "../../shared/operations.ts";
-import { progress_args, timed } from "./commands.ts";
+import { is_store_path, progress_args, timed } from "./commands.ts";
 import { local_path } from "./flake.ts";
 
 export { report_mark } from "../../shared/operations.ts";
@@ -164,6 +164,12 @@ export function parse_report(output: string): Report {
     const facts = report.targets.get(name)!;
     if (key === "missing") facts.missing.push(value);
     else (facts as unknown as Record<string, string>)[key] = value;
+  }
+  // A target that is not a store path names nothing that can be fetched or activated, so it is dropped and the row fails.
+  for (const facts of report.targets.values()) {
+    if (facts.target === undefined || is_store_path(facts.target)) continue;
+    if (facts.target.trim() !== "") facts.error ??= `Reported ${JSON.stringify(facts.target.slice(0, 200))} as its store path, which is not one`;
+    delete facts.target;
   }
   return report;
 }
