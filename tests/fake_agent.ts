@@ -250,7 +250,7 @@ export function make_deployment(
   const agent = existing.agent ?? new FakeAgent();
   const agents = new AgentPool("host", agent);
   const [own, of_host] = host_values(values);
-  const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now });
+  const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now, deployments: () => [settings] });
   const caches = new Map((existing.caches ?? []).map((cache) => [cache.id, cache.settings]));
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...own }, 0, existing.flakes, () => host.settings, caches);
   const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache });

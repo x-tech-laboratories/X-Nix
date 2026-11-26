@@ -125,7 +125,9 @@ const provisioner = new Provisioner(config.provisioning, {
   declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys,
 });
 accept_agent_keys(provisioner.agent_keys());
-const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents })]));
+// A host holds off its reboot and collection while a deployment on it switches, which the deployment refuses in turn while it collects.
+const deployments_on = (host_name: string) => () => config.deployments.filter((deployment) => (deployment.host ?? server_name) === host_name);
+const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents, deployments: deployments_on(settings.id) })]));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const deployments = config.deployments.map((settings) => new Deployment(settings, {
   store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),

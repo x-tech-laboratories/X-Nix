@@ -280,7 +280,7 @@ export class Deployment {
     // An action takes the place of a switch still building first, whose build is the running job until it ends.
     const replaceable = waiting !== undefined && running !== null && (running.id === waiting.job_id || running.id === waiting.step_job_id);
     if (running !== null && !(action !== "reboot" && replaceable)) return "A job is already running for this deployment";
-    return null;
+    return is_switch_kind(action) ? this.host?.collection_refusal() ?? null : null;
   }
 
   // ── Pin ──────────────────────────────────────────────────────────────────
@@ -624,6 +624,8 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
+    // A collection on the host holds the switch off, and a later cycle finds it due again.
+    if (this.host?.collection_refusal() != null) return;
     const operation = this.operation_for("switch");
     // Built elsewhere, the switch builds there first, as any switch does.
     const waiting = await this.wait_for_dependencies("switch", operation, "automatic");
@@ -1263,6 +1265,8 @@ export class Deployment {
   roll_back(generation: number, reason: string, trigger = "manual"): Promise<ActionOutcome> {
     return this.serial(async () => {
       if (this.running_job() !== null) return { ok: false, message: "A job is already running for this deployment", job_id: null };
+      const collecting = this.host?.collection_refusal() ?? null;
+      if (collecting !== null) return { ok: false, message: collecting, job_id: null };
       const { generations, error } = await this.generations();
       if (error !== null) return { ok: false, message: error, job_id: null };
       const chosen = generations.find((candidate) => candidate.generation === generation);
