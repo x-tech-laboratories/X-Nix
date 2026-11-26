@@ -154,6 +154,8 @@ export interface DeploymentSettings {
   target_host: string | null;
   auto_switch: boolean;
   auto_switch_after: number;
+  // How old the oldest locked input may be for a switch to start by itself; null lets any age switch.
+  auto_switch_max_input_age: number | null;
   build_at: TimeOfDay | null;
   switch_wrapper: string[];
   post_switch: string | null;
@@ -625,6 +627,7 @@ export function deployment_settings(
     target_host,
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),
+    auto_switch_max_input_age: read.optional_duration("auto_switch_max_input_age"),
     build_at: read.time_of_day("build_at"),
     switch_wrapper: read.list("switch_wrapper", []),
     post_switch: read.text("post_switch"),

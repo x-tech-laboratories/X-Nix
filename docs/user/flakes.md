@@ -21,7 +21,7 @@ Defaults that changed, and the line that keeps the earlier behaviour:
 
 Every `interval` the flake's host reads `nix flake metadata`, and the Flakes page shows its revision, when it last
 changed, and each locked input with its age. With `max_input_age`, the flake warns once its oldest input is older than
-that.
+that; a deployment's `auto_switch_max_input_age` also holds its automatic switches at such a lock.
 
 ## Update
 

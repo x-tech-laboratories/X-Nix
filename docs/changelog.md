@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- feat(deployment): hold automatic switches onto inputs older than auto_switch_max_input_age
 - feat(deployment)!: roll back unconfirmed switches and build every checked system before an update lands, by default
 - fix(auth): refuse request paths that are not spelled canonically
 - fix(jobs): read only marker lines that carry the run's own token

@@ -1079,6 +1079,25 @@ describe("automatic switch", () => {
     expect(harness.deployment.running_job()?.trigger).toBe("automatic");
   });
 
+  it("switches onto inputs of any age unless auto_switch_max_input_age is set", async () => {
+    const harness = await drift_long_enough({ ...automatic, auto_switch_max_input_age: "2d" });
+
+    await cycle(harness);
+
+    expect(harness.deployment.settings.auto_switch_max_input_age).toBe(172800);
+    expect(make_deployment(automatic).deployment.settings.auto_switch_max_input_age).toBeNull();
+    expect(harness.deployment.running_job()?.trigger).toBe("automatic");
+  });
+
+  it("holds while the oldest locked input is older than auto_switch_max_input_age", async () => {
+    const harness = await drift_long_enough({ ...automatic, auto_switch_max_input_age: "12h" });
+
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(messages_of(harness)).toContain("Not switching automatically: the oldest locked input nixpkgs changed 1 day ago, longer ago than the 12 hours auto_switch_max_input_age allows");
+  });
+
   it("leaves alone a generation newer than the flake", async () => {
     const harness = make_deployment(automatic);
     await collect(harness, { probe: probe({ created_epoch: clock.now - 60 }) });

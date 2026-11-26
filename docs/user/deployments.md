@@ -37,6 +37,14 @@ With `auto_switch`, a deployment switches by itself once drift has lasted `auto_
 target system, and never when the running generation is newer than the flake's last change, since that generation came
 from somewhere else, such as an unpushed checkout, and switching would undo it.
 
+`auto_switch_after` is also how long a new lock waits before it reaches the host by itself: its clock starts when X-Nix
+first sees the host drift to that exact system, which is never before the lock changed, and starts again for every new
+system. Raise it to give a bad upstream commit more time to be noticed before anything switches to it; a person, a
+fleet run or a manual switch never waits for it.
+
+With `auto_switch_max_input_age`, a deployment does not switch by itself while the oldest locked input changed longer
+ago than that, and says so on its page; a person can still switch it.
+
 ## Build
 
 Build builds the deployment's system without activating it. With `build_at` it also runs daily. Build, and any switch,
@@ -227,6 +235,7 @@ named `configuration`; a switch to a `target_host` always switches.
 | `target_host`       | none                              | `--target-host` for a plain switch; not with a guarded switch.       |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
+| `auto_switch_max_input_age` | none                      | Do not switch by itself while the oldest locked input is older than this. |
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command each program of the switch runs inside, outside sudo.      |
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`.         |

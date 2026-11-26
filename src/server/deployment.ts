@@ -674,12 +674,22 @@ export class Deployment {
     if (created === null || evaluation.flake_last_modified_epoch === null || evaluation.flake_last_modified_epoch <= created) {
       return [{ level: "info", text: "Not switching automatically: the running generation is newer than the flake" }];
     }
+    const stale = this.stale_inputs(evaluation, now);
+    if (stale !== null) return [{ level: "warning", text: `Not switching automatically: ${stale}` }];
     const waited = now - (evaluation.drift_since_epoch ?? now);
     if (waited < this.settings.auto_switch_after) {
       return [{ level: "info", text: `Switching automatically once the drift has lasted ${format_duration(this.settings.auto_switch_after)}` }];
     }
     this.auto_switch_due = target;
     return [{ level: "warning", text: `Drift has lasted ${format_age(waited)}; switching automatically` }];
+  }
+
+  // Why the locked inputs are too old to switch to by itself, or null when auto_switch_max_input_age allows them or their age is unknown.
+  private stale_inputs(evaluation: Evaluation, now: number): string | null {
+    const limit = this.settings.auto_switch_max_input_age;
+    const oldest = evaluation.inputs_last_modified_epoch;
+    if (limit === null || oldest === null || now - oldest <= limit) return null;
+    return `the oldest locked input ${evaluation.oldest_input ?? "?"} changed ${format_age(now - oldest)}, longer ago than the ${format_duration(limit)} auto_switch_max_input_age allows`;
   }
 
   private async launch_auto_switch(target: string): Promise<void> {
