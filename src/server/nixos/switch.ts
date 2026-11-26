@@ -20,7 +20,7 @@
 import { format_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { DeploymentSettings } from "../config.ts";
-import { read_facts, type Generation } from "../../shared/facts.ts";
+import { max_parsed_line_length, read_facts, type Generation } from "../../shared/facts.ts";
 import {
   accepted_prefix, innermost, marker_words, one_line, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
   type SwitchDefer, type SwitchOperation, type SwitchWatch,
@@ -150,7 +150,7 @@ export function switch_verdict(output: string, token: string | null): SwitchVerd
   let named: string | null = null;
   let marked_failed = false;
   for (const line of output.split("\n")) {
-    const failed = /the following units failed: (.+)$/.exec(line);
+    const failed = line.length > max_parsed_line_length ? null : /the following units failed: (.+)$/.exec(line);
     if (failed !== null) named = failed[1]!.trim();
     const marked = marker_words(line, prefix);
     if (marked === null) continue;

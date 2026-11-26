@@ -296,7 +296,7 @@ export class Deployment {
     if (is_switch_kind(action) && this.build_step() !== null && this.evaluation().target === null) {
       return `The flake has not been evaluated yet, and a system built on ${this.host_name(this.agent_for("build"))} is only activated once it matches the evaluation`;
     }
-    if (is_switch_kind(action)) return this.revision_refusal();
+    if (is_switch_kind(action)) return this.host?.collection_refusal() ?? this.revision_refusal();
     return null;
   }
 
@@ -684,6 +684,8 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
+    // A collection on the host holds the switch off, and a later cycle finds it due again.
+    if (this.host?.collection_refusal() != null) return;
     const mismatch = this.revision_refusal();
     if (mismatch !== null) return this.ask_about_revision(mismatch);
     const operation = this.operation_for("switch");
@@ -1358,6 +1360,8 @@ export class Deployment {
   roll_back(generation: number, reason: string, trigger = "manual"): Promise<ActionOutcome> {
     return this.serial(async () => {
       if (this.running_job() !== null) return { ok: false, message: "A job is already running for this deployment", job_id: null };
+      const collecting = this.host?.collection_refusal() ?? null;
+      if (collecting !== null) return { ok: false, message: collecting, job_id: null };
       const { generations, error } = await this.generations();
       if (error !== null) return { ok: false, message: error, job_id: null };
       const chosen = generations.find((candidate) => candidate.generation === generation);

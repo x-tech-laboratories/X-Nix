@@ -96,6 +96,34 @@ export interface SampleFilter {
 // How long samples are kept.
 export const sample_retention_in_seconds = 180 * 86400;
 
+// The most characters of output a job keeps; past it the middle is cut, keeping the beginning and the end.
+export const max_job_output_length = 16 * 2 ** 20;
+
+// How much of the beginning and of the end a cut keeps, together well under the limit so a cut is rare.
+export const kept_output_head_length = 2 * 2 ** 20;
+export const kept_output_tail_length = 8 * 2 ** 20;
+
+// The line a cut leaves where the middle of a job's output was.
+export const output_cut_line = "[X-Nix cut the middle of this output here, as the whole was too long to keep]\n";
+
+// What a pruning pass keeps of the history older than the retention.
+export interface PruneLimits {
+  before_epoch: number;
+  // The newest jobs of each kind each owner keeps, and the newest builds of each target.
+  kept_per_kind: number;
+  kept_events_per_owner: number;
+  kept_fleet_runs: number;
+  // Kinds whose jobs are kept however old, as they point at something outside the database.
+  lasting_kinds: JobKind[];
+}
+
+export interface PruneCounts {
+  jobs: number;
+  builds: number;
+  events: number;
+  fleet_runs: number;
+}
+
 export interface EventRow {
   id: number;
   deployment_id: string;
@@ -301,9 +329,18 @@ export class Store {
     return Number(result.lastInsertRowid);
   }
 
+  // Adds a run's output to the job, cutting its middle once the whole would pass the limit; output_offset is where the
+  // run's own output continues, which a cut leaves alone.
   append_output(job_id: number, text: string, output_offset: number | null = null): void {
     if (text === "" && output_offset === null) return;
     const progress = text.split("\n").map((line) => line.trim()).filter(Boolean).pop()?.slice(0, 200) ?? null;
+    const stored = this.database.prepare("SELECT length(output) AS length FROM jobs WHERE id = ?").get(job_id) as { length: number } | undefined;
+    if (stored !== undefined && stored.length + text.length > max_job_output_length) {
+      const { output } = this.database.prepare("SELECT output FROM jobs WHERE id = ?").get(job_id) as { output: string };
+      this.run(`UPDATE jobs SET output = ?, progress = COALESCE(?, progress), output_offset = COALESCE(?, output_offset) WHERE id = ?`,
+        cut_output(output + text), progress, output_offset, job_id);
+      return;
+    }
     this.run(`UPDATE jobs SET output = output || ?, progress = COALESCE(?, progress),
       output_offset = COALESCE(?, output_offset) WHERE id = ?`, text, progress, output_offset, job_id);
   }
@@ -495,6 +532,65 @@ export class Store {
     return this.database.prepare(`SELECT owner_id, metric, epoch, value FROM samples WHERE ${conditions.join(" AND ")} ORDER BY epoch`).all(...values) as unknown as Sample[];
   }
 
+  // ── Pruning ──────────────────────────────────────────────────────────────
+
+  // Every JSON document that may name a job by id: each owner's state and readings, each cache's readings and every fleet
+  // run, and the install behind each provisioned agent key.
+  referencing_documents(): unknown[] {
+    const texts = [
+      ...this.database.prepare("SELECT evaluation AS value FROM deployment_state UNION ALL SELECT reading FROM deployment_state").all(),
+      ...this.database.prepare("SELECT reading AS value FROM cache_state UNION ALL SELECT reading FROM cache_server_state").all(),
+      ...this.database.prepare("SELECT run AS value FROM fleet_runs").all(),
+    ].map((row) => (row as { value: string | null }).value);
+    const provisioned = this.provisioned_agents().map((agent) => ({ job_id: agent.job_id }));
+    return [...texts.filter((text): text is string => text !== null).map((text) => JSON.parse(text) as unknown), ...provisioned];
+  }
+
+  // Deletes finished fleet runs older than the limit beyond the newest kept, answering how many went.
+  prune_fleet_runs(limits: PruneLimits): number {
+    return Number(this.run(`DELETE FROM fleet_runs WHERE state != 'running' AND COALESCE(json_extract(run, '$.finished_epoch'), 0) < ?
+      AND id NOT IN (SELECT id FROM fleet_runs ORDER BY id DESC LIMIT ?)`, limits.before_epoch, limits.kept_fleet_runs).changes);
+  }
+
+  // Deletes builds older than the limit beyond the newest kept of each owner's target, answering how many went.
+  prune_builds(limits: PruneLimits): number {
+    return Number(this.run(`DELETE FROM builds WHERE finished_epoch < ? AND id NOT IN (SELECT id FROM (SELECT id,
+      ROW_NUMBER() OVER (PARTITION BY owner_id, target ORDER BY id DESC) AS position FROM builds) WHERE position <= ?)`,
+    limits.before_epoch, limits.kept_per_kind).changes);
+  }
+
+  // Deletes finished jobs older than the limit beyond the newest kept of each owner's kind, leaving every job a build or
+  // one of the kept ids names, answering how many went.
+  prune_jobs(limits: PruneLimits, kept_ids: Iterable<number>): number {
+    const lasting = limits.lasting_kinds.map(() => "?").join(", ") || "NULL";
+    return Number(this.run(`DELETE FROM jobs WHERE state != 'running' AND COALESCE(finished_epoch, started_epoch) < ?
+      AND kind NOT IN (${lasting})
+      AND id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY deployment_id, kind ORDER BY id DESC) AS position FROM jobs) WHERE position <= ?)
+      AND id NOT IN (SELECT job_id FROM builds)
+      AND id NOT IN (SELECT value FROM json_each(?))`,
+    limits.before_epoch, ...limits.lasting_kinds, limits.kept_per_kind, JSON.stringify([...kept_ids])).changes);
+  }
+
+  // Deletes events older than the limit beyond the newest kept of each owner, answering how many went.
+  prune_events(limits: PruneLimits): number {
+    return Number(this.run(`DELETE FROM events WHERE epoch < ? AND id NOT IN (SELECT id FROM (SELECT id,
+      ROW_NUMBER() OVER (PARTITION BY deployment_id ORDER BY id DESC) AS position FROM events) WHERE position <= ?)`,
+    limits.before_epoch, limits.kept_events_per_owner).changes);
+  }
+
+  // Runs the work in one transaction, so a pruning pass is written at once or not at all.
+  transaction<Answer>(work: () => Answer): Answer {
+    this.database.exec("BEGIN");
+    try {
+      const answer = work();
+      this.database.exec("COMMIT");
+      return answer;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   // ── Events ───────────────────────────────────────────────────────────────
 
   add_event(deployment_id: string, epoch: number, level: EventLevel, message: string): void {
@@ -508,6 +604,20 @@ export class Store {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// Output past the limit with its middle cut at whole lines: the beginning up to an earlier cut or the head length, the cut
+// line, and the end.
+export function cut_output(output: string): string {
+  const earlier_cut = output.indexOf(output_cut_line);
+  const cut_before = earlier_cut !== -1 && earlier_cut <= kept_output_head_length;
+  let head = cut_before ? output.slice(0, earlier_cut) : output.slice(0, kept_output_head_length);
+  if (!cut_before && head.includes("\n")) head = head.slice(0, head.lastIndexOf("\n") + 1);
+  const rest = cut_before ? output.slice(earlier_cut + output_cut_line.length) : output.slice(head.length);
+  let tail = rest.slice(-kept_output_tail_length);
+  if (tail.length < rest.length && tail.includes("\n")) tail = tail.slice(tail.indexOf("\n") + 1);
+  const ended_head = head === "" || head.endsWith("\n") ? head : `${head}\n`;
+  return `${ended_head}${output_cut_line}${tail}`;
+}
 
 // A build as stored, with its flag and products decoded.
 function build_of(row: Record<string, unknown>): BuildRecord {

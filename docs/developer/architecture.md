@@ -170,7 +170,7 @@ flowchart TB
 4. Make the `LocalAgent` and the `AgentPool`, give it the Wake-on-LAN settings, and make the hub that admits agents.
 5. Make the `Provisioner` and give the hub the accepted agent keys: the config's, plus the ones X-Nix made.
 6. Make a `Host`, `Cache`, `Deployment` and `Flake` for each config entry.
-7. Make the `Poller` over all of them, the `Fleet`, `OverdueJobs` and the `Webhook`.
+7. Make the `Poller` over all of them, the `Fleet`, `OverdueJobs` and the `Webhook`, and start pruning the history (`keep_pruning`).
 8. Build the Fastify app, listen, then start the poller, the fleet timer and the overdue watch.
 
 ### Owners

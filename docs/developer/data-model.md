@@ -171,8 +171,11 @@ separate statuses, so a down cache server never hides a target that is not built
 
 ### `jobs`
 
-One row per job, whoever owns it. A job holds its whole output; `output_offset` says how many bytes of the run's
-output file are already copied in, so the next poll asks the agent for the rest. `progress` is the last printed line,
+One row per job, whoever owns it. A job holds its output up to `max_job_output_length` (16 MiB); `append_output` cuts the
+middle of a longer one at whole lines, keeping the first `kept_output_head_length` and the last
+`kept_output_tail_length` with `output_cut_line` between, so parsers that read the end still work. `output_offset` says
+how many bytes of the run's output file are already copied in, so the next poll asks the agent for the rest; a cut never
+changes it. `progress` is the last printed line,
 for lists; `live` is the structured build progress (`BuildPlan` counts and tree). `command` is the operation as JSON,
 which the job page shows.
 
@@ -213,6 +216,17 @@ the same host.
 
 `account_users`, `account_sessions` and `account_tokens` belong to X-Libs' `AccountStore`. Admins declared in the
 password file are not rows; they are merged in at start. Sessions and tokens store only hashes.
+
+## Retention
+
+`keep_pruning` in `src/server/retention.ts`, started by `main.ts`, runs `prune_history` a minute after the start and every
+six hours, in one transaction, with the retention `X_NIX_HISTORY_RETENTION` (default `180d`, `never` turns it off).
+Older than the retention it deletes finished fleet runs beyond the newest `kept_fleet_runs`, builds beyond the newest
+`kept_per_kind` of each owner's target, finished jobs beyond the newest `kept_per_kind` of each owner's kind, and events
+beyond each owner's newest `kept_events_per_owner`. It never deletes a running job, an `install` or `media` job, a job a
+remaining build names, or a job any number under a key naming a job (`job_id`, `step_job_id`, `held_build`,
+`stopped_jobs`) in a state, a reading, a cache reading, a remaining fleet run or a provisioned agent key points at
+(`collect_job_ids`). Samples keep their own retention.
 
 ## Migrations
 

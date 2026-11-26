@@ -17,7 +17,7 @@ import {
 import { operation_runner, operation_runs } from "../src/agent/tasks.ts";
 import { AgentPool } from "../src/server/agents/agent.ts";
 import { create_hub } from "../src/server/agents/hub.ts";
-import { record_pulls } from "../src/server/pull_reports.ts";
+import { max_report_field_length, max_reports_per_message, read_report, record_pulls } from "../src/server/pull_reports.ts";
 import type { PullReport, RunResult } from "../src/shared/agent_protocol.ts";
 import type { Operation } from "../src/shared/operations.ts";
 import { clock, make_deployment, result } from "./fake_agent.ts";
@@ -424,6 +424,21 @@ describe("a pull report", () => {
     const harness = make_deployment({ host: "odin" });
     record_pulls(harness.store, [harness.deployment], "odin", [{ ...report, exit_code: 1 }], clock.now);
     expect(harness.store.jobs({ deployment_id: "host-deploy" })[0]).toMatchObject({ state: "failed", error: "Exited with status 1" });
+  });
+});
+
+describe("a pull report's limits", () => {
+  it("reads only so many reports from one message and cuts every text field to its limit", () => {
+    const harness = make_deployment({ host: "odin" });
+    const many = Array.from({ length: max_reports_per_message + 5 }, (_, index) => ({
+      run_id: `pull-${index}`, started_epoch: clock.now, exit_code: 0, remote: "r".repeat(max_report_field_length * 4), output: "o".repeat(400 * 1024),
+    }));
+
+    const kept = record_pulls(harness.store, [harness.deployment], "odin", many, clock.now);
+
+    expect(kept).toHaveLength(max_reports_per_message);
+    expect(read_report(many[0])!.remote).toHaveLength(max_report_field_length);
+    expect(read_report(many[0])!.output).toHaveLength(256 * 1024);
   });
 });
 
