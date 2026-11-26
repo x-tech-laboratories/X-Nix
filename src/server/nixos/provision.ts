@@ -31,8 +31,10 @@ export interface InstallRequest {
   agent: string | null;
   stop_after_partitioning: boolean;
   generate_hardware_config: boolean;
-  // The target's SSH host key line, checked before the install starts, or null to trust whatever answers.
+  // The target's SSH host key line, which every SSH connection of the install must find, or null when trust_unknown_host.
   host_key: string | null;
+  // Whether the install goes ahead with no host key, trusting whatever host key answers; never set with a host key.
+  trust_unknown_host: boolean;
 }
 
 // What the install operation records, so the job's own command says what it installs.
@@ -87,6 +89,8 @@ export function parse_install_request(body: unknown): InstallRequest | string {
   const host_key_start = host_key_words.findIndex((word) => /^(ssh-|ecdsa-|sk-)/.test(word));
   const host_key = host_key_start === -1 ? null : host_key_words.slice(host_key_start, host_key_start + 2).join(" ");
   if (host_key_words.length > 0 && (host_key === null || !host_key_pattern.test(host_key))) return "Give the target's host key as one line from ssh-keyscan, such as ssh-ed25519 AAAA...";
+  if (values.trust_unknown_host !== undefined && typeof values.trust_unknown_host !== "boolean") return "Say whether to trust whatever host key answers with true or false";
+  if (host_key === null && values.trust_unknown_host !== true) return missing_host_key(address);
   return {
     host, address, user, port,
     flake: (values.flake as string).trim(),
@@ -95,7 +99,13 @@ export function parse_install_request(body: unknown): InstallRequest | string {
     stop_after_partitioning: values.stop_after_partitioning === true,
     generate_hardware_config: values.generate_hardware_config !== false,
     host_key,
+    trust_unknown_host: host_key === null,
   };
+}
+
+// Why an install with no host key is refused, and how to find the key.
+export function missing_host_key(address: string): string {
+  return `Give the target's SSH host key, so the install talks only to ${address}: run \`ssh-keyscan -t ed25519 ${address}\` and check its fingerprint against \`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\` on the target's console, or tick "Trust whatever host key answers"`;
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -112,6 +122,7 @@ export function install_operation(settings: ProvisioningSettings, request: Insta
     generate_hardware_config: request.generate_hardware_config,
     stop_after_partitioning: request.stop_after_partitioning,
     host_key: request.host_key,
+    trust_unknown_host: request.host_key === null && request.trust_unknown_host,
     extra_args: settings.nixos_anywhere_args,
   };
 }

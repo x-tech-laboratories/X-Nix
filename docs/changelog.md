@@ -15,6 +15,8 @@ version.
 - fix(auth): refuse request paths that are not spelled canonically
 - fix(jobs): read only marker lines that carry the run's own token
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
+- fix(provisioning): pin the target's host key on every connection of an install, and refuse an install without one
+- fix(pull): switch only to a revision that descends from the one deployed
 - fix(jobs): have stopping a guarded switch after its activation roll it back through its watchdog
 - fix(builds): read any structured log line nix did not write as plain text instead of failing the job
 - fix(hosts): hold reboots and collections off while a deployment switches, and switches while a collection runs

@@ -18,7 +18,7 @@ import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { command_marker_token, with_marker_token, type Operation } from "../shared/operations.ts";
 import type { ProvisioningSettings } from "./config.ts";
 import {
-  install_operation, install_snippets, media_operation, missing_tool_exit_code, parse_hardware_config, parse_install_record, parse_media_path,
+  install_operation, install_snippets, media_operation, missing_host_key, missing_tool_exit_code, parse_hardware_config, parse_install_record, parse_media_path,
   parse_media_record,
   type InstallRecord, type InstallRequest, type MediaFormat,
 } from "./nixos/provision.ts";
@@ -159,6 +159,7 @@ export class Provisioner {
     const refusal = this.install_refusal();
     if (refusal !== null) return refusal;
     if (request.host === this.agents.own_host) return `'${request.host}' is the server's own host, which needs no agent`;
+    if (request.host_key === null && !request.trust_unknown_host) return missing_host_key(request.address);
     if (!request.stop_after_partitioning && this.options.declared_hosts().has(request.host)) {
       return `The config already declares an agent key for '${request.host}'; remove it from agents first, or name the new host differently`;
     }
@@ -182,7 +183,8 @@ export class Provisioner {
       const launched = await this.launch(request.host, "install", agent, operation, key?.private_text ?? null, trigger);
       if (launched.job_id === null) return { ok: false, message: `Could not start the install: ${launched.error}`, job_id: null };
       const what = request.stop_after_partitioning ? "Partitioning" : "Install";
-      this.store.add_event(request.host, this.now(), "info", `${what} of ${request.flake}#${request.configuration} on ${request.address} started`);
+      const trust = request.host_key === null ? ", trusting whatever host key answers" : "";
+      this.store.add_event(request.host, this.now(), request.host_key === null ? "warning" : "info", `${what} of ${request.flake}#${request.configuration} on ${request.address} started${trust}`);
       return { ok: true, message: `${what} of ${request.host} started`, job_id: launched.job_id };
     });
   }

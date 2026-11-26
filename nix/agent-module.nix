@@ -32,6 +32,7 @@ let
     require_sudo = cfg.pull.requireSudo;
     allowed_signers = if cfg.pull.allowedSignersFile == null then null else toString cfg.pull.allowedSignersFile;
     allow_unsigned = cfg.pull.allowUnsigned;
+    allow_rewind = cfg.pull.allowRewind;
   };
 
   # The agent's own scheduling, which each run's unit is given too unless runUnits.properties says otherwise.
@@ -126,8 +127,8 @@ in
       enable = mkEnableOption ''
         pull mode: once the server has been unreachable for `after`, the agent asks `remotes` every
         `interval` and switches to a new revision with `nixos-rebuild switch --flake` on its own once
-        its commit is signed by a key in `allowedSignersFile`, reporting each switch to the server
-        once it is back
+        it descends from the revision deployed last and its commit is signed by a key in
+        `allowedSignersFile`, reporting each switch and each refusal to the server once it is back
       '';
 
       remotes = mkOption {
@@ -203,6 +204,17 @@ in
           remote, or impersonate one while the server is unreachable, then gets root on this host.
         '';
       };
+
+      allowRewind = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Switch to a revision that does not descend from the one deployed last, such as an older
+          commit or a branch whose history was rewritten. Anyone who can move the branch can then roll
+          this host back to any commit an allowed signer once signed, with its old vulnerabilities.
+          Turn it on only for as long as a rewritten branch needs it.
+        '';
+      };
     };
   };
 
@@ -217,6 +229,11 @@ in
         message = "services.x-nix-agent.pull needs allowedSignersFile, the keys its commits are signed with, or allowUnsigned = true.";
       }
     ];
+
+    warnings = lib.optional (cfg.pull.enable && cfg.pull.allowRewind) (
+      "services.x-nix-agent.pull.allowRewind lets anyone who can move the branch roll this host back to an older "
+      + "signed commit; turn it off once the rewritten branch is deployed."
+    );
 
     users.users.x-nix-agent = {
       isSystemUser = true;

@@ -75,22 +75,41 @@ the list does not wake a sleeping host.
 
 Pull mode lets a host keep deploying from Git while the X-Nix server is down. Once the server has been unreachable for
 `after`, the agent asks its Git remotes, in order, every `interval` for the head of their branch with `git ls-remote`.
-When the head moves, it fetches that commit into its own repository under its state folder and checks it with
-`git verify-commit` against `allowedSignersFile`, then runs
+When the head moves, it fetches that commit with its history into its own repository under its state folder
+(`pull.git`), checks that it descends from the revision deployed last with `git merge-base --is-ancestor`, checks the
+commit's signature with `git verify-commit` against `allowedSignersFile`, then runs
 
 ```sh
-nixos-rebuild switch --flake 'git+<url>?ref=refs/heads/<branch>&rev=<revision>#<configuration>'
+nixos-rebuild switch --flake 'git+<url>?ref=refs/heads/<branch>&rev=<revision>#<configuration>' --no-update-lock-file
 ```
 
-and logs what it does. A commit with no allowed signature is not switched to, and is logged once. The first revision it
-sees is only noted, so turning pull mode on never switches by itself.
+and logs what it does. The first fetch brings the branch's whole history; the repository is kept, so later fetches bring
+only the new commits. `--no-update-lock-file` makes an input missing from the commit's `flake.lock` an error, so
+nothing outside the signed tree is resolved anew.
+
+The first revision it sees is only noted as deployed, so turning pull mode on never switches by itself. After that it
+switches only forwards:
+
+- A revision that does not descend from the one deployed last, such as an older commit the branch was pointed back at,
+  is refused, even when an allowed signer once signed it.
+- A branch whose history was rewritten, so the deployed revision is no longer in it, is refused the same way.
+- A commit with no allowed signature is refused. Only the head commit's own signature is checked, not those of the
+  commits before it.
+
+Each refused revision is logged once and not fetched again, and the server shows it as an error event on the host's
+deployments once it is back. A revision that cannot be fetched is tried again at the next interval. To deploy a
+rewritten branch, set `allowRewind = true` until the host has switched to it, then turn it off again.
 
 A host in pull mode switches to whatever its remotes say once the server is out of reach, and someone who can block the
 server can choose when that is. So it needs the keys its commits are signed with, as Git's allowed signers file, such
 as `me@example.org ssh-ed25519 AAAA...` per line; only SSH signatures are checked. `allowUnsigned = true` switches to
-unsigned commits instead, which hands root on the host to anyone who can push to a remote or impersonate one.
-Once the server is back, the agent reports each switch, which joins the job history of every deployment on that host
-with the trigger `agent pull`.
+unsigned commits instead, which hands root on the host to anyone who can push to a remote or impersonate one; the
+ancestry check still applies. Once the server is back, the agent reports each switch, which joins the job history of
+every deployment on that host with the trigger `agent pull`.
+
+The revision deployed last is the one pull mode noted or switched to itself. A switch the server made while it was
+reachable does not move it, so pull mode can still switch to a signed descendant of the noted revision that is older
+than what the server deployed.
 
 ```nix
 services.x-nix-agent.pull = {
@@ -108,6 +127,7 @@ services.x-nix-agent.pull = {
 | `remotes`       | required         | `{ url, branch }` entries (branch `main` by default), asked in order; https://, ssh:// or file://. |
 | `allowedSignersFile` | required unless `allowUnsigned` | The keys a commit must be signed with, in Git's allowed signers format. |
 | `allowUnsigned` | `false`          | Switch to unsigned commits when no `allowedSignersFile` is given. |
+| `allowRewind`   | `false`          | Switch to a revision that does not descend from the one deployed last, such as an older commit or rewritten history. |
 | `after`         | `15m`            | How long the server must be unreachable before the agent deploys. |
 | `interval`      | `5m`             | How often the remotes are asked; at least 30 seconds.          |
 | `configuration` | the agent's host | The `nixosConfigurations` attribute.                           |
@@ -116,4 +136,5 @@ services.x-nix-agent.pull = {
 
 Without the module, the agent reads `X_NIX_AGENT_URL`, `X_NIX_AGENT_KEY_FILE`, `X_NIX_AGENT_HOST` and
 `X_NIX_AGENT_STATE_DIR` from its environment, and its pull settings from the JSON file `X_NIX_AGENT_PULL_FILE` names
-(with `rebuild_bin`, `rebuild_args`, `require_sudo`, `git_bin`, `allowed_signers` and `allow_unsigned` in snake case).
+(with `rebuild_bin`, `rebuild_args`, `require_sudo`, `git_bin`, `allowed_signers`, `allow_unsigned` and `allow_rewind` in
+snake case).
