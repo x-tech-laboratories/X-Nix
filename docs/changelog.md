@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- test: raise the coverage floor to what the safer automatic update's tests reach
 - fix(jobs): keep showing a build's output in its switch after a cut, and trim an install's trailing newlines in linear time
 - fix(switch): fail a switch whose checks failed with nothing to roll back, in its job and in fleet runs
 - feat(deployment): warn about automatic switches nothing rolls back and unchecked updates they take
