@@ -63,7 +63,9 @@ or a cache's push token, must be readable by the `x-nix-agent` user. With `local
 machine itself instead, as root through sudo rules, and needs no agent there; see [What runs as root](#what-runs-as-root).
 
 The server listens on `127.0.0.1:7720`. Put it behind a reverse proxy with HTTPS, such as nginx or Caddy, which agents
-and the browser both reach. `openFirewall = true` opens the port when you serve it directly.
+and the browser both reach. `openFirewall = true` opens the port when you serve it directly. The server limits sign-in
+tries by the visitor's address, which it reads from the proxy's `X-Forwarded-For` only when the proxy runs on the same
+machine, so a proxy on another machine makes every visitor share one limit.
 
 The module's `hosts`, `flakes`, `deployments` and `caches` take the settings in this guide, keyed by id; `provisioning`,
 `fleet` and `notifications` take theirs. Each setting has the same name as in the [configuration

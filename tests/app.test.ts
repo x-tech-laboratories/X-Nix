@@ -359,6 +359,18 @@ describe("logging in", () => {
     expect(refused.json()).toMatchObject({ error: "Too many tries; wait a few minutes." });
   });
 
+  it("refuses every try from an address after twenty failures in five minutes, whatever names they give", async () => {
+    const { server } = await start_app();
+    const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
+
+    for (let count = 0; count < 20; count++) expect((await attempt(`guess-${count}`, "wrong")).statusCode).toBe(401);
+    const refused = await attempt("operator", "another password");
+
+    expect(refused.statusCode).toBe(429);
+    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
+    expect(refused.json()).toEqual({ error: "Too many tries; wait a few minutes." });
+  });
+
   it("signs each user in with their own password and tells the page who they are", async () => {
     const { server } = await start_app();
     const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
