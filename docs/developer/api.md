@@ -14,14 +14,20 @@ Answers are JSON. Errors answer `{ message }` with a 4xx or 5xx status through X
 | Request                                              | Needs                                            |
 | ---------------------------------------------------- | ------------------------------------------------ |
 | `GET /api/health`, the agent socket `/api/agent`, `POST /api/webhook` | Nothing (the agent proves its key; the webhook its signature). |
+| `GET` of a download, the routes `/api/builds/:id/products/:index` and `/api/provisioning/media/:id/download` | An `admin`. |
 | Any other `GET`                                      | A session or a token: any signed-in user.         |
 | `/api/mcp`                                           | Any signed-in user; each tool then runs its route as that user. |
 | Any other method                                     | An `admin` session or a non-read-only admin token. |
 | Account and user routes                              | A session; X-Libs refuses tokens there.           |
 
+`auth.ts` decides by the pattern of the route that matched, as X-Libs hands it over, so no spelling of a path can reach a
+download as an open read; a request no route matched needs an admin unless it is a `GET` of a path holding no escape and
+shaped like no download.
+
 Paths must be spelled canonically: a path with an escape of a character that needs none, lower-case hex, an encoded
-slash, an empty or dot segment, a `;`, or a target that does not start with `/` is refused with 400 before any of this, and
-any route whose path still holds an escape needs an admin.
+slash or backslash, an empty or dot segment, a `;`, or a target that does not start with `/` is refused with 400 before
+any of this. X-Libs' sign-in guard refuses most of these itself, but lets an encoded slash in a name through, which
+X-Nix's own check still refuses.
 
 A token is sent as `Authorization: Bearer xn_…`. A read-only token can only make `GET` requests.
 
