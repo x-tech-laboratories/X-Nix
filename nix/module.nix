@@ -39,6 +39,99 @@ let
   };
 
   agent_enabled = config.services ? x-nix-agent && config.services.x-nix-agent.enable;
+
+  # Every string in the settings written to the world-readable store, with where it sits and the setting it belongs to.
+  config_strings =
+    let
+      walk =
+        where: name: value:
+        if builtins.isAttrs value then
+          lib.concatLists (lib.mapAttrsToList (key: walk "${where}.${key}" key) value)
+        else if builtins.isList value then
+          lib.concatLists (lib.imap0 (index: walk "${where}.${toString index}" name) value)
+        else if builtins.isString value then
+          [ { inherit where name value; } ]
+        else
+          [ ];
+    in
+    lib.concatLists (
+      lib.mapAttrsToList (key: walk "services.x-nix.${key}" key) {
+        inherit (cfg)
+          hosts
+          flakes
+          deployments
+          caches
+          provisioning
+          fleet
+          notifications
+          ;
+      }
+    );
+
+  # The settings that name a file holding a secret, which must be a path rather than the secret itself.
+  is_path_setting =
+    name:
+    lib.hasSuffix "_file" name
+    || builtins.elem name [
+      "push_ssh_key"
+      "commit_signing_key"
+      "ssh_key"
+    ];
+
+  # Where each string matching a test sits, for a message that never shows the value.
+  places = test: map (entry: entry.where) (builtins.filter test config_strings);
+
+  private_keys = places (
+    entry:
+    lib.hasInfix "PRIVATE KEY-----" entry.value
+    || lib.hasInfix "AGE-SECRET-KEY-" entry.value
+    || lib.hasInfix "-----BEGIN PGP PRIVATE" entry.value
+  );
+
+  inline_in_path_settings = places (
+    entry:
+    is_path_setting entry.name
+    && (lib.hasInfix "\n" entry.value || (!lib.hasPrefix "/" entry.value && lib.hasInfix "=" entry.value))
+  );
+
+  relative_path_settings = places (
+    entry: is_path_setting entry.name && !lib.hasPrefix "/" entry.value && !lib.hasInfix "=" entry.value
+  );
+
+  inline_secret_settings = places (
+    entry:
+    builtins.match "(.*_)?(token|password|passwd|secret|api_key|apikey|private_key|credentials?)" (lib.toLower entry.name) != null
+  );
+
+  # A URL carrying a password, a token-like query parameter, or a chat service's secret webhook path.
+  secret_urls = places (
+    entry:
+    builtins.match "[A-Za-z][A-Za-z0-9+.-]*://[^/@ ]*:[^/@ ]+@.*" entry.value != null
+    || builtins.match ".*://.*[?&](access_token|token|key|api_key|apikey|secret|sig|signature|password|auth)=[^&]+.*" (lib.toLower entry.value) != null
+    || builtins.match "https?://(hooks\\.slack\\.com/|(discord|discordapp)\\.com/api/webhooks/|[^/]*\\.webhook\\.office\\.com/|chat\\.googleapis\\.com/).*" (lib.toLower entry.value) != null
+  );
+
+  # Webhook headers that carry credentials, which have no file form of their own.
+  secret_headers = lib.concatLists (
+    lib.imap0 (
+      index: channel:
+      map (header: "services.x-nix.notifications.${toString index}.headers.${header}") (
+        builtins.filter (
+          header: builtins.match ".*(authorization|cookie|token|key|secret|auth|password).*" (lib.toLower header) != null
+        ) (builtins.attrNames (channel.headers or { }))
+      )
+    ) cfg.notifications
+  );
+
+  inline_apprise_urls = lib.concatLists (
+    lib.imap0 (
+      index: channel:
+      lib.optional ((channel.type or null) == "apprise" && (channel.urls or [ ]) != [ ]) "services.x-nix.notifications.${toString index}.urls"
+    ) cfg.notifications
+  );
+
+  # One warning naming every place a check found, or none.
+  warn_about = places: text: lib.optional (places != [ ]) "${text}: ${lib.concatStringsSep ", " places}";
 in
 {
   imports = [
@@ -276,7 +369,22 @@ in
           or services.x-nix.localAgent = true to work on this host from the server itself.
         '';
       }
+      {
+        assertion = private_keys == [ ];
+        message = "services.x-nix settings are written to the world-readable Nix store, so they must not hold private key material; give a key's file path instead at ${lib.concatStringsSep ", " private_keys}.";
+      }
+      {
+        assertion = inline_in_path_settings == [ ];
+        message = "services.x-nix settings that name a secret's file must be a path, not the secret itself, as they are written to the world-readable Nix store: ${lib.concatStringsSep ", " inline_in_path_settings}.";
+      }
     ];
+
+    warnings =
+      warn_about inline_secret_settings "services.x-nix settings are written to the world-readable Nix store; move these secrets into the setting's `_file` form"
+      ++ warn_about secret_urls "services.x-nix settings are written to the world-readable Nix store; these URLs look like they carry a password or token, which belongs in a file instead, such as a notification's `url_file` or a flake's `access_tokens_file`"
+      ++ warn_about inline_apprise_urls "services.x-nix settings are written to the world-readable Nix store, and apprise URLs usually carry credentials; list them in `urls_file` instead"
+      ++ warn_about secret_headers "services.x-nix settings are written to the world-readable Nix store; these webhook headers look like credentials, which belong in `bearer_token_file` or the URL's `url_file`"
+      ++ warn_about relative_path_settings "services.x-nix settings that name a secret's file should be absolute paths";
 
     # Media links are made by the agent and removed by the server, so both may write the folder.
     systemd.tmpfiles.settings."X-Nix media" = mkIf (!cfg.localAgent && !(cfg.provisioning ? media_root_dir)) {

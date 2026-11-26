@@ -193,4 +193,14 @@ A deployment whose setting needs a rule you turned off fails at that step with s
 `users.users.x-nix-agent.uid` and `users.groups.x-nix-agent.gid` lets the run unit rule name the agent's own ids rather
 than any id but root's; set them only to the ids the user already has. `runUnits` follows `runUnits.enable`.
 
+### Secrets in the server's settings
+
+The server module writes `hosts`, `flakes`, `deployments`, `caches`, `provisioning`, `fleet` and `notifications` into
+the Nix store, which every user of the machine can read. Give each secret as a file instead: a flake's
+`access_tokens_file`, `push_ssh_key` and `commit_signing_key`, provisioning's `ssh_key`, and a notification channel's
+`token_file`, `password_file`, `topic_file`, `url_file`, `bearer_token_file` or `urls_file`. The module refuses private
+key material anywhere in them, and a secret's file setting that holds the secret itself, and warns about a secret given
+inline under its plain name, a URL carrying a password or token, apprise `urls`, and webhook `headers` that look like
+credentials, which have no file form; send those as `bearer_token_file` or inside the `url_file`.
+
 Both services carry `nix-diff`, `nixos-anywhere`, `ssh` and `nix-eval-jobs` on their PATH.
