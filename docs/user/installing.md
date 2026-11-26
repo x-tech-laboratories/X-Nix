@@ -83,6 +83,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `provisioning`, `fleet`, `notifications`   | none | Their settings.                                               |
 | `webhookSecretFile` | none            | Turns on the [push webhook](/user/integrations/#push-webhook).          |
 | `webhookDebounce`   | `10s`           | How long after the last push an evaluation starts.                      |
+| `historyRetention`  | `180d`          | How long finished jobs, builds, events and fleet runs are kept; `never` keeps them all. See [Jobs and builds](/user/jobs-and-builds/#how-long-history-is-kept). |
 | `path`              | none            | Extra programs on the PATH of the commands the server runs.             |
 | `signIn.sessionLifetime`, `signIn.rememberedLifetime` | `12h`, `30d` | How long a sign-in lasts without and with Keep me signed in. |
 | `signIn.tokenLifetime` | `90d`        | The longest a token lasts; `never` for no limit.                         |
@@ -104,6 +105,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `X_NIX_SERVER_NAME`          | the hostname  | What the page calls the server's machine.                            |
 | `X_NIX_WEBHOOK_SECRET_FILE`  | none          | The push webhook's shared secret; the webhook is off without it.     |
 | `X_NIX_WEBHOOK_DEBOUNCE`     | `10s`         | How long after the last push to a deployment or flake it is evaluated or read. |
+| `X_NIX_HISTORY_RETENTION`    | `180d`        | How long finished jobs, builds, events and fleet runs are kept; `never` keeps them all. |
 | `X_NIX_SESSION_LIFETIME`, `X_NIX_REMEMBERED_LIFETIME` | `12h`, `30d` | How long a sign-in lasts without and with Keep me signed in. |
 | `X_NIX_TOKEN_LIFETIME`       | `90d`         | The longest a token lasts; `never` for no limit.                     |
 | `X_NIX_ADMIN_SECOND_FACTOR`  | `yes`         | `no` lets admins act without a second factor.                        |

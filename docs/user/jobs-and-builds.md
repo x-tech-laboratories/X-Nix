@@ -23,6 +23,18 @@ A job's page shows:
 
 Long jobs keep running if the X-Nix server or the agent restarts, and the page picks them up again.
 
+A job keeps up to 16 MiB of output. Past that its middle is cut: the job keeps its first 2 MiB and its last 8 MiB, with
+one line saying where the cut is, so the outcome a switch prints at its end is still read.
+
+### How long history is kept
+
+Every six hours, and a minute after the server starts, X-Nix deletes finished jobs, builds, events and finished fleet
+runs older than `historyRetention` (`X_NIX_HISTORY_RETENTION`, 180 days by default; `never` keeps them all). Whatever
+their age, it keeps each owner's newest 20 jobs of each kind and 100 events, the newest 20 builds of each target, the
+newest 20 fleet runs, every running job, installs and install media, and every job something still points at: a
+waiting switch, a held build, a cache's last Build all, a kept fleet run or build, or an installed host's agent key.
+What a pass deletes is gone from the database; the daily [backups](/user/integrations/#backups) still hold it.
+
 ### Stopping a job
 
 **Stop** on a running job's page (admins only) ends its processes on its host: they are asked to stop, and killed if

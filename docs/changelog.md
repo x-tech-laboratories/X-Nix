@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(store): cap a job's output, prune old history and bound pull reports
 - fix(nixos): bound the agent output lines parsers run patterns on
 - fix(fleet): match selectors with a glob matcher and cap their length and terms
 
