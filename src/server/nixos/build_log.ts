@@ -22,6 +22,9 @@ const shown_level = 3;
 // exactly, so two ids could round to one. Only a key follows `{` or `,`, as within a string `"` is escaped.
 const id_pattern = /[{,]"id":(\d+)/;
 
+// The longest line read as nix's structured log; a longer one, or a line not ended past it, is kept as plain text.
+export const max_log_line_length = 2 ** 20;
+
 export interface Activity {
   type: number;
   name: string;
@@ -70,10 +73,15 @@ export function read_build_log(progress: BuildProgress, chunk: string, ended: bo
   const text = progress.carry + chunk;
   const lines = text.split("\n");
   progress.carry = ended ? "" : lines.pop()!;
+  // A line that never ends is let through as it is, so the carry kept with the job stays bounded.
+  if (progress.carry.length > max_log_line_length) {
+    lines.push(progress.carry);
+    progress.carry = "";
+  }
   const readable: string[] = [];
   for (const line of lines) {
     if (line === "") continue;
-    const shown = read_line(progress, line, now);
+    const shown = read_line_safely(progress, line, now);
     if (shown !== null) readable.push(shown);
   }
   // Nothing runs once the build has ended, whatever nix last reported.
@@ -87,27 +95,38 @@ export function read_build_log(progress: BuildProgress, chunk: string, ended: bo
   return readable.length === 0 ? "" : `${readable.join("\n")}\n`;
 }
 
-function read_line(progress: BuildProgress, line: string, now: number): string | null {
-  if (!line.startsWith("@nix ")) return line;
-  let entry: NixLine;
+// Reads one line, answering with the line itself, as plain text, for anything that throws while it is read.
+function read_line_safely(progress: BuildProgress, line: string, now: number): string | null {
   try {
-    entry = JSON.parse(line.slice(5)) as NixLine;
+    return read_line(progress, line, now);
   } catch {
     return line;
   }
-  const fields = Array.isArray(entry.fields) ? entry.fields : [];
-  const id = id_pattern.exec(line)?.[1] ?? String(entry.id ?? "");
+}
+
+function read_line(progress: BuildProgress, line: string, now: number): string | null {
+  if (!line.startsWith("@nix ") || line.length > max_log_line_length) return line;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line.slice(5));
+  } catch {
+    return line;
+  }
+  const entry = nix_line(parsed);
+  if (entry === null) return line;
+  const fields = entry.fields ?? [];
+  const id = id_pattern.exec(line)?.[1] ?? (entry.id === undefined ? "" : String(entry.id));
   switch (entry.action) {
     case "msg": {
       const message = strip_colours(entry.msg ?? "");
       read_plan(progress, message);
       if ((entry.level ?? 0) > shown_level) return null;
       // Only a builder that ran and failed counts: nix also says Cannot build for it, and for each derivation whose dependency failed.
-      if (/builder for '.+?' failed/.test(message)) progress.builds_failed += 1;
+      if (names_failed_builder(message)) progress.builds_failed += 1;
       return message;
     }
     case "start": {
-      const path = String(fields[0] ?? entry.text ?? "");
+      const path = fields[0] === undefined || fields[0] === null ? entry.text ?? "" : field_text(fields[0]);
       if (entry.type === activity_types.build || entry.type === activity_types.substitute) {
         const building = entry.type === activity_types.build;
         progress.activities[id] = { type: entry.type, name: building ? derivation_name(path) : path_name(path), path, phase: null };
@@ -139,22 +158,22 @@ function read_line(progress: BuildProgress, line: string, now: number): string |
 function read_result(progress: BuildProgress, id: string, type: number, fields: unknown[]): string | null {
   const activity = progress.activities[id];
   if (type === result_types.build_log_line || type === result_types.post_build_log_line) {
-    const text = strip_colours(String(fields[0] ?? ""));
+    const text = strip_colours(field_text(fields[0]));
     return activity === undefined ? text : `${activity.name}> ${text}`;
   }
   if (type === result_types.set_phase && activity !== undefined) {
-    activity.phase = String(fields[0] ?? "") || null;
+    activity.phase = field_text(fields[0]) || null;
     const planned = progress.planned[activity.path ?? ""];
     if (planned !== undefined) planned.phase = activity.phase;
     return null;
   }
   // Nix reports the whole build's expected counts on its builds and copy-paths activities.
-  if (type === result_types.progress && typeof fields[1] === "number") {
+  if (type === result_types.progress && is_count(fields[1])) {
     if (progress.totals[id] === "builds") progress.builds_expected = fields[1];
     else if (progress.totals[id] === "downloads") progress.downloads_expected = fields[1];
     return null;
   }
-  if (type === result_types.set_expected && typeof fields[1] === "number") {
+  if (type === result_types.set_expected && is_count(fields[1])) {
     if (fields[0] === activity_types.build) progress.builds_expected = fields[1];
     else if (fields[0] === activity_types.copy_path) progress.downloads_expected = fields[1];
   }
@@ -227,6 +246,37 @@ export function is_build_activity(activity: Activity): boolean {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// The parsed line as nix's structured log entry when every field read has the type nix writes, otherwise null.
+function nix_line(value: unknown): NixLine | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  const absent_or = (key: string, fits: (field: unknown) => boolean) => !Object.hasOwn(entry, key) || entry[key] === undefined || fits(entry[key]);
+  const is_text = (field: unknown) => typeof field === "string";
+  const is_number = (field: unknown) => typeof field === "number" && Number.isFinite(field);
+  const fits = absent_or("action", is_text) && absent_or("msg", is_text) && absent_or("text", is_text) && absent_or("id", is_number)
+    && absent_or("type", is_number) && absent_or("level", is_number) && absent_or("fields", Array.isArray);
+  return fits ? (entry as NixLine) : null;
+}
+
+// A field nix writes as text, a number written as its digits, and anything else as nothing.
+function field_text(field: unknown): string {
+  if (typeof field === "string") return field;
+  return typeof field === "number" && Number.isFinite(field) ? String(field) : "";
+}
+
+function is_count(field: unknown): field is number {
+  return typeof field === "number" && Number.isInteger(field) && field >= 0;
+}
+
+// Whether a message says a builder failed, as `builder for '…' failed` on one line, found in one pass over each line.
+function names_failed_builder(message: string): boolean {
+  const opening = "builder for '";
+  return message.split(/[\n\r\u2028\u2029]/).some((line) => {
+    const start = line.indexOf(opening);
+    return start !== -1 && line.indexOf("' failed", start + opening.length + 1) !== -1;
+  });
+}
 
 // A derivation's name without its hash and .drv, such as `hello-2.12`.
 function derivation_name(path: string): string {

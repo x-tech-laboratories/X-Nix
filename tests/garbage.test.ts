@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { AgentError } from "../src/server/agents/agent.ts";
 import { ConfigError, host_settings } from "../src/server/config.ts";
-import { format_bytes } from "../src/server/nixos/garbage.ts";
-import { operation_of } from "../src/shared/operations.ts";
-import { clock, make_host, result, store_facts, type HostHarness as Harness } from "./fake_agent.ts";
+import { finished_collection, format_bytes, observed_collection } from "../src/server/nixos/garbage.ts";
+import { max_parsed_line_length, type GcFields } from "../src/shared/facts.ts";
+import { operation_of, switch_mark } from "../src/shared/operations.ts";
+import { clock, make_deployment, make_host, result, store_facts, type HostHarness as Harness } from "./fake_agent.ts";
 
 const gib = 2 ** 30;
 const day = 86400;
@@ -249,6 +250,21 @@ describe("yield", () => {
 
 // ── Schedule ─────────────────────────────────────────────────────────────────
 
+describe("a hostile collection output", () => {
+  it("is read in linear time however long its lines, and a line over the limit is skipped", () => {
+    const digits = "1".repeat(200_000);
+    const started = performance.now();
+    const run = finished_collection(`${digits}\n${digits} store paths deleted, 1 GiB freed\n12 store paths deleted, 2.0 GiB freed\n`, true, null, 100);
+    const fields = { summary: `100 ${digits}`, outcome: "", error: "", svc_exit: "@100", svc_result: "success" } as unknown as GcFields;
+    expect(observed_collection(fields)).toMatchObject({ deleted: null, freed_bytes: null });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect([run.deleted, run.freed_bytes]).toEqual([12, 2 * gib]);
+    const long_summary = `${" ".repeat(max_parsed_line_length)}5 store paths deleted, 1 GiB freed`;
+    expect(finished_collection(long_summary, true, null, 100).deleted).toBeNull();
+    expect(finished_collection("x5 store paths deleted, 1 KiB freed", true, null, 100).deleted).toBe(5);
+  });
+});
+
 describe("schedule", () => {
   it("warns when the timer is inactive, with its status from timer_status", async () => {
     const harness = watched();
@@ -425,6 +441,65 @@ describe("collect garbage", () => {
     await read(harness, gc_probe({ last_gc: clock.now - day }));
     expect(store_of(harness).status).toBe("failed");
     expect(last_of(harness)).toMatchObject({ succeeded: false, error: "Exited with status 1" });
+  });
+});
+
+// ── Beside its deployments ───────────────────────────────────────────────────
+
+describe("a host beside its deployments", () => {
+  const settings = { gc: {}, magic_rollback: true };
+
+  it("refuses a reboot, a reboot into another entry and a collection while a deployment on it switches", async () => {
+    const harness = make_deployment(settings);
+    expect((await harness.deployment.act("switch")).ok).toBe(true);
+    const switch_job = harness.deployment.running_job()!;
+
+    for (const outcome of [await harness.host.act("reboot"), await harness.host.act("collect"), await harness.host.set_next_boot("any", true)]) {
+      expect(outcome.ok).toBe(false);
+    }
+    expect((await harness.host.act("collect")).message).toContain(`switch job #${switch_job.id} is running on this host`);
+    expect(harness.host.running_job()).toBeNull();
+  });
+
+  it("refuses them while a guarded switch that activated has no outcome, until its watchdog's window has passed", async () => {
+    const harness = make_deployment(settings);
+    await harness.deployment.act("switch");
+    harness.agent.end(harness.agent.last_run("nixos-rebuild")!, `${switch_mark} activated\n`, null);
+    await harness.deployment.cycle();
+    expect(harness.deployment.running_job()).toBeNull();
+
+    expect((await harness.host.act("collect")).message).toContain("its watchdog may still roll it back");
+    const window = harness.deployment.settings.activation_timeout + harness.deployment.settings.confirm_timeout + harness.deployment.settings.health_timeout;
+    clock.now += window + 1;
+    try {
+      expect((await harness.host.act("collect")).ok).toBe(true);
+    } finally {
+      clock.now -= window + 1;
+    }
+  });
+
+  it("holds a daily collection off while a deployment switches, reading the store meanwhile", async () => {
+    const harness = make_deployment({ gc: { collect_at: "03:30" } });
+    harness.agent.gc_probe_result = gc_probe();
+    await harness.host.cycle();
+    const state = harness.host.state();
+    harness.store.save_evaluation(harness.host.id, { ...state, scheduled_collection: state.scheduled_collection! - day });
+    await harness.deployment.act("switch");
+
+    await harness.host.cycle();
+
+    expect(harness.host.running_job()).toBeNull();
+    expect(harness.host.collection_due()).not.toBeNull();
+  });
+
+  it("has a deployment refuse a switch and a rollback while a collection runs, but not a Build", async () => {
+    const harness = make_deployment(settings);
+    expect((await harness.host.act("collect")).ok).toBe(true);
+
+    const refused = await harness.deployment.act("switch");
+    expect(refused).toMatchObject({ ok: false, message: expect.stringContaining("garbage collection") });
+    expect((await harness.deployment.roll_back(1, "test")).message).toContain("garbage collection");
+    expect((await harness.deployment.act("build")).ok).toBe(true);
   });
 });
 

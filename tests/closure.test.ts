@@ -4,7 +4,7 @@ import type { RunProgram } from "../src/agent/programs.ts";
 import { run_operation } from "../src/agent/run.ts";
 
 import { deployment_settings } from "../src/server/config.ts";
-import { empty_progress, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
+import { empty_progress, max_log_line_length, needs_operation, read_build_log, read_needs, summarise } from "../src/server/nixos/build_log.ts";
 import { diff_operation, parse_change_line, parse_closure, parse_diff } from "../src/server/nixos/closure.ts";
 import { build_operation } from "../src/server/nixos/commands.ts";
 import { marker_token_of, with_marker_token } from "../src/shared/operations.ts";
@@ -258,6 +258,44 @@ describe("live build progress", () => {
       // One the host could not read needs nothing, so it is not asked for again.
       expect(progress.planned[drv].needs).toEqual([]);
       expect(needs_operation(progress)).toBeNull();
+    });
+  });
+
+  describe("from a hostile agent", () => {
+    const hostile = [
+      "@nix null", "@nix 5", "@nix \"text\"", "@nix []", "@nix [1, 2]", "@nix true", "@nix {", "@nix ",
+      nix_line({ action: "msg", msg: 5 }), nix_line({ action: "msg", msg: null }), nix_line({ action: "msg", msg: "hi", level: "high" }),
+      nix_line({ action: 7 }), nix_line({ action: "start", type: "105", fields: [drv] }), nix_line({ action: "start", type: 105, fields: "not a list" }),
+      nix_line({ action: "start", id: 9, type: 105, fields: [{ toString: 1 }] }), nix_line({ action: "start", id: 9, type: 105, fields: [null], text: 5 }),
+      nix_line({ action: "result", id: 9, type: 101, fields: [{ valueOf: 1, toString: 1 }] }), nix_line({ action: "result", id: 9, type: 104, fields: [[1, [2]]] }),
+      nix_line({ action: "result", id: 1, type: 105, fields: [0, "2"] }), nix_line({ action: "result", id: 1, type: 106, fields: [105, -1] }),
+      nix_line({ action: "stop", id: { nested: true } }), nix_line({ action: "start", id: "__proto__", type: 105, fields: [drv] }),
+      '@nix {"__proto__": {"polluted": true}, "action": "start", "id": 4, "type": 105, "fields": ["/nix/store/__proto__"]}',
+      '@nix {"action": "result", "id": 4, "type": 104, "fields": ["constructor"], "constructor": 1}',
+      `@nix ${"[".repeat(100_000)}${"]".repeat(100_000)}`,
+      `@nix ${JSON.stringify({ action: "msg", level: 0, msg: `builder for '${"x".repeat(50_000)}`.repeat(20) })}`,
+      `@nix ${JSON.stringify({ action: "msg", level: 0, msg: "y".repeat(max_log_line_length) })}`,
+    ];
+
+    it("never throws, and keeps any line it cannot read as plain text", () => {
+      const progress = empty_progress();
+      const started = performance.now();
+      let text = "";
+      for (const line of hostile) text += read_build_log(progress, `${line}\n`, false, 100);
+      text += read_build_log(progress, "@nix null", true, 100);
+      expect(performance.now() - started).toBeLessThan(3000);
+      expect(text).toContain("@nix null\n");
+      expect(text).toContain(`${nix_line({ action: "msg", msg: 5 })}\n`);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(progress.builds_failed).toBe(0);
+      expect(() => summarise(progress)).not.toThrow();
+    });
+
+    it("lets a line that never ends through once it passes the limit, so the carry stays bounded", () => {
+      const progress = empty_progress();
+      const text = read_build_log(progress, `@nix ${"z".repeat(max_log_line_length + 10)}`, false);
+      expect(text.length).toBeGreaterThan(max_log_line_length);
+      expect(progress.carry).toBe("");
     });
   });
 });

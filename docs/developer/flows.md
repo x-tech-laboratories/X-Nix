@@ -297,6 +297,11 @@ sequenceDiagram
     run-->>server: outcome …, and the job ends
 ```
 
+Stop on such a switch after `activated` and before `outcome` (`stop_job` in `src/server/runs.ts`, also the fleet's
+stop with its jobs) sends `signal_rollback` with the reason `Stopped by <who> after the activation` instead of stopping
+the run, whose unit holds the watchdog; the run then ends with the watchdog's outcome. `stop_overdue_rollbacks` stops it
+outright once the watchdog's window has passed without one, and a signal that cannot be delivered stops it at once.
+
 The watchdog's own states:
 
 ```mermaid

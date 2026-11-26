@@ -10,7 +10,8 @@ import { cache_settings, flake_settings } from "../src/server/config.ts";
 import { Flake } from "../src/server/flake.ts";
 import type { Host } from "../src/server/host.ts";
 import { Poller } from "../src/server/poller.ts";
-import type { AgentRunView } from "../src/server/runs.ts";
+import { stop_overdue_rollbacks, type AgentRunView } from "../src/server/runs.ts";
+import { switch_mark } from "../src/shared/operations.ts";
 import { clock, FakeAgent, generations_result, make_deployment, metadata, result, type Harness } from "./fake_agent.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -156,6 +157,17 @@ describe("/api/deployments", () => {
   });
 });
 
+describe("/api/fleet/select", () => {
+  it("lists what a selector picks, and refuses one over the limits with 400", async () => {
+    const { inject } = await start_app();
+
+    expect((await inject("GET", "/api/fleet/select?selector=host-*")).json()).toEqual(["host-deploy"]);
+    const refused = await inject("GET", `/api/fleet/select?selector=${"*".repeat(2000)}`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toContain("characters");
+  });
+});
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 describe("/api/jobs/:id/stop", () => {
@@ -199,6 +211,66 @@ describe("/api/jobs/:id/stop", () => {
 
     expect(refused.statusCode).toBe(409);
     expect(harness.store.job(job_id)?.error).not.toBe("Stopped by admin");
+  });
+});
+
+describe("stopping a guarded switch", () => {
+  // A guarded switch started from the page, its run having printed the given marker lines, and the poll that copied them.
+  async function guarded_switch(markers: string[]) {
+    const harness = make_deployment({ magic_rollback: true });
+    const app_session = await start_app(harness, [], [], [], harness.agents);
+    const { job_id } = (await app_session.inject("POST", "/api/deployments/host-deploy/actions/switch")).json<{ job_id: number }>();
+    const run = harness.agent.last_run("nixos-rebuild")!;
+    harness.agent.write(run, markers.map((marker) => `${switch_mark} ${marker}\n`).join(""));
+    await harness.deployment.cycle();
+    return { harness, inject: app_session.inject, job_id, run };
+  }
+
+  it("after the activation tells the watchdog to roll back, letting the run end with its outcome", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated"]);
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().message).toContain("watchdog was told to roll back");
+    const signal = harness.agent.operations.find((operation) => operation.kind === "signal_rollback");
+    expect(signal).toMatchObject({ reason: "Stopped by admin after the activation" });
+    expect(run.alive).toBe(true);
+    expect((await inject("POST", `/api/jobs/${job_id}/stop`)).json().message).toContain("is rolling back");
+
+    harness.agent.end(run, `${switch_mark} outcome rolled-back Stopped by admin after the activation\n`, 1);
+    await harness.deployment.cycle();
+    expect(harness.store.job(job_id)).toMatchObject({ state: "failed", exit_code: 1 });
+    expect(harness.store.job(job_id)!.output).toContain("told its watchdog to roll back");
+  });
+
+  it("is stopped outright once no outcome came in the watchdog's window", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated", "awaiting-confirmation"]);
+    await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    await stop_overdue_rollbacks(() => clock.now + 3600);
+
+    expect(run.stopped).toBe(true);
+    expect(harness.store.events("host-deploy")[0].message).toContain("its watchdog gave no outcome in its window");
+  });
+
+  it("is stopped outright when the signal cannot reach the watchdog, saying nothing will roll it back", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch(["activated"]);
+    harness.agent.answers.push(["signal_rollback", result(1, "", "the watch folder is gone")]);
+
+    const stopped = await inject("POST", `/api/jobs/${job_id}/stop`);
+
+    expect(stopped.json().message).toContain("nothing will roll the host back");
+    expect(run.stopped).toBe(true);
+    expect(harness.store.job(job_id)!.output).toContain("the watch folder is gone");
+  });
+
+  it("before the activation is a plain stop", async () => {
+    const { harness, inject, job_id, run } = await guarded_switch([]);
+
+    expect((await inject("POST", `/api/jobs/${job_id}/stop`)).json().message).toBe(`Stopped job #${job_id}`);
+    expect(run.stopped).toBe(true);
+    expect(harness.agent.operations.some((operation) => operation.kind === "signal_rollback")).toBe(false);
   });
 });
 

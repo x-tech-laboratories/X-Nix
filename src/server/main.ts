@@ -28,6 +28,7 @@ import { Fleet } from "./fleet.ts";
 import { Poller } from "./poller.ts";
 import { Provisioner } from "./provisioning.ts";
 import { record_pulls } from "./pull_reports.ts";
+import { keep_pruning } from "./retention.ts";
 import { stop_job } from "./runs.ts";
 import { Store } from "./store.ts";
 import { load_webhook_secret, Webhook } from "./webhook.ts";
@@ -49,6 +50,10 @@ const settings = read_server_config({
     remembered_lifetime: { variable: "X_NIX_REMEMBERED_LIFETIME", help: "how long a kept sign-in lasts", placeholder: "<duration>", default: "30d" },
     token_lifetime: { variable: "X_NIX_TOKEN_LIFETIME", help: "the longest a token lasts, in whole days, or never", placeholder: "<duration|never>", default: "90d" },
     admin_second_factor: { variable: "X_NIX_ADMIN_SECOND_FACTOR", help: "yes to have admins set up a second factor before they change anything", placeholder: "<yes|no>", default: "yes" },
+    history_retention: {
+      variable: "X_NIX_HISTORY_RETENTION", help: "how long finished jobs, builds, events and fleet runs are kept, or never to keep them all",
+      placeholder: "<duration|never>", default: "180d",
+    },
     local_agent: {
       variable: "X_NIX_LOCAL_AGENT", help: "yes to work on this machine from the server itself, which needs sudo rules, rather than through its own agent",
       placeholder: "<yes|no>", default: "no",
@@ -75,6 +80,8 @@ const sign_in: SignInSettings = {
   token_days: token_lifetime === "never" ? null : Math.max(1, Math.round(parse_duration(token_lifetime, "X_NIX_TOKEN_LIFETIME") / 86400)),
   admin_second_factor: yes_or_no(settings.values.admin_second_factor, "yes", "X_NIX_ADMIN_SECOND_FACTOR"),
 };
+const history_retention = settings.values.history_retention || "180d";
+const history_retention_in_seconds = history_retention === "never" ? null : parse_duration(history_retention, "X_NIX_HISTORY_RETENTION");
 const local_agent_setting = yes_or_no(settings.values.local_agent, "no", "X_NIX_LOCAL_AGENT") ? "yes" : "no";
 
 // ── Start ────────────────────────────────────────────────────────────────────
@@ -118,7 +125,9 @@ const provisioner = new Provisioner(config.provisioning, {
   declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys,
 });
 accept_agent_keys(provisioner.agent_keys());
-const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents })]));
+// A host holds off its reboot and collection while a deployment on it switches, which the deployment refuses in turn while it collects.
+const deployments_on = (host_name: string) => () => config.deployments.filter((deployment) => (deployment.host ?? server_name) === host_name);
+const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(settings, { store, agents, deployments: deployments_on(settings.id) })]));
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const deployments = config.deployments.map((settings) => new Deployment(settings, {
   store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),
@@ -162,7 +171,11 @@ const app = await build_app({
   backups: { backups, schedule: backup_schedule, on_schedule_change: () => void automatic_backups.check() },
 });
 
+// History older than the retention is pruned now and then, keeping what anything still names.
+const stop_pruning = keep_pruning(store, history_retention_in_seconds, (message) => app.log.info(message));
+
 app.addHook("onClose", async () => {
+  stop_pruning();
   poller.stop();
   fleet.stop_timer();
   overdue_jobs.stop();

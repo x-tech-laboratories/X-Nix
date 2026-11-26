@@ -206,6 +206,12 @@ in
       description = "How long after the last push to a deployment its evaluation starts.";
     };
 
+    historyRetention = mkOption {
+      type = types.str;
+      default = "180d";
+      description = "How long finished jobs, builds, events and fleet runs are kept, or \"never\" to keep them all; the newest of each kind are kept whatever their age.";
+    };
+
     path = mkOption {
       type = types.listOf (types.either types.package types.str);
       default = [ ];
@@ -322,6 +328,7 @@ in
         X_NIX_PASSWORD_HASH_FILE = "${credentials_directory}/password-hash";
         X_NIX_STATE_DIR = "/var/lib/x-nix";
         X_NIX_WEBHOOK_DEBOUNCE = cfg.webhookDebounce;
+        X_NIX_HISTORY_RETENTION = cfg.historyRetention;
         X_NIX_LOCAL_AGENT = if cfg.localAgent then "yes" else "no";
         X_NIX_SESSION_LIFETIME = cfg.signIn.sessionLifetime;
         X_NIX_REMEMBERED_LIFETIME = cfg.signIn.rememberedLifetime;

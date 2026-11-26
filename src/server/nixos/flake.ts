@@ -92,9 +92,16 @@ export function normalize_repository(url: string): string | null {
     return null;
   }
   if (parsed.protocol === "file:" || parsed.hostname === "") return null;
-  const path = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
+  const path = without_trailing_slashes(parsed.pathname).replace(/\.git$/, "").replace(/^\/+/, "");
   if (path === "") return null;
   return `${parsed.hostname}/${path}`.toLowerCase();
+}
+
+// The text without the slashes it ends in, in one pass however many there are.
+function without_trailing_slashes(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "/") end--;
+  return text.slice(0, end);
 }
 
 export interface FlakeRepository {

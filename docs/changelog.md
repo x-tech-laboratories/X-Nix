@@ -17,6 +17,12 @@ version.
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
 - fix(provisioning): pin the target's host key on every connection of an install, and refuse an install without one
 - fix(pull): switch only to a revision that descends from the one deployed
+- fix(jobs): have stopping a guarded switch after its activation roll it back through its watchdog
+- fix(builds): read any structured log line nix did not write as plain text instead of failing the job
+- fix(hosts): hold reboots and collections off while a deployment switches, and switches while a collection runs
+- fix(store): cap a job's output, prune old history and bound pull reports
+- fix(nixos): bound the agent output lines parsers run patterns on
+- fix(fleet): match selectors with a glob matcher and cap their length and terms
 - ci: merge only X-Tech packages on their own, checked by the base branch's exact provenance check, with least token permissions
 
 ### 2026-11-24

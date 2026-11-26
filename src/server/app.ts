@@ -683,7 +683,11 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
   }));
 
   // The ids a selector such as "web-* @canary" picks.
-  app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request) => fleet.select(request.query.selector ?? "").map((deployment) => deployment.id));
+  app.get<{ Querystring: { selector?: string } }>("/api/fleet/select", async (request, reply) => {
+    const selector = String(request.query.selector ?? "");
+    const problem = fleet.selector_problem(selector);
+    return problem === null ? fleet.select(selector).map((deployment) => deployment.id) : reply.code(400).send({ error: problem });
+  });
 
   app.post<{ Body: FleetRequest }>("/api/fleet/runs", async (request, reply) => {
     const outcome = await fleet.start(request.body ?? {}, started_by(request.viewer));

@@ -23,13 +23,31 @@ A job's page shows:
 
 Long jobs keep running if the X-Nix server or the agent restarts, and the page picks them up again.
 
+A job keeps up to 16 MiB of output. Past that its middle is cut: the job keeps its first 2 MiB and its last 8 MiB, with
+one line saying where the cut is, so the outcome a switch prints at its end is still read.
+
+### How long history is kept
+
+Every six hours, and a minute after the server starts, X-Nix deletes finished jobs, builds, events and finished fleet
+runs older than `historyRetention` (`X_NIX_HISTORY_RETENTION`, 180 days by default; `never` keeps them all). Whatever
+their age, it keeps each owner's newest 20 jobs of each kind and 100 events, the newest 20 builds of each target, the
+newest 20 fleet runs, every running job, installs and install media, and every job something still points at: a
+waiting switch, a held build, a cache's last Build all, a kept fleet run or build, or an installed host's agent key.
+What a pass deletes is gone from the database; the daily [backups](/user/integrations/#backups) still hold it.
+
 ### Stopping a job
 
 **Stop** on a running job's page (admins only) ends its processes on its host: they are asked to stop, and killed if
 they have not within a few seconds. The job then fails as stopped by whoever pressed it, and the owner's history notes
 it. A job still waking its host is called off before it starts. Stopping a switch while it activates can leave
-the host part-way between systems; with `magic_rollback`, a guarded switch's watchdog still rolls it back once
-no confirmation arrives.
+the host part-way between systems.
+
+A guarded switch (with `magic_rollback` or health checks) keeps its watchdog inside the job's run, so stopping the run
+would also end the watchdog and leave the new system running with nothing to roll it back. Stop on a guarded switch
+that has already activated, and has no outcome yet, therefore tells its watchdog to roll back instead, naming who
+stopped it, and the job ends by itself with the watchdog's outcome, usually rolled back. The run is stopped outright
+only when the watchdog cannot be told, which the answer and the history say, or when no outcome has come within the
+watchdog's own window (`activation_timeout`, the confirmation window and two minutes). Stop again meanwhile is refused.
 
 ### Stalled jobs
 

@@ -109,6 +109,14 @@ export interface LocatedFile {
 
 // ── Reading ──────────────────────────────────────────────────────────────────
 
+// The longest line of an agent's output a pattern is run on; a longer line is no line a parser looks for, so it is skipped.
+export const max_parsed_line_length = 4096;
+
+// The text when it is a line short enough to run a pattern on, otherwise null.
+export function parsable_line(text: unknown): string | null {
+  return typeof text === "string" && text.length <= max_parsed_line_length ? text : null;
+}
+
 // The JSON a read printed, or null when it printed none.
 export function read_facts<Shape>(stdout: string): Shape | null {
   try {
