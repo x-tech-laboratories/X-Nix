@@ -122,6 +122,10 @@ const hosts = new Map(config.hosts.map((settings) => [settings.id, new Host(sett
 const caches = config.caches.map((settings) => new Cache(settings, { store, agents }));
 const deployments = config.deployments.map((settings) => new Deployment(settings, {
   store, agents, caches, host: hosts.get(settings.host ?? server_name), check_cache: (cache) => void poller.refresh(cache),
+  read_flake: (flake_id) => {
+    const flake = flakes.find((candidate) => candidate.id === flake_id);
+    if (flake !== undefined) void poller.refresh(flake);
+  },
 }));
 // An update or a push that changed a flake has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {

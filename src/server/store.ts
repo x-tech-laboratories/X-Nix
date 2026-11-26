@@ -308,7 +308,7 @@ export class Store {
       output_offset = COALESCE(?, output_offset) WHERE id = ?`, text, progress, output_offset, job_id);
   }
 
-  // For a job whose run has not started yet, such as a switch waiting on a cache build that brought a newer system.
+  // For a job whose run has not started yet, such as a switch waiting on the build of the system it activates.
   set_command(job_id: number, command: string): void {
     this.run("UPDATE jobs SET command = ? WHERE id = ?", command, job_id);
   }

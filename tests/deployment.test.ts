@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
-import { cache_settings, deployment_settings, host_settings } from "../src/server/config.ts";
+import { cache_settings, deployment_settings, flake_settings, host_settings } from "../src/server/config.ts";
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
+import { report_mark } from "../src/server/nixos/attic.ts";
 import { Store } from "../src/server/store.ts";
 import {
   clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
@@ -13,6 +14,11 @@ import { innermost, unfetchable_exit_code, type SwitchOperation } from "../src/s
 
 const matching = result(0, `${current_closure}\n`);
 const newer_closure = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-nixos-system-host-26.11";
+
+// Saves an evaluation that names this system, as a finished evaluation would.
+function evaluated(store: Store, deployment_id: string, target = target_closure, values: Record<string, unknown> = {}): void {
+  store.save_evaluation(deployment_id, { ...store.evaluation<Record<string, unknown>>(deployment_id), target, evaluated_epoch: clock.now, ...values });
+}
 
 // ── Drift ────────────────────────────────────────────────────────────────────
 
@@ -485,6 +491,7 @@ describe("building elsewhere", () => {
     const harness = make_deployment({ configuration: "host", cache: "fleet", ...values }, { store, agent, caches: [cache] });
     const builder = new FakeAgent();
     harness.agents.add("builder", builder);
+    evaluated(store, harness.deployment.id);
     return { ...harness, cache, builder };
   }
 
@@ -681,6 +688,7 @@ describe("building elsewhere", () => {
     const own = agents.get(null) as FakeAgent;
     const store = new Store(":memory:");
     const deployment = new Deployment(deployment_settings({ id: "host-deploy", cache_url: "https://cache.example/fleet", build_agent: "builder" }), { store, agents, now: () => clock.now });
+    evaluated(store, deployment.id);
     const lacking: [string, ReturnType<typeof result>] = ['"kind":"cache_holds"', result(1)];
     own.answers.push(lacking);
     builder.answers.push(lacking);
@@ -717,6 +725,7 @@ describe("building elsewhere", () => {
     const own = agents.get(null) as FakeAgent;
     const store = new Store(":memory:");
     const deployment = new Deployment(deployment_settings({ id: "host-deploy", cache_url: "https://cache.example/fleet", build_agent: "builder" }), { store, agents, now: () => clock.now });
+    evaluated(store, deployment.id);
     own.answers.push(['"kind":"cache_holds"', result(unfetchable_exit_code)]);
 
     const outcome = await deployment.act("switch");
@@ -800,6 +809,7 @@ describe("building elsewhere", () => {
 
   it("builds elsewhere first for an automatic switch too, once per target", async () => {
     const harness = with_builder({ cache: undefined, cache_url: "https://cache.example/fleet/", auto_switch: true, auto_switch_after: "30m" });
+    rewind_evaluation(harness, 7200);
     await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
     rewind_drift(harness, 1801);
     await collect(harness);
@@ -828,6 +838,94 @@ describe("building elsewhere", () => {
     await harness.deployment.cycle();
 
     expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "X-Nix no longer waits on the cache this way (cache-build); switch again" });
+  });
+
+  it("activates nothing when the build made another system than the evaluation named, and evaluates again", async () => {
+    const harness = with_builder();
+    const other_host_system = "/nix/store/ffffffffffffffffffffffffffffffff-nixos-system-other-26.11";
+    for (const printed of [`${newer_closure}\n`, `${report_mark}\thost\ttarget\t${other_host_system}\n`]) {
+      const outcome = await harness.deployment.act("switch");
+      harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, printed, 0);
+      await harness.deployment.cycle();
+
+      const built = printed.includes(report_mark) ? other_host_system : newer_closure;
+      const job = harness.store.job(outcome.job_id!)!;
+      expect(job.state).toBe("failed");
+      expect(job.error).toBe(`The build made ${built}, but the flake evaluates to ${target_closure}; only the evaluated system is activated; nothing was activated, so evaluate and switch again`);
+      expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+      expect(harness.store.events(harness.deployment.id).some((event) => event.message.startsWith(`Switch failed: The build made ${built}`))).toBe(true);
+    }
+    expect(harness.agent.long_runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
+    expect(harness.agent.operations.some((operation) => innermost(operation).kind === "switch")).toBe(false);
+    expect(harness.agent.operations.some((operation) => operation.kind === "cache_holds")).toBe(false);
+  });
+
+  it("evaluates again after a build that made another system, and refuses a switch built elsewhere before any evaluation", async () => {
+    const agents = new AgentPool("host", new FakeAgent());
+    const builder = new FakeAgent();
+    agents.add("builder", builder);
+    const store = new Store(":memory:");
+    const deployment = new Deployment(deployment_settings({ id: "host-deploy", cache_url: "https://cache.example/fleet", build_agent: "builder" }), { store, agents, now: () => clock.now });
+    expect((await deployment.act("switch")).message).toBe("The flake has not been evaluated yet, and a system built on builder is only activated once it matches the evaluation");
+    expect(builder.long_runs).toHaveLength(0);
+
+    evaluated(store, deployment.id);
+    expect(deployment.due_for_evaluation()).toBe(false);
+    const outcome = await deployment.act("switch");
+    builder.end(builder.last_run('"kind":"build"')!, `${newer_closure}\n`, 0);
+    await deployment.cycle();
+
+    expect(store.job(outcome.job_id!)!.state).toBe("failed");
+    expect(deployment.due_for_evaluation()).toBe(true);
+    expect((agents.get(null) as FakeAgent).long_runs).toHaveLength(0);
+  });
+
+  it("fails cleanly on a build that names something other than a store path, activating nothing", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch");
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, `${report_mark}\thost\ttarget\t/etc/../tmp/system\n`, 0);
+    await harness.deployment.cycle();
+    expect(harness.store.job(outcome.job_id!)).toMatchObject({ state: "failed", error: "The build on builder finished without naming the system it built" });
+
+    const waiting = await harness.deployment.act("switch");
+    const evaluation = harness.deployment.evaluation();
+    harness.store.finish_job(evaluation.switch_wait!.step_job_id!, "succeeded", 0, null, clock.now);
+    evaluation.switch_wait = { ...evaluation.switch_wait!, step: "push", step_job_id: null, target: "/tmp/system" };
+    harness.store.save_evaluation(harness.deployment.id, evaluation);
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(waiting.job_id!)).toMatchObject({ state: "failed" });
+    expect(harness.store.job(waiting.job_id!)!.error).toContain('The build named "/tmp/system" as the system it built, which is not a store path');
+    expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(harness.agent.long_runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
+  });
+
+  it("builds the commit it evaluated, for a switch, a Build and a cache's build, even once the branch has moved", async () => {
+    const revision = "a".repeat(40);
+    const agents = new AgentPool("host", new FakeAgent());
+    const builder = new FakeAgent();
+    agents.add("builder", builder);
+    const store = new Store(":memory:");
+    const deployment = new Deployment(deployment_settings({
+      id: "host-deploy", flake: "github:owner/config/main", configuration: "host", cache_url: "https://cache.example/fleet", build_agent: "builder",
+    }), { store, agents, now: () => clock.now });
+    evaluated(store, deployment.id, target_closure, { flake_revision: revision });
+
+    await deployment.act("switch");
+    const build = builder.last_run('"kind":"build"')!;
+    expect(build.operation).toMatchObject({ kind: "build", flake: `github:owner/config?rev=${revision}` });
+    builder.end(build, `${target_closure}\n`, 0);
+    await deployment.cycle();
+    store.finish_job(deployment.running_job()!.id, "succeeded", 0, null, clock.now);
+
+    await deployment.act("build");
+    expect(builder.last_run('"kind":"build"')!.operation).toMatchObject({ flake: `github:owner/config?rev=${revision}` });
+
+    const cached = with_builder({ flake: "github:example/nixos-config" });
+    evaluated(cached.store, cached.deployment.id, target_closure, { flake_revision: revision });
+    await cached.deployment.act("switch");
+    expect(innermost(cached.builder.last_run('"kind":"cache_build"')!.operation)).toMatchObject({ cache: { flake: `github:example/nixos-config?rev=${revision}` } });
   });
 
   it("rolls back to an earlier generation on the host's own agent", async () => {
@@ -1412,6 +1510,15 @@ describe("a deployment its cache builds", () => {
     expect(harness.deployment.reading()?.up_to_date).toBe(false);
   });
 
+  it("remembers which of the cache's hosts evaluated it, so the flake's reading on another host can be compared", async () => {
+    const harness = fed();
+    harness.save_check({ host: "builder" });
+
+    await collect(harness);
+
+    expect(harness.deployment.evaluation().evaluated_on).toBe("builder");
+  });
+
   it("keeps its last target when the cache's evaluation of it fails, saying so", async () => {
     const harness = fed();
     harness.save_check({});
@@ -1457,5 +1564,120 @@ describe("a deployment its cache builds", () => {
 
     const pinned = fed({ pin: "v1" });
     expect(await cycle(pinned)).toBeDefined();
+  });
+});
+
+// ── The evaluated revision ───────────────────────────────────────────────────
+
+describe("the evaluated revision", () => {
+  const evaluated_revision = "a".repeat(40);
+  const read_revision = "b".repeat(40);
+  const flake_epoch = clock.now - 7200;
+
+  // A deployment of a flake that the host named reader reads, built on another host, evaluated on its own host at a revision.
+  function followed(values: Record<string, unknown> = {}, reading: Record<string, unknown> | null = { revision: evaluated_revision, host: "reader" }) {
+    const asked: string[] = [];
+    const flakes = new Map([["config", flake_settings({ id: "config", url: "github:owner/config", host: "reader" })]]);
+    const harness = make_deployment({ flake: "config", configuration: "host", build_agent: "builder", cache_url: "https://cache.example/fleet", ...values }, {
+      flakes, read_flake: (flake_id) => asked.push(flake_id),
+    });
+    const builder = new FakeAgent();
+    harness.agents.add("builder", builder);
+    if (reading !== null) harness.store.save_reading("config", { last_modified_epoch: flake_epoch, metadata_error: null, ...reading });
+    evaluated(harness.store, harness.deployment.id, target_closure, { flake_revision: evaluated_revision, flake_last_modified_epoch: flake_epoch, evaluated_on: null });
+    return { ...harness, builder, asked };
+  }
+
+  it("switches when the flake's own reading on another host agrees with the evaluation", async () => {
+    const harness = followed();
+
+    expect((await harness.deployment.act("switch")).ok).toBe(true);
+    expect(harness.builder.last_run('"kind":"build"')).toBeDefined();
+    expect(harness.asked).toEqual([]);
+  });
+
+  it("refuses a switch when the evaluating host names another revision than the flake's own reading, reading and evaluating again", async () => {
+    const harness = followed({}, { revision: read_revision, host: "reader" });
+
+    const outcome = await harness.deployment.act("switch");
+
+    expect(outcome).toEqual({
+      ok: false, job_id: null, message: "host evaluated revision aaaaaaaaaaaa, but reader reads the flake at bbbbbbbbbbbb; evaluating again before switching",
+    });
+    expect(harness.asked).toEqual(["config"]);
+    expect(harness.deployment.due_for_evaluation()).toBe(true);
+    expect(harness.builder.long_runs).toHaveLength(0);
+    expect(harness.agent.long_runs).toHaveLength(0);
+    expect(harness.store.events(harness.deployment.id)[0].message).toBe("Not switching: host evaluated revision aaaaaaaaaaaa, but reader reads the flake at bbbbbbbbbbbb; evaluating again");
+    expect(harness.deployment.action_refusal("switch")).toContain("reader reads the flake at");
+    expect(harness.deployment.action_refusal("build")).toBeNull();
+
+    await harness.deployment.act("switch");
+    expect(harness.asked).toEqual(["config"]);
+  });
+
+  it("refuses a switch when the evaluation's date of the revision differs from the flake's own reading", async () => {
+    const harness = followed({}, { revision: evaluated_revision, host: "reader", last_modified_epoch: flake_epoch - 60 });
+
+    expect((await harness.deployment.act("switch")).message).toContain(`reports revision aaaaaaaaaaaa last changed at ${flake_epoch}, but reader reads ${flake_epoch - 60}`);
+  });
+
+  it("trusts the evaluation as before when no other host read the flake", async () => {
+    for (const reading of [null, { revision: read_revision }, { revision: read_revision, host: "host" }]) {
+      const harness = followed({}, reading);
+      expect((await harness.deployment.act("switch")).ok).toBe(true);
+    }
+    const unknown = followed({}, { revision: read_revision, host: "reader" });
+    evaluated(unknown.store, unknown.deployment.id, target_closure, { evaluated_on: undefined });
+    expect((await unknown.deployment.act("switch")).ok).toBe(true);
+  });
+
+  it("refuses a switch whose evaluation names another commit than the commit it is pinned at", async () => {
+    const harness = followed({ pin: "c".repeat(40) }, null);
+
+    expect((await harness.deployment.act("switch")).message).toBe("The evaluation reports revision aaaaaaaaaaaa, but the deployment is pinned at cccccccccccc; evaluating again before switching");
+    expect(followed({ pin: evaluated_revision }, null).deployment.action_refusal("switch")).toBeNull();
+    expect(followed({ pin: "v1" }, null).deployment.action_refusal("switch")).toBeNull();
+  });
+
+  it("holds an automatic switch while the flake's own reading disagrees, and switches once it agrees", async () => {
+    const asked: string[] = [];
+    const flakes = new Map([["config", flake_settings({ id: "config", url: "github:owner/config", host: "reader" })]]);
+    const harness = make_deployment({ flake: "config", auto_switch: true, auto_switch_after: "30m" }, { flakes, read_flake: (flake_id) => asked.push(flake_id) });
+    harness.store.save_reading("config", { revision: read_revision, host: "reader", last_modified_epoch: clock.now - 3600, metadata_error: null });
+    await collect(harness, { metadata: metadata({ revision: evaluated_revision, last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    rewind_evaluation(harness, 60);
+
+    await harness.deployment.cycle();
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(messages_of(harness)).toContain("Not switching automatically: host evaluated revision aaaaaaaaaaaa, but reader reads the flake at bbbbbbbbbbbb; evaluating again");
+    expect(asked).toEqual(["config"]);
+
+    harness.store.save_reading("config", { revision: evaluated_revision, host: "reader", last_modified_epoch: clock.now - 3600, metadata_error: null });
+    await collect(harness, { metadata: metadata({ revision: evaluated_revision, last_modified_epoch: clock.now - 3600 }) });
+    await cycle(harness);
+    expect(harness.deployment.running_job()?.trigger).toBe("automatic");
+  });
+
+  it("never activates what an automatic switch's build made when it is not the evaluated system", async () => {
+    const harness = make_deployment({ build_agent: "builder", cache_url: "https://cache.example/fleet", auto_switch: true, auto_switch_after: "30m" });
+    const builder = new FakeAgent();
+    harness.agents.add("builder", builder);
+    await collect(harness, { metadata: metadata({ last_modified_epoch: clock.now - 3600 }) });
+    rewind_drift(harness, 1801);
+    await collect(harness);
+    await cycle(harness);
+    const job = harness.store.jobs({ kind: "switch" })[0];
+    expect(job).toMatchObject({ trigger: "automatic", state: "running" });
+
+    builder.end(builder.last_run('"kind":"build"')!, `${newer_closure}\n`, 0);
+    await harness.deployment.cycle();
+
+    expect(harness.store.job(job.id)!.state).toBe("failed");
+    expect(harness.agent.long_runs.some((run) => run.command.includes("switch-to-configuration"))).toBe(false);
+    expect(harness.agent.operations.some((operation) => innermost(operation).kind === "switch")).toBe(false);
   });
 });

@@ -10,6 +10,10 @@ version.
 
 ## Unreleased
 
+### 2026-11-26
+
+- fix(deployment): switch only to the evaluated system, built at the evaluated commit
+
 ### 2026-11-24
 
 - docs(roadmap): note the flaky agent key test

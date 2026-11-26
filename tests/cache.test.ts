@@ -4,14 +4,14 @@ import { AgentError, AgentPool } from "../src/server/agents/agent.ts";
 import { Cache } from "../src/server/cache.ts";
 import { parse_metrics, probe_cache_server, type Fetcher } from "../src/server/cache_server.ts";
 import { ConfigError, cache_settings, parse_config, type CacheSettings } from "../src/server/config.ts";
-import { build_all_expression, build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark } from "../src/server/nixos/attic.ts";
+import { build_all_expression, build_all_operation, build_operation, check_operation, parse_report, push_operation, report_mark, target_row } from "../src/server/nixos/attic.ts";
 import type { CacheCheckOperation } from "../src/shared/operations.ts";
 import { Store } from "../src/server/store.ts";
 import { clock, FakeAgent } from "./fake_agent.ts";
 
-const alpha = "/nix/store/aaaa-nixos-system-Alpha";
-const beta = "/nix/store/bbbb-nixos-system-Beta";
-const kernel = "/nix/store/kkkk-linux";
+const alpha = `/nix/store/${"a".repeat(32)}-nixos-system-Alpha`;
+const beta = `/nix/store/${"b".repeat(32)}-nixos-system-Beta`;
+const kernel = `/nix/store/${"k".repeat(32)}-linux`;
 
 const base = {
   id: "fleet",
@@ -240,6 +240,14 @@ describe("rows", () => {
     await check(harness, line("Alpha", "target", alpha) + line("Alpha", "built", 1) + line("Alpha", "local", 0) + line("Alpha", "own", 2));
     expect(rows(harness).Alpha).toMatchObject({ status: "online", summary: "Pushed, kept only in the cache", local: false });
     expect(harness.cache.action_refusal("push", "Alpha")).toContain("kept only in the cache");
+  });
+
+  it("drop a reported target that is not a store path, failing its row", () => {
+    const report = parse_report(line("Alpha", "target", "/etc/../tmp/system") + line("Alpha", "built", 1) + line("Beta", "target", "") + line("Beta", "build", "failed"));
+
+    expect(report.targets.get("Alpha")).toEqual({ missing: [], built: "1", error: 'Reported "/etc/../tmp/system" as its store path, which is not one' });
+    expect(report.targets.get("Beta")).toEqual({ missing: [], build: "failed" });
+    expect(target_row(settings(), "Alpha", report.targets.get("Alpha"))).toMatchObject({ target: null, status: "failed" });
   });
 
   it("ignore output that is not a report line", () => {

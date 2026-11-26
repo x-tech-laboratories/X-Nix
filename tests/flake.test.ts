@@ -56,6 +56,7 @@ describe("a flake", () => {
     expect(reading.revision).toBe("f".repeat(40));
     expect(reading.inputs.map((input) => [input.name, input.last_modified_epoch])).toEqual([["nixpkgs", clock.now - 86400], ["home", clock.now - 3 * 86400]]);
     expect(reading.oldest_input).toBe("home");
+    expect(reading.host).toBeNull();
   });
 
   it("warns about stale inputs only when max_input_age is set", async () => {
