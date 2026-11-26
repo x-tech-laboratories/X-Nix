@@ -10,6 +10,10 @@ version.
 
 ## Unreleased
 
+### 2026-11-26
+
+- fix(auth): refuse request paths that are not spelled canonically
+
 ### 2026-11-24
 
 - docs(roadmap): note the flaky agent key test
