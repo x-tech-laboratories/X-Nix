@@ -1,10 +1,13 @@
 // The X-Nix agent: X-Libs' agent, which dials out over a WebSocket naming its host, signs the server's challenge with
 // the host's key and dials again whenever it drops, performing each operation through the runner. With pull settings,
-// it also deploys from Git on its own while the server is away, and reports those switches once the server is back.
+// it also deploys from Git on its own while the server is away, and reports those switches once the server is back. Given
+// the server's public keys, it answers only a server that signs with one of them.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { start_agent as start_x_libs_agent, type AgentConfig as XLibsAgentConfig } from "@x-tech-laboratories/x-libs/agent/client";
+import { readFileSync } from "node:fs";
+
+import { AgentConfigError, read_server_keys, start_agent as start_x_libs_agent, type AgentConfig as XLibsAgentConfig } from "@x-tech-laboratories/x-libs/agent/client";
 import type { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
 import type { AgentSession } from "@x-tech-laboratories/x-libs/agent/session";
 
@@ -22,6 +25,26 @@ export interface AgentConfig extends Omit<XLibsAgentConfig<Operation>, "app" | "
   key_file: string;
   // Deploys from Git on its own once the server has been unreachable a while; off when absent.
   pull?: PullSettings;
+}
+
+// The server public key lines in a JSON list file, checked to be ed25519 keys, or an AgentConfigError naming the file and what is wrong.
+export function read_server_keys_file(file: string): string[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new AgentConfigError(`Could not read the server keys at ${file}: ${(error as Error).message}`);
+  }
+  if (!Array.isArray(raw) || !raw.every((line) => typeof line === "string")) {
+    throw new AgentConfigError(`The server keys at ${file} must be a JSON list of OpenSSH public key lines.`);
+  }
+  try {
+    read_server_keys(raw);
+  } catch (error) {
+    if (error instanceof AgentConfigError) throw new AgentConfigError(`In ${file}: ${error.message}`);
+    throw error;
+  }
+  return raw;
 }
 
 export interface RunningAgent {

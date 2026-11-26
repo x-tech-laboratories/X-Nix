@@ -52,6 +52,9 @@ export function ProvisionView() {
       <Section title="Installs">
         <Stack><Loaded resource={installs}>{(found) => (found.length === 0 ? <Empty title="No installs yet." /> : found.map((install) => <InstallCard key={install.job.id} install={install} />))}</Loaded></Stack>
       </Section>
+      <Section title="Server key">
+        <Stack><Loaded resource={install_form}>{(found) => <ServerKey provisioning={found.provisioning} />}</Loaded></Stack>
+      </Section>
       <Section title="Agent keys for unnamed hosts">
         <Stack><Loaded resource={keys}>{(found) => <KeysTable agents={found} done={done} />}</Loaded></Stack>
       </Section>
@@ -63,6 +66,20 @@ export function ProvisionView() {
       </Section>
     </div>
   );
+}
+
+// ── Server key ───────────────────────────────────────────────────────────────
+
+// The server's public key, which each agent's serverPublicKeys lists so it answers only this server.
+function ServerKey({ provisioning }: { provisioning: Provisioning }) {
+  const key = provisioning.server_key;
+  if (key === null) {
+    return <Empty title="The server has no key, so agents tell it only by its TLS certificate." hint="Set services.x-nix.serverKeyFile to sign what the server sends agents." />;
+  }
+  return <>
+    <Facts layout="rows" rows={[["Public key", <code className="small">{key.public_line}</code>], ["Fingerprint", <code className="small">{key.fingerprint}</code>]]} />
+    <p className="muted small">Each agent lists the public key in serverPublicKeys, and refuses any message this key did not sign; the Machine tab of each host shows whether its agent does.</p>
+  </>;
 }
 
 // ── Install ──────────────────────────────────────────────────────────────────

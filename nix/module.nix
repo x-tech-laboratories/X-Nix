@@ -83,6 +83,19 @@ in
       description = "A file holding the users who may log in, one `name:hash` line each, written by `npm run hash-password`; read at runtime, never copied to the store.";
     };
 
+    serverKeyFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = lib.literalExpression "config.sops.secrets.x_nix_server_key.path";
+      description = ''
+        A file holding the server's unencrypted OpenSSH ed25519 private key, made with
+        `ssh-keygen -t ed25519 -N "" -C x-nix-server`; read at runtime, never copied to the store.
+        The server signs what it sends every agent with it, and an agent listing its public line in
+        `services.x-nix-agent.serverPublicKeys` refuses anything it did not sign. Agents tell the
+        server only by its TLS certificate when null.
+      '';
+    };
+
     flakes = mkOption {
       type = types.attrsOf json.type;
       default = { };
@@ -338,6 +351,9 @@ in
       // lib.optionalAttrs (cfg.serverName != null) { X_NIX_SERVER_NAME = cfg.serverName; }
       // lib.optionalAttrs (cfg.webhookSecretFile != null) {
         X_NIX_WEBHOOK_SECRET_FILE = "${credentials_directory}/webhook-secret";
+      }
+      // lib.optionalAttrs (cfg.serverKeyFile != null) {
+        X_NIX_SERVER_KEY_FILE = "${credentials_directory}/server-key";
       };
 
       # With the built-in agent it is left unsandboxed, because sudo inherits the unit's sandbox and a switch run under it
@@ -371,7 +387,8 @@ in
         LoadCredential = [
           "password-hash:${cfg.passwordHashFile}"
         ]
-        ++ lib.optional (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}";
+        ++ lib.optional (cfg.webhookSecretFile != null) "webhook-secret:${cfg.webhookSecretFile}"
+        ++ lib.optional (cfg.serverKeyFile != null) "server-key:${cfg.serverKeyFile}";
         Restart = "on-failure";
         RestartSec = "5s";
         # A restart stops only the server, so a running switch carries on and is followed again from its output.

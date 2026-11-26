@@ -38,7 +38,7 @@ A token is sent as `Authorization: Bearer xn_…`. A read-only token can only ma
 | Method & path              | Does                                                       |
 | -------------------------- | ---------------------------------------------------------- |
 | `GET /api/health`          | `{ name, version, server_name, started_epoch }`.           |
-| `GET /api/agents`          | Each host with a key and its agent's status when connected. |
+| `GET /api/agents`          | Each host with a key and its agent's status when connected, `signed_messages` included. |
 | `GET /api/events`          | Server-sent events: one `change` whenever the store is written or an agent connects or drops, at most once a second. |
 
 ### Hosts
@@ -107,7 +107,7 @@ Registered only when the server has a provisioner.
 
 | Method & path                                    | Does                                          |
 | ------------------------------------------------ | --------------------------------------------- |
-| `GET /api/provisioning`                          | Settings, installs, made keys, media.         |
+| `GET /api/provisioning`                          | Settings, installs, made keys, media, the server's public key. |
 | `POST /api/provisioning/install`                 | Starts an install (page only; not an MCP tool). |
 | `POST /api/provisioning/media`                   | `{ deployment or flake + configuration, format }`. |
 | `GET /api/provisioning/media/:id/download`       | `?path=`: a file from inside the built medium. |

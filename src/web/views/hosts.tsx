@@ -1,7 +1,7 @@
 // The Hosts pages: every machine X-Nix reaches in one table to run actions across, and one host with the System it
 // runs, its Store, its Boot entries and the Machine itself as tabs under one header.
 
-import { Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
+import { Badge, Chip, Chips } from "@x-tech-laboratories/x-libs/web/react/badges";
 import { Meters, Sparkline } from "@x-tech-laboratories/x-libs/web/react/charts";
 import { confirm_dialog } from "@x-tech-laboratories/x-libs/web/react/dialog";
 import { SearchBox, Switch } from "@x-tech-laboratories/x-libs/web/react/controls";
@@ -365,6 +365,7 @@ function Details({ host, made }: { host: Host; made: ProvisionedAgent | null }) 
   const rows: Fact[] = [
     ["Agent", host.own ? "the server itself" : host.agent === null ? "not connected" : <span>version {host.agent.agent_version}, connected <Age epoch={host.agent.connected_epoch} /></span>],
   ];
+  if (!host.own && host.agent !== null) rows.push(["Server check", <SigningBadge signed={host.agent.signed_messages} />]);
   if (!host.own) rows.push(["Agent key", <KeyText host={host} made={made} />]);
   rows.push(
     ["Woken by", host.wake === null ? "never woken" : <span>wake-on-LAN to <code>{host.wake.mac}</code>{` via ${host.wake.via ?? "the server"} on ${host.wake.broadcast}, waiting up to ${duration(host.wake.timeout)}`}</span>],
@@ -372,6 +373,13 @@ function Details({ host, made }: { host: Host; made: ProvisionedAgent | null }) 
     ["Read every", duration(host.interval)],
   );
   return <Facts rows={rows} layout="rows" />;
+}
+
+// Whether the agent checks the server's signature on every message, or tells the server by its TLS certificate alone.
+function SigningBadge({ signed }: { signed: boolean }) {
+  return signed
+    ? <Badge tone="good" title="The agent lists the server's key and refuses anything it did not sign.">verifies the server's key</Badge>
+    : <Badge tone="warn" title="Give the agent the server's public key in serverPublicKeys so it refuses anything the server did not sign.">TLS only</Badge>;
 }
 
 // Where the agent's key comes from: the config, or an install that made it.

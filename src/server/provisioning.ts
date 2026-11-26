@@ -81,6 +81,8 @@ export interface ProvisionerOptions {
   declared_hosts: () => Set<string>;
   // Called whenever the accepted provisioned keys change.
   on_agent_keys?: (keys: Map<string, string>) => void;
+  // The server's public key line, which the new host's agent snippet lists, or null when the server has no key.
+  server_public_line?: () => string | null;
   // The store media must lie in, which tests set.
   store_dir?: string;
   // The time in seconds, which tests set.
@@ -130,6 +132,11 @@ export class Provisioner {
   agent_keys(): Map<string, string> {
     const declared = this.options.declared_hosts();
     return new Map(this.store.provisioned_agents().filter((agent) => !declared.has(agent.host)).map((agent) => [agent.host, agent.public_line]));
+  }
+
+  // The server's public key line for new hosts' agents to check it by, or null when it has none.
+  server_public_line(): string | null {
+    return this.options.server_public_line?.() ?? null;
   }
 
   provisioned_agents(): ProvisionedAgentView[] {
@@ -276,7 +283,7 @@ export class Provisioner {
       const output = this.store.job(job.id)?.output ?? "";
       const record = parse_install_record(job.command);
       const key_accepted = record?.public_line != null && accepted.get(record.host) === record.public_line;
-      const snippets = record !== null && record.public_line !== null && job.state === "succeeded" ? install_snippets(record, this.settings.agent_url) : null;
+      const snippets = record !== null && record.public_line !== null && job.state === "succeeded" ? install_snippets(record, this.settings.agent_url, this.server_public_line()) : null;
       return { job, record, hardware_config: parse_hardware_config(output, command_marker_token(job.command)), key_accepted, snippets };
     });
   }

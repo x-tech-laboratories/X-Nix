@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- feat(agents): sign what the server sends agents with a server key, and have agents check it
 - fix(auth): decide who may call a route by its matched pattern
 - build(deps): bump X-Libs to 0.89.0
 - fix(auth): refuse request paths that are not spelled canonically
