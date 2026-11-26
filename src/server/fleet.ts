@@ -496,6 +496,8 @@ export class Fleet {
     if (job.state === "failed" && run.stopped_jobs?.includes(job.id)) return this.finish_host(host, "skipped", job.error ?? "Stopped", now);
     if (job.state === "failed") return this.finish_host(host, "failed", job.error ?? "The job failed", now);
     const outcome = run.action === "switch" ? switch_verdict(job.output, command_marker_token(job.command)).outcome : null;
+    // A switch whose checks failed with nothing to roll back failed, even from an agent that still ended it well.
+    if (outcome?.kind === "unchanged") return this.finish_host(host, "failed", `Nothing was rolled back, as the system had not changed: ${outcome.reason}`, now);
     if (outcome?.kind === "deferred") return this.finish_host(host, "succeeded", `Set for the next boot: ${outcome.reason}`, now);
     if (!(run.staged && run.action === "switch")) return this.finish_host(host, "succeeded", "Finished", now);
     host.state = "verifying";

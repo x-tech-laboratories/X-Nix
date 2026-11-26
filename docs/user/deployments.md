@@ -174,6 +174,9 @@ that sleeps must stay awake until the switch is confirmed, which `keep_awake` se
 confirmation comes only once the server and its agent are back from any restart the switch caused, so there the default
 `confirm_timeout` is `2m` when `magic_rollback` is left to its default.
 
+A switch whose checks failed, or that nothing confirmed with `magic_rollback`, while the system had not changed, has
+nothing to roll back; it still fails, saying so, and a fleet run counts that host as failed.
+
 An activation that only failed to start some units (switch-to-configuration's status 4) counts as activated: the health
 checks decide, and a switch they pass is kept. Its job succeeds, and the history and the host's status warn with the
 units that failed until the host runs another system.

@@ -310,6 +310,10 @@ stop with its jobs) sends `signal_rollback` with the reason `Stopped by <who> af
 the run, whose unit holds the watchdog; the run then ends with the watchdog's outcome. `stop_overdue_rollbacks` stops it
 outright once the watchdog's window has passed without one, and a signal that cannot be delivered stops it at once.
 
+The run exits with a failure for every outcome but `confirmed` and `kept`, `unchanged` included, and `judge_switch()`
+fails the job for `unchanged` too, so a switch whose checks failed with nothing to roll back never reads as a success,
+in its job or in a fleet run, even from an agent that still exits 0 for it.
+
 The watchdog's own states:
 
 ```mermaid

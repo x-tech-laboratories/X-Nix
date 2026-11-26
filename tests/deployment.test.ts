@@ -1330,6 +1330,31 @@ describe("safer switches", () => {
     expect(harness.store.events(harness.deployment.id)[0].message).toContain("Switch rolled back to the previous system: Health check 1");
   });
 
+  it("fails a switch whose checks failed with nothing to roll back, even when its run ended well", async () => {
+    for (const exit_code of [0, 1]) {
+      const { harness, run } = await awaiting();
+      harness.agent.end(run, "@@x-nix-switch outcome unchanged Health check 1 (curl) failed with status 7\n", exit_code);
+
+      await cycle(harness);
+
+      const job = harness.store.jobs()[0];
+      expect(job.state).toBe("failed");
+      expect(job.error).toBe("The checks failed, but the system had not changed, so nothing was rolled back: Health check 1 (curl) failed with status 7");
+      expect(harness.store.events(harness.deployment.id)[0]).toMatchObject({ level: "error", message: expect.stringContaining("Switch failed: The checks failed") });
+      expect(harness.deployment.evaluation().switch_failure?.reason).toContain("nothing was rolled back");
+    }
+  });
+
+  it("names what failed for an unchanged switch that never activated", async () => {
+    const harness = make_deployment({ magic_rollback: false });
+    await harness.deployment.act("switch");
+    harness.agent.end(harness.agent.last_run("switch")!, "@@x-nix-switch outcome unchanged Building or fetching the system failed with status 1\n", 1);
+
+    await cycle(harness);
+
+    expect(harness.store.jobs()[0]).toMatchObject({ state: "failed", error: "Nothing changed: Building or fetching the system failed with status 1" });
+  });
+
   it("notes a switch set for the next boot until the host runs another system", async () => {
     const harness = make_deployment();
     await collect(harness);

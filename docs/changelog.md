@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(switch): fail a switch whose checks failed with nothing to roll back, in its job and in fleet runs
 - feat(deployment): warn about automatic switches nothing rolls back and unchecked updates they take
 - feat(fleet)!: have automatic switches of a later stage wait for the earlier stages to switch and soak
 - feat(deployment): hold automatic switches onto inputs older than auto_switch_max_input_age

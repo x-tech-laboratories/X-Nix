@@ -258,6 +258,30 @@ describe("a fleet run", () => {
     expect(agent.operations.some((operation) => operation.kind === "signal_rollback")).toBe(true);
   });
 
+  it("fails a host whose switch checks failed with nothing to roll back, even when its run ended well", async () => {
+    const unchanged = "@@x-nix-switch activated\n@@x-nix-switch outcome unchanged Health check 1 (curl) failed with status 7\n";
+    for (const exit_code of [0, 1]) {
+      const { fleet, harnesses, agent } = make_fleet([{ id: "web-1" }]);
+      const { run } = await fleet.start({ action: "switch", selector: "*" });
+      agent.end(run_of(agent, "web-1")!, unchanged, exit_code);
+      await harnesses.get("web-1")!.deployment.cycle();
+      await fleet.advance();
+
+      const ended = fleet.run(run!.id)!;
+      expect(states(ended)).toEqual({ "web-1": "failed" });
+      expect(ended.state).toBe("failed");
+    }
+
+    // The fleet may look at a job that ended well before the deployment's cycle has judged its outcome.
+    const { fleet, store } = make_fleet([{ id: "web-1" }]);
+    const { run } = await fleet.start({ action: "switch", selector: "*" });
+    const job_id = run!.hosts[0]!.job_id!;
+    store.append_output(job_id, unchanged);
+    store.finish_job(job_id, "succeeded", 0, null, clock.now);
+    await fleet.advance();
+    expect(fleet.run(run!.id)!.hosts[0]).toMatchObject({ state: "failed", message: "Nothing was rolled back, as the system had not changed: Health check 1 (curl) failed with status 7" });
+  });
+
   it("refuses to stop jobs without a way to stop them", async () => {
     const { fleet } = make_fleet([{ id: "web-1" }]);
     const { run } = await fleet.start({ action: "build", selector: "*" });

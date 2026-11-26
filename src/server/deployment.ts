@@ -1295,6 +1295,11 @@ export class Deployment {
       fail(`The rollback failed: ${outcome.reason}`);
       return { level: "error", text: `${noun} could not be rolled back: ${outcome.reason}` };
     }
+    if (outcome.kind === "unchanged") {
+      const reason = verdict.activated ? `The checks failed, but the system had not changed, so nothing was rolled back: ${outcome.reason}` : `Nothing changed: ${outcome.reason}`;
+      fail(reason);
+      return { level: "error", text: `${noun} failed: ${reason}` };
+    }
     if (outcome.kind === "kept") return { level: "warning", text: `${noun} kept unconfirmed: ${outcome.reason}` };
     if (outcome.kind === "deferred") {
       this.store.save_evaluation(this.id, { ...this.evaluation(), deferred_switch: { reason: outcome.reason, running: this.reading()?.current ?? null } });
