@@ -39,13 +39,45 @@ function token_of(operation: Operation): string | null {
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 describe("switch settings", () => {
-  it("leave every safety feature off by default", () => {
-    const plain = settings();
+  it("roll back an unconfirmed switch by default, and leave the checks off", () => {
+    const guarded = settings();
 
-    expect([plain.magic_rollback, plain.pre_switch_checks, plain.health_commands, plain.health_urls]).toEqual([false, [], [], []]);
-    expect([plain.activation_timeout, plain.confirm_timeout, plain.health_period, plain.health_timeout]).toEqual([240, 30, 5, 120]);
-    const operation = switch_of(switch_job_operation(plain, "switch", "ab12"));
-    expect([operation.watch, operation.pre_switch_checks]).toEqual([null, []]);
+    expect([guarded.magic_rollback, guarded.pre_switch_checks, guarded.health_commands, guarded.health_urls]).toEqual([true, [], [], []]);
+    expect([guarded.activation_timeout, guarded.health_period, guarded.health_timeout]).toEqual([240, 5, 120]);
+    const operation = switch_of(switch_job_operation(guarded, "switch", "ab12"));
+    expect(operation.watch?.magic_rollback).toBe(true);
+    expect(operation.pre_switch_checks).toEqual([]);
+  });
+
+  it("keep magic_rollback off by default for a target_host, which a guarded switch cannot reach", () => {
+    const remote = settings({ target_host: "root@odin" });
+
+    expect(remote.magic_rollback).toBe(false);
+    expect(switch_of(switch_job_operation(remote, "switch", "ab12")).watch).toBeNull();
+  });
+
+  it("take an explicit magic_rollback over the default", () => {
+    const plain = settings({ magic_rollback: false });
+
+    expect(plain.magic_rollback).toBe(false);
+    expect(plain.confirm_timeout).toBe(30);
+    expect(switch_of(switch_job_operation(plain, "switch", "ab12")).watch).toBeNull();
+    expect(settings({ magic_rollback: true }).confirm_timeout).toBe(30);
+  });
+
+  it("give the default rollback two minutes to confirm a switch of the server's own host, and thirty seconds elsewhere", () => {
+    const own = (values: Record<string, unknown>) => deployment_settings({ id: "odin-deploy", ...values }, 0, undefined, (name) => host_settings({ id: name ?? "odin" }), undefined, "odin");
+
+    expect(own({}).confirm_timeout).toBe(120);
+    expect(own({ host: "odin" }).confirm_timeout).toBe(120);
+    expect(own({ host: "thor" }).confirm_timeout).toBe(30);
+    expect(own({ host: "thor", switch_agent: "odin" }).confirm_timeout).toBe(120);
+    expect(own({ magic_rollback: true }).confirm_timeout).toBe(30);
+    expect(own({ confirm_timeout: "45s" }).confirm_timeout).toBe(45);
+  });
+
+  it("never watch a boot or a dry activation, whatever magic_rollback says", () => {
+    for (const mode of ["boot", "dry-activate"] as const) expect(switch_of(switch_job_operation(settings(), mode, "ab12")).watch).toBeNull();
   });
 
   it("have a switch stop what holds the Nix store database open only when asked, and never for a target_host", () => {
@@ -109,14 +141,14 @@ describe("switch operations", () => {
       argv: ["nix", "--extra-experimental-features", "nix-command flakes", "build", "--no-link", "--keep-going", "--print-build-logs",
         '/etc/nixos#nixosConfigurations."Odin".config.system.build.toplevel'],
     }]);
-    expect(switch_of(switch_job_operation(settings({ configuration: "Odin", build_progress: false }), "switch", "ab12")).fetch_steps).toEqual([]);
+    expect(switch_of(switch_job_operation(settings({ configuration: "Odin", build_progress: false, magic_rollback: false }), "switch", "ab12")).fetch_steps).toEqual([]);
     expect(switch_of(switch_job_operation(settings({ magic_rollback: true }), "switch", "ab12")).fetch_steps).toEqual([]);
     expect(switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin", build_host: "root@thor" }), "switch", "ab12")).fetch_steps).toEqual([]);
   });
 
   it("with build_progress, builds a guarded system first printing nix's structured log, and leaves an unguarded one to nixos-rebuild", () => {
     const guarded = switch_of(switch_job_operation(settings({ magic_rollback: true, configuration: "Odin" }), "switch", "ab12"));
-    const plain = switch_of(switch_job_operation(settings({ configuration: "Odin" }), "switch", "ab12"));
+    const plain = switch_of(switch_job_operation(settings({ configuration: "Odin", magic_rollback: false }), "switch", "ab12"));
 
     expect(guarded.fetch_steps!.map((step) => step.argv.join(" "))).toEqual([
       'nix --extra-experimental-features nix-command flakes build --no-link --log-format internal-json -v --keep-going --print-build-logs /etc/nixos#nixosConfigurations."Odin".config.system.build.toplevel',

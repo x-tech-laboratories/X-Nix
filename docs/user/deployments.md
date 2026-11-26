@@ -7,6 +7,15 @@ sidebar:
 A deployment is one NixOS configuration on one host: the host, the flake that describes it, and the
 `nixosConfigurations` attribute to build. Its page is the host's System tab.
 
+## Upgrading
+
+Defaults that changed, and the line that keeps the earlier behaviour:
+
+- `magic_rollback` is on unless the deployment has a `target_host`, so a switch X-Nix cannot confirm reaching the host
+  afterwards is rolled back. Keep switches unwatched with `"magic_rollback": false`.
+- On the server's own host, a switch whose `magic_rollback` comes from that default has `confirm_timeout` `2m`, as the
+  server and its agent restart first. Set `"confirm_timeout": "30s"` to keep the shorter wait.
+
 ![A deployment's System tab, showing drift and the actions](/assets/screenshots/system.png)
 
 ## Drift
@@ -145,6 +154,12 @@ The watchdog rolls back to the previous system when:
 - with `magic_rollback`, no confirmation arrives within `confirm_timeout` (plus `health_timeout` when there are health
   checks). Without `magic_rollback` an unconfirmed switch is kept.
 
+`magic_rollback` is on by default, so every switch and test runs guarded, except for a deployment with a `target_host`,
+which a guarded switch cannot reach. Boot and dry activate never run a watchdog, since they activate nothing. A host
+that sleeps must stay awake until the switch is confirmed, which `keep_awake` sees to. On the server's own host the
+confirmation comes only once the server and its agent are back from any restart the switch caused, so there the default
+`confirm_timeout` is `2m` when `magic_rollback` is left to its default.
+
 An activation that only failed to start some units (switch-to-configuration's status 4) counts as activated: the health
 checks decide, and a switch they pass is kept. Its job succeeds, and the history and the host's status warn with the
 units that failed until the host runs another system.
@@ -216,11 +231,11 @@ named `configuration`; a switch to a `target_host` always switches.
 | `switch_wrapper`    | none                              | A command each program of the switch runs inside, outside sudo.      |
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`.         |
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
-| `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
+| `magic_rollback`    | `true`, or `false` with `target_host` | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Stop what holds the Nix store database once the activation has waited a minute for it. Not with `target_host`. |
 | `defer_switch_on`   | none                              | Set a switch for the next boot instead when the new system changes any of `kernel`, `systemd` or `dbus`. |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; fetching or building the system comes before and is not counted. |
-| `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
+| `confirm_timeout`   | `30s`, or `2m` on the server's own host with the default `magic_rollback` | How long after the activation X-Nix has to confirm. |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |

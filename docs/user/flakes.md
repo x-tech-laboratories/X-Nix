@@ -8,6 +8,13 @@ A flake under `flakes` is read and updated once for every deployment and cache t
 A deployment can also name a flake reference directly, such as `"flake": "github:you/config"`. That works for
 evaluation, build and switch, but the flake gets no page and no Update.
 
+## Upgrading
+
+Defaults that changed, and the line that keeps the earlier behaviour:
+
+- `check_update` is `build`, so an update lands only once every system naming the flake builds against the new lock,
+  on the flake's own host. Keep the cheaper check with `"check_update": "evaluate"`.
+
 ![The Flakes page, with a flake's revision and its locked inputs](/assets/screenshots/flake.png)
 
 ## Reading
@@ -34,9 +41,11 @@ deployments build it. There is only ever one: a later update replaces that branc
 date, so commit nothing of your own there. Opening it takes the `github.com` token in `access_tokens_file`, which needs
 permission to write pull requests and contents; the job's last line links the pull request.
 
-Before either writes or pushes the new lock, it is checked: every deployment naming the flake has its system evaluated
-against it, and so does every target of a cache naming the flake. With `check_update` set to `build` they are built
-instead, and with `none` the lock is written unchecked. A check that fails keeps the old lock, pushes nothing, and fails
+Before either writes or pushes the new lock, it is checked: the system of every deployment naming the flake, and every
+target of a cache naming the flake, is built against it, one after another on the flake's host, which takes as long as
+the builds do and has no time limit of its own. A target that fails to build keeps the lock from landing; the others are
+still built, so the job names every one that broke. With `check_update` set to `evaluate` they are only evaluated, and
+with `none` the lock is written unchecked. A check that fails keeps the old lock, pushes nothing, and fails
 the update with the attributes that broke. A deployment is checked once its host's name is known, which its first read
 supplies when it sets no `configuration`.
 
@@ -95,7 +104,7 @@ services.x-nix.flakes.fleet.access_tokens_file = config.sops.templates."nix-acce
 | `commit_signing_key`   | none                          | An SSH private key file a `github:` flake's update commit is signed with, so an agent's pull mode with `allowedSignersFile` can deploy it. |
 | `commit_author`        | `X-Nix <x-nix@localhost>`     | The update commit's author.                                |
 | `commit_message`       | `chore(flake): update inputs` | The update commit's message.                               |
-| `check_update`         | `evaluate`                    | What an update does to everything naming the flake before it writes the lock: `evaluate`, `build` or `none`. |
+| `check_update`         | `build`                       | What an update does to everything naming the flake before it writes the lock: `evaluate`, `build` or `none`. |
 | `land_update`          | `push`                        | How a `github:` flake's update lands: `push` to its branch, or `pull_request`, which needs `access_tokens_file`. |
 | `require_sudo`         | `true`                        | Update a local checkout under `sudo -n`.                   |
 | `nix_bin`              | `nix`                         | The nix program.                                           |

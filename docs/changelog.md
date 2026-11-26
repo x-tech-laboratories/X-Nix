@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- feat(deployment)!: roll back unconfirmed switches and build every checked system before an update lands, by default
 - fix(auth): refuse request paths that are not spelled canonically
 - fix(jobs): read only marker lines that carry the run's own token
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
