@@ -359,6 +359,18 @@ describe("logging in", () => {
     expect(refused.json()).toMatchObject({ error: "Too many tries; wait a few minutes." });
   });
 
+  it("refuses every try from an address after twenty failures in five minutes, whatever names they give", async () => {
+    const { server } = await start_app();
+    const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
+
+    for (let count = 0; count < 20; count++) expect((await attempt(`guess-${count}`, "wrong")).statusCode).toBe(401);
+    const refused = await attempt("operator", "another password");
+
+    expect(refused.statusCode).toBe(429);
+    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
+    expect(refused.json()).toEqual({ error: "Too many tries; wait a few minutes." });
+  });
+
   it("signs each user in with their own password and tells the page who they are", async () => {
     const { server } = await start_app();
     const attempt = (name: string, guess: string) => server.inject({ method: "POST", url: "/api/login", payload: { name, password: guess } });
@@ -438,6 +450,23 @@ describe("a path not spelled canonically", () => {
       expect([400, 403], url).toContain(response.statusCode);
     }
     expect((await server.inject({ method: "GET", url: "/api/hosts", headers })).statusCode).toBe(200);
+  });
+
+  it("lets a viewer read a name holding an escape, but refuses an escaped slash in it, which X-Libs alone would let through", async () => {
+    const { server, inject } = await start_app();
+    await inject("POST", "/api/users", { name: "vera", role: "viewer", access: null, password: "a long viewer password" });
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "vera", password: "a long viewer password" } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    const spaced = await server.inject({ method: "GET", url: "/api/hosts/no%20such%20host", headers });
+    const questioned = await server.inject({ method: "GET", url: "/api/hosts/a%3Fb", headers });
+    const slashed = await server.inject({ method: "GET", url: "/api/hosts/a%2Fb", headers });
+    const download = await server.inject({ method: "GET", url: "/api/builds/1/products/0%3F", headers });
+
+    expect(spaced.json()).toEqual({ error: "No host named 'no such host'" });
+    expect(questioned.json()).toEqual({ error: "No host named 'a?b'" });
+    expect([slashed.statusCode, slashed.json()]).toEqual([400, { error: "The path escapes a character that needs no escaping." }]);
+    expect(download.statusCode).toBe(403);
   });
 
   it("leaves canonical paths, escaped names and query strings as they were", async () => {

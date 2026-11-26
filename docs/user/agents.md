@@ -29,10 +29,14 @@ own machine it dials `ws://127.0.0.1:<port>/api/agent`; it needs none there only
      enable = true;
      url = "wss://nix.example.org/api/agent";
      keyFile = "/etc/x-nix-agent/key";   # or a sops secret
+     # The server's public key, so the agent answers only the server holding it.
+     serverPublicKeys = [ "ssh-ed25519 AAAA... x-nix-server" ];
    };
    ```
 
-The agent logs in by proving it holds the key the server's config declares for its host. A host's Machine tab shows
+The agent logs in by proving it holds the key the server's config declares for its host. With `serverPublicKeys` it
+also checks that the server signs its challenge and every message with one of those keys, and refuses the server
+otherwise; see [Installing](/user/installing/#6-sign-what-the-server-sends-agents). A host's Machine tab shows
 whether its agent is connected, and the Overview lists hosts whose agent is not under **Needs attention**.
 
 A host X-Nix installed from the [Provision](/user/provisioning/) page has its key made for it and is accepted
@@ -45,6 +49,7 @@ without step 2, until you declare it.
 | `enable`      | `false`        | Run the agent.                                                       |
 | `url`         | required       | The server's agent address, `wss://<server>/api/agent`.              |
 | `keyFile`     | required       | The host's private key.                                              |
+| `serverPublicKeys` | none      | The server's public key lines; the agent then answers only a server signing with one of them. |
 | `host`        | the hostname   | The name the agent logs in as, which must be the host's id in the server's config. |
 | `path`        | none           | Extra programs on the PATH of the commands the agent runs.           |
 | `sudoRules`   | `true`         | Install the sudo rules the agent needs; see [Installing](/user/installing/#what-runs-as-root). |
@@ -135,6 +140,8 @@ services.x-nix-agent.pull = {
 | `requireSudo`   | `true`           | Run the switch under `sudo -n`.                                |
 
 Without the module, the agent reads `X_NIX_AGENT_URL`, `X_NIX_AGENT_KEY_FILE`, `X_NIX_AGENT_HOST` and
-`X_NIX_AGENT_STATE_DIR` from its environment, and its pull settings from the JSON file `X_NIX_AGENT_PULL_FILE` names
+`X_NIX_AGENT_STATE_DIR` from its environment, the server's public key lines from the JSON list
+`X_NIX_AGENT_SERVER_KEYS_FILE` names, refusing to start when one is not an ed25519 key, and its pull settings from the
+JSON file `X_NIX_AGENT_PULL_FILE` names
 (with `rebuild_bin`, `rebuild_args`, `require_sudo`, `git_bin`, `allowed_signers`, `allow_unsigned` and `allow_rewind` in
 snake case).

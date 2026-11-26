@@ -31,6 +31,12 @@ The Account page also turns on a second factor (an authenticator app) and makes 
 and reboot every machine, so admins must set up a second factor: until they do, they can only read, and the Account page
 says so. `signIn.adminSecondFactor = false` (`X_NIX_ADMIN_SECOND_FACTOR=no`) lets admins act without one.
 
+Wrong tries are limited, and past a limit the sign-in form says "Too many tries; wait a few minutes.": five tries of one
+name from one address in five minutes, twenty failing tries from one address in five minutes whatever names they give,
+and five wrong second-factor codes or current passwords for one user in five minutes. A right password does not count
+against its address. Only a few passwords are checked at once, and a flood of sign-ins past that is told "The server is
+busy checking passwords; try again in a moment." rather than slowing the server. Addresses are read as [Installing](/user/installing/#3-run-the-server) describes.
+
 ## Tokens
 
 A token from the Account page lets a script or an AI client call X-Nix as you, sent as `Authorization: Bearer <token>`.

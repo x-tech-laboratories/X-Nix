@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { key_fingerprint, parse_private_key, parse_public_key, sign_challenge, verify_challenge } from "@x-tech-laboratories/x-libs/agent/keys";
 import { encode_message } from "@x-tech-laboratories/x-libs/agent/protocol";
+import { admission_refused } from "@x-tech-laboratories/x-libs/server/agents/hub";
 import { LocalAgent } from "@x-tech-laboratories/x-libs/server/agents/local";
 import { register_agent_route } from "@x-tech-laboratories/x-libs/server/agents/route";
 
@@ -192,9 +193,9 @@ describe("agent hub", () => {
     await refused();
     expect(connections).toBe(0);
 
-    expect(hub.admit({ [key_host_header]: "thor" })).toEqual({ error: "Host 'thor' has no declared agent key." });
-    expect(hub.admit({ [key_host_header]: "heimdall" })).toMatchObject({ error: expect.stringContaining("server's own host") });
-    expect(hub.admit({})).toMatchObject({ error: expect.stringContaining(key_host_header) });
+    expect(hub.admit({ [key_host_header]: "thor" })).toEqual({ error: admission_refused, reason: expect.stringContaining("no declared agent key") });
+    expect(hub.admit({ [key_host_header]: "heimdall" })).toEqual({ error: admission_refused, reason: expect.stringContaining("server's own host") });
+    expect(hub.admit({})).toEqual({ error: admission_refused, reason: expect.stringContaining(key_host_header) });
   });
 
   it("closes a socket whose hello carries a wrong signature, or none, or another protocol", async () => {

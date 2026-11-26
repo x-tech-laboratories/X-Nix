@@ -53,18 +53,31 @@ describe("path_refusal", () => {
 });
 
 describe("needed", () => {
-  it("asks an admin for downloads and changes, and any user for reads", () => {
-    expect(needed("GET", "/api/hosts")).toBe("any");
-    expect(needed("POST", "/api/mcp")).toBe("any");
-    expect(needed("POST", "/api/hosts/host/refresh")).toEqual({ role: "admin" });
-    expect(needed("GET", "/api/builds/1/products/0")).toEqual({ role: "admin" });
-    expect(needed("GET", "/api/provisioning/media/1/download")).toEqual({ role: "admin" });
+  it.each([
+    ["GET", "/api/hosts", "/api/hosts", "any"],
+    ["GET", "/api/hosts/a b", "/api/hosts/:name", "any"],
+    ["GET", "/api/hosts/a%2Fb", "/api/hosts/:name", "any"],
+    ["POST", "/api/mcp", "/api/mcp", "any"],
+    ["POST", "/api/hosts/host/refresh", "/api/hosts/:name/refresh", "admin"],
+    ["GET", "/api/builds/1/products/0", "/api/builds/:id/products/:index", "admin"],
+    ["HEAD", "/api/builds/1/products/0", "/api/builds/:id/products/:index", "admin"],
+    ["GET", "/api/builds/1/products/0%2F", "/api/builds/:id/products/:index", "admin"],
+    ["GET", "/api/provisioning/media/1/download", "/api/provisioning/media/:id/download", "admin"],
+    ["GET", "/api/provisioning/media/a%2Fb/download", "/api/provisioning/media/:id/download", "admin"],
+  ] as const)("asks %s %s, routed to %s, for %s", (method, path, route, role) => {
+    expect(needed(method, path, route)).toEqual(role === "any" ? "any" : { role: "admin" });
   });
 
-  it("asks an admin for any path still holding an escape", () => {
-    expect(needed("GET", "/api/builds/1/%70roducts/0")).toEqual({ role: "admin" });
-    expect(needed("GET", "/api/provisioning/media/1/%64ownload")).toEqual({ role: "admin" });
-    expect(needed("GET", "/api/hosts/a%20b")).toEqual({ role: "admin" });
+  it.each([
+    ["GET", "/api/no-such-route", "any"],
+    ["POST", "/api/no-such-route", "admin"],
+    ["GET", "/api/builds/1/products/0", "admin"],
+    ["GET", "/api/builds/1/products/0/", "admin"],
+    ["GET", "/api/provisioning/media/1/download", "admin"],
+    ["GET", "/api/builds/1/products%2F0", "admin"],
+    ["GET", "/api/hosts/a%3Fb", "admin"],
+  ] as const)("asks %s %s, which no route matched, for %s", (method, path, role) => {
+    expect(needed(method, path, null)).toEqual(role === "any" ? "any" : { role: "admin" });
   });
 });
 

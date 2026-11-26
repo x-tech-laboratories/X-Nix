@@ -12,6 +12,10 @@ version.
 
 ### 2026-11-26
 
+- docs(auth): describe the sign-in limits and how a proxy shares them
+- feat(agents): sign what the server sends agents with a server key, and have agents check it
+- fix(auth): decide who may call a route by its matched pattern
+- build(deps): bump X-Libs to 0.89.0
 - fix(auth): refuse request paths that are not spelled canonically
 - fix(jobs): read only marker lines that carry the run's own token
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
