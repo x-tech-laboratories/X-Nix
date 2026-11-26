@@ -237,6 +237,24 @@ describe("a fleet run", () => {
     expect(stopped.state).toBe("stopped");
   });
 
+  it("has a guarded switch that activated roll back rather than stop, saying so", async () => {
+    const { harnesses, store, agent } = make_fleet([{ id: "web-1", magic_rollback: true }]);
+    const deployments = new Map([...harnesses].map(([id, harness]) => [id, harness.deployment]));
+    const agents = harnesses.get("web-1")!.agents;
+    const fleet = new Fleet(deployments, { store, settings: fleet_settings({}), now: () => clock.now, stop_job: (job_id, by) => stop_job(store, agents, job_id, by, () => clock.now) });
+    const { run } = await fleet.start({ action: "switch", selector: "*" });
+    agent.write(run_of(agent, "web-1")!, "@@x-nix-switch activated\n");
+    await harnesses.get("web-1")!.deployment.cycle();
+
+    const outcome = await fleet.stop(run!.id, { jobs: true, by: "admin" });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.message).toContain("web-1: Job #");
+    expect(outcome.message).toContain("watchdog was told to roll back");
+    expect(run_of(agent, "web-1")!.stopped).toBe(false);
+    expect(agent.operations.some((operation) => operation.kind === "signal_rollback")).toBe(true);
+  });
+
   it("refuses to stop jobs without a way to stop them", async () => {
     const { fleet } = make_fleet([{ id: "web-1" }]);
     const { run } = await fleet.start({ action: "build", selector: "*" });

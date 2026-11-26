@@ -99,7 +99,8 @@ export interface FleetOptions {
   // Asks the deployment's cycle to come soon, so a started job or a switch's evaluation is followed quickly.
   poke?: (deployment: Deployment) => void;
   // Stops a running job, for a stop that also ends the jobs already running; such a stop is refused without it.
-  stop_job?: (job_id: number, by: string) => Promise<{ ok: boolean; message: string }>;
+  // A guarded switch past its activation answers with rolling_back set, as its watchdog was told to roll back instead.
+  stop_job?: (job_id: number, by: string) => Promise<{ ok: boolean; message: string; rolling_back?: boolean }>;
   // The time in seconds, which tests set.
   now?: () => number;
 }
@@ -282,16 +283,16 @@ export class Fleet {
       if (run.state !== "running") return { ok: false, message: `Fleet run #${id} has already ended`, run };
       if (options.jobs === true && this.stop_job === undefined) return { ok: false, message: "This server cannot stop jobs", run };
       run.stop_requested = true;
-      const failures = options.jobs === true ? await this.stop_running_jobs(run, options.by ?? "manual") : [];
+      const notes = options.jobs === true ? await this.stop_running_jobs(run, options.by ?? "manual") : { failures: [], rolling_back: [] };
       await this.advance_run(run);
       const message = options.jobs === true ? `Fleet run #${id} is stopping, with its running jobs` : `Fleet run #${id} is stopping`;
-      return { ok: failures.length === 0, message: [message, ...failures].join("; "), run: this.run(id) };
+      return { ok: notes.failures.length === 0, message: [message, ...notes.rolling_back, ...notes.failures].join("; "), run: this.run(id) };
     });
   }
 
-  // Stops the job of every host still running, all at once, and answers with why any could not be stopped; a Build still
-  // held for its host ends there, before it has a run.
-  private async stop_running_jobs(run: FleetRun, by: string): Promise<string[]> {
+  // Stops the job of every host still running, all at once, and answers with why any could not be stopped and which
+  // guarded switches roll back instead; a Build still held for its host ends there, before it has a run.
+  private async stop_running_jobs(run: FleetRun, by: string): Promise<{ failures: string[]; rolling_back: string[] }> {
     const running = run.hosts.filter((host) => host.state === "running" && host.job_id !== null);
     const stop = async (host: FleetHost) => {
       const held = await this.deployments.get(host.deployment_id)?.stop_held_build(host.job_id!, by);
@@ -299,16 +300,18 @@ export class Fleet {
     };
     const outcomes = await Promise.all(running.map(async (host) => ({ host, outcome: await stop(host) })));
     const failures: string[] = [];
+    const rolling_back: string[] = [];
     for (const { host, outcome } of outcomes) {
       if (!outcome.ok) {
         failures.push(`${host.name}: ${outcome.message}`);
         continue;
       }
+      if ("rolling_back" in outcome && outcome.rolling_back === true) rolling_back.push(`${host.name}: ${outcome.message}`);
       run.stopped_jobs = [...(run.stopped_jobs ?? []), host.job_id!];
       const deployment = this.deployments.get(host.deployment_id);
       if (deployment !== undefined) this.poke(deployment);
     }
-    return failures;
+    return { failures, rolling_back };
   }
 
   // Lets a run held for approval start its next stage, once any soak still running has passed.

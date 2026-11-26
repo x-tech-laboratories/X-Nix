@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(jobs): have stopping a guarded switch after its activation roll it back through its watchdog
 - fix(builds): read any structured log line nix did not write as plain text instead of failing the job
 - fix(hosts): hold reboots and collections off while a deployment switches, and switches while a collection runs
 - fix(store): cap a job's output, prune old history and bound pull reports

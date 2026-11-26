@@ -6,7 +6,8 @@ import { follow_run, type Followed, type RunSink } from "@x-tech-laboratories/x-
 
 import { StoppedBeforeStart, type AgentPool, type LongRun } from "./agents/agent.ts";
 import { kept_awake_job } from "./agents/wake.ts";
-import type { Operation } from "../shared/operations.ts";
+import { rollback_signal_operation, switch_verdict, watch_token } from "./nixos/switch.ts";
+import { innermost, operation_of, type Operation } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Following ────────────────────────────────────────────────────────────────
@@ -43,10 +44,28 @@ export interface StopOutcome {
   ok: boolean;
   message: string;
   job_id: number | null;
+  // Set when the job was a guarded switch past its activation, whose watchdog was told to roll back rather than the run stopped.
+  rolling_back?: boolean;
 }
 
-// Stops a running job's long run on its agent, waiting for its processes to end; the job's owner finishes it on its
-// next cycle, so whatever the owner does after a job, such as reading a switch's verdict, still happens.
+// How long the agent has to deliver a rollback signal.
+const signal_timeout_in_seconds = 60;
+
+// A stopped guarded switch whose watchdog was told to roll back, and when it is stopped outright should it still run.
+interface RollingBack {
+  store: Store;
+  agents: AgentPool;
+  job_id: number;
+  by: string;
+  deadline_epoch: number;
+}
+
+// The stopped guarded switches still rolling back, by run id, as run ids are unique across stores.
+const rolling_back = new Map<string, RollingBack>();
+
+// Stops a running job's long run on its agent, waiting for its processes to end, and the job's owner finishes it on its
+// next cycle; a guarded switch past its activation, whose watchdog lives in the run, has its watchdog told to roll back
+// instead, and is stopped outright only when that signal fails or no outcome comes within the watchdog's window.
 export async function stop_job(store: Store, agents: AgentPool, job_id: number, by: string, now: () => number): Promise<StopOutcome> {
   const job = store.job(job_id);
   if (job === null) return { ok: false, message: "No such job", job_id: null };
@@ -57,19 +76,84 @@ export async function stop_job(store: Store, agents: AgentPool, job_id: number, 
     store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind}) before its host woke`);
     return { ok: true, message: `Stopped job #${job_id} before it started`, job_id };
   }
+  const pending = rolling_back.get(job.run_id);
+  if (pending !== undefined && now() < pending.deadline_epoch) {
+    return refuse(`Job #${job_id} is rolling back, as ${pending.by} asked; it is stopped outright if no outcome has come by ${new Date(pending.deadline_epoch * 1000).toISOString()}`);
+  }
+  const window = pending === undefined ? guarded_window(job.command, job.output) : null;
+  if (window !== null) {
+    const signalled = await signal_rollback(agents, job.agent, watch_token(job.command)!, `Stopped by ${by} after the activation`);
+    if (signalled === null) {
+      const deadline_epoch = now() + window;
+      rolling_back.set(job.run_id, { store, agents, job_id, by, deadline_epoch });
+      setTimeout(() => void stop_overdue_rollbacks(() => Math.max(now(), deadline_epoch)), window * 1000).unref();
+      store.append_output(job_id, `${by} stopped the switch after it activated; told its watchdog to roll back, and the job ends with its outcome\n`);
+      store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind}) after it activated; its watchdog rolls the host back`);
+      return {
+        ok: true, job_id, rolling_back: true,
+        message: `Job #${job_id} had activated under its watchdog, so the watchdog was told to roll back; the job ends with its outcome, or is stopped outright after ${window} seconds`,
+      };
+    }
+    store.append_output(job_id, `Could not tell the watchdog to roll back (${signalled}), so the run is stopped outright\n`);
+  }
+  return hard_stop(store, agents, job, by, now, window === null ? "" : "; its watchdog could not be told to roll back, so nothing will roll the host back");
+}
+
+// Stops outright every stopped guarded switch still running past its watchdog's window, forgetting those that ended.
+export async function stop_overdue_rollbacks(now: () => number): Promise<void> {
+  for (const [run_id, pending] of rolling_back) {
+    const job = pending.store.job(pending.job_id);
+    if (job === null || job.state !== "running") {
+      rolling_back.delete(run_id);
+      continue;
+    }
+    if (now() < pending.deadline_epoch) continue;
+    rolling_back.delete(run_id);
+    pending.store.append_output(job.id, "No outcome came from the watchdog in its window, so the run is stopped outright\n");
+    await hard_stop(pending.store, pending.agents, job, pending.by, now, "; its watchdog gave no outcome in its window");
+  }
+}
+
+// How long a guarded switch that has activated without an outcome may take to end once its watchdog is told to roll
+// back, in seconds, or null for any other job.
+function guarded_window(command: string, output: string): number | null {
+  if (watch_token(command) === null) return null;
+  const operation = operation_of(command);
+  const inner = operation === null ? null : innermost(operation);
+  if (inner?.kind !== "switch" || !inner.watch) return null;
+  const verdict = switch_verdict(output);
+  if (!verdict.activated || verdict.outcome !== null) return null;
+  // The run waits this long for the watchdog's outcome after the activation, which bounds the rollback too.
+  return inner.watch.activation_timeout + inner.watch.confirm_window + 120;
+}
+
+// Tells a guarded switch's watchdog to roll back, answering null once it has, or why it could not.
+async function signal_rollback(agents: AgentPool, host: string | null, token: string, reason: string): Promise<string | null> {
+  try {
+    const result = await agents.get(host).run(rollback_signal_operation(token, reason), { timeout_in_seconds: signal_timeout_in_seconds });
+    return result.exit_code === 0 ? null : (result.stderr || result.stdout).trim().slice(0, 200) || `status ${result.exit_code}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+// Stops the run itself, ending every process in its unit, the watchdog of a guarded switch among them.
+async function hard_stop(store: Store, agents: AgentPool, job: Job, by: string, now: () => number, note: string): Promise<StopOutcome> {
+  const job_id = job.id;
+  const refuse = (message: string): StopOutcome => ({ ok: false, message, job_id });
   let run: LongRun;
   try {
-    run = await agents.stop(job.agent, job.run_id, by);
+    run = await agents.stop(job.agent, job.run_id!, by);
   } catch (error) {
     return refuse(`Could not stop job #${job_id}: ${error instanceof Error ? error.message : String(error)}`);
   }
   // A run that ended on its own before the stop reached it keeps its own outcome.
   if (run.state !== "stopped") {
-    agents.stopped_by(job.run_id, true);
+    agents.stopped_by(job.run_id!, true);
     return refuse(`Job #${job_id} had already ended before it could be stopped`);
   }
-  store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind})`);
-  return { ok: true, message: `Stopped job #${job_id}`, job_id };
+  store.add_event(job.deployment_id, now(), "warning", `${by} stopped job #${job_id} (${job.kind})${note}`);
+  return { ok: true, message: `Stopped job #${job_id}${note}`, job_id };
 }
 
 // ── A host's runs ────────────────────────────────────────────────────────────
