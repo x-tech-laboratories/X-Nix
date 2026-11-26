@@ -1,0 +1,12 @@
+{
+  "set_system_profile": "^-p /nix/var/nix/profiles/system --set /nix/store/[0-9a-z]{32}-nixos-system-[^ /]+$",
+  "switch_generation": "^-p /nix/var/nix/profiles/system --switch-generation [1-9][0-9]*$",
+  "copy_checked_lock": "^-T /[^ ]*/x-nix-update-[A-Za-z0-9]{6}/flake\\.lock /(.*/)?flake\\.lock$",
+  "kill_term": "^-TERM( ([2-9]|[1-9][0-9]+))+$",
+  "kill_kill": "^-KILL( ([2-9]|[1-9][0-9]+))+$",
+  "stop_run_unit": "^stop x-nix-run-[A-Za-z0-9_-][A-Za-z0-9._-]*\\.service$",
+  "start_run_unit": "^--unit=x-nix-run-[A-Za-z0-9_-][A-Za-z0-9._-]*\\.service --quiet --collect --uid=@uid@ --gid=@gid@ --working-directory=@runs@/[A-Za-z0-9_-][A-Za-z0-9._-]*( --slice=[A-Za-z0-9_.@-]+\\.slice)?( --property (ExitType=cgroup|TimeoutStopSec=[0-9]+ms|EnvironmentFile=@runs@/[A-Za-z0-9_-][A-Za-z0-9._-]*/environment|StandardInput=file:@runs@/[A-Za-z0-9_-][A-Za-z0-9._-]*/stdin@properties@))* -- /nix/store/[0-9a-z]{32}-[^ /]+/bin/node /nix/store/[0-9a-z]{32}-[^ /]+/lib/x-nix-agent/src/agent/runner\\.ts @runs@/[A-Za-z0-9_-][A-Za-z0-9._-]*$",
+  "set_oneshot_entry": "^set-oneshot [^ -][^ ]*( [^ -][^ ]*)*$",
+  "grub_reboot_entry": "^[^-]([^-]|-[^-])*-?$",
+  "efi_boot_next": "^--bootnext [0-9A-Fa-f]{4}$"
+}

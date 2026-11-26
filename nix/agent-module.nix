@@ -19,7 +19,9 @@ let
 
   json = pkgs.formats.json { };
 
-  sudo_rules = import ./sudo-rules.nix { inherit pkgs; };
+  sudo_rules = import ./sudo-rules.nix { inherit pkgs lib; };
+
+  sudo_allow = import ./sudo-allow.nix { inherit lib; };
 
   pull_file = json.generate "x-nix-agent-pull.json" {
     inherit (cfg.pull)
@@ -97,6 +99,16 @@ in
       the NOPASSWD sudo rules for every command the agent runs under `sudo -n` on this host, pull
       mode's switch included, as README.md lists; turn them off only to write your own
     '' // { default = true; };
+
+    sudoAllow = sudo_allow.options {
+      runUnits = lib.mkEnableOption ''
+        the rules that start and stop each long run's transient unit, `x-nix-run-<run id>.service`,
+        running the agent's own runner as the agent's user; needed only with `runUnits.enable`
+      '' // {
+        default = cfg.runUnits.enable;
+        defaultText = literalExpression "config.services.x-nix-agent.runUnits.enable";
+      };
+    };
 
     runUnits = {
       enable = mkEnableOption ''
@@ -228,7 +240,17 @@ in
     };
     users.groups.x-nix-agent = { };
 
-    security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix-agent") ];
+    security.sudo.extraRules = mkIf cfg.sudoRules [
+      (sudo_rules {
+        user = "x-nix-agent";
+        allow = cfg.sudoAllow;
+        inherit state_directory;
+        run_unit_properties = cfg.runUnits.properties;
+        inherit (config.users.users.x-nix-agent) uid;
+        inherit (config.users.groups.x-nix-agent) gid;
+        sudo_package = config.security.sudo.package;
+      })
+    ];
 
     # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
     nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;

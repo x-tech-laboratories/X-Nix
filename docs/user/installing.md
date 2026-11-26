@@ -89,6 +89,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `signIn.adminSecondFactor` | `true`   | Admins must set up a second factor before they change anything.          |
 | `localAgent`        | `false`         | Work on the server's own machine from the server itself rather than through its agent. |
 | `sudoRules`         | `localAgent`    | Install the sudo rules the built-in agent needs; see [below](#what-runs-as-root). |
+| `sudoAllow.*`       | all on          | Drop groups of those rules this host does not use; see [Least privilege](#least-privilege). |
 
 ### Without the module
 
@@ -141,24 +142,55 @@ folder, `/var/lib/x-nix-media`, which the agent writes and the server reads. A f
 then stops at the `x-nix` user, though an admin's account can still switch every machine.
 
 Switching, rolling back, rebooting, collecting garbage, setting the next boot and keeping a host awake need root. The
-agent module ships sudo rules, and so does the server module when `localAgent` is on, that let the service user run exactly those commands with `sudo -n` and no password, each
-matched by its path under `/run/current-system/sw/bin`. They cover:
+agent module ships sudo rules, and so does the server module when `localAgent` is on, that let the service user run
+those commands with `sudo -n` and no password, each matched by its path under `/run/current-system/sw/bin`. Where the
+command line is fixed, a rule is a regular expression over all its arguments (sudo 1.9.10 or later), so it allows that
+command line and no other; with an older sudo the module falls back to wider shell-style patterns.
 
-- `nixos-rebuild` in each mode with `--flake`, pull mode's `git+` switch included;
-- a switch that fetches what another machine built: `nix-env -p /nix/var/nix/profiles/system --set /nix/store/*` and
-  that system's `switch-to-configuration` in each mode;
-- rollbacks and the watchdog: `nix-env ... --switch-generation *` and the system profile's `switch-to-configuration`;
-- a flake's Update on a local checkout: `nix ... flake update --flake *`, and the `cp -T` that writes the lock it
-  checked over the checkout's;
-- `systemctl reboot` and `nix-collect-garbage`;
-- the boot loader's reads and one-shot setters: `bootctl list --json=short`, `cat /boot/grub/grub.cfg`,
-  `grub-editenv list`, `bootctl set-oneshot`, `grub-reboot`, `efibootmgr --bootnext`;
-- the `keep_awake` inhibitor, `systemd-inhibit`;
-- `/bin/sh -c *` for `post_switch`, and `ssh` for `target_host`.
+| Rule                                                                   | For                                          | Arguments allowed |
+| ---------------------------------------------------------------------- | -------------------------------------------- | ----------------- |
+| `nixos-rebuild <mode> --flake …`                                        | switch, boot, test, dry activation, pull mode | any flake and `rebuild_args` |
+| `/nix/store/*-nixos-system-*/bin/switch-to-configuration <mode>`        | switch from the cache, the watchdog's rollback | any NixOS system in the store |
+| `nix-env -p /nix/var/nix/profiles/system --switch-generation N`         | rollback, the watchdog                       | a generation number |
+| `/nix/var/nix/profiles/system/bin/switch-to-configuration switch`       | rollback                                     | exact |
+| `systemctl reboot`, `bootctl list --json=short`, `cat /boot/grub/grub.cfg`, `grub-editenv list`, `systemd-inhibit … cat` | reboot, boot entries, `keep_awake` | exact |
+| `nix-collect-garbage`                                                   | Collect Garbage                              | any, or exactly `sudoAllow.collectGarbageArgs` |
+| `nix-env -p /nix/var/nix/profiles/system --set /nix/store/<hash>-nixos-system-…` | `sudoAllow.cacheSwitch`             | one NixOS system |
+| `nix … flake update --flake …` and `cp -T <tmp>/x-nix-update-XXXXXX/flake.lock …/flake.lock` | `sudoAllow.flakeUpdates` | any `nix_args`; the copy is exact |
+| `kill -TERM <pids>`, `kill -KILL <pids>`                                | `sudoAllow.lockHolders`                      | process ids other than 1 |
+| `systemd-run --unit=x-nix-run-<run id>.service … -- <node> <runner.ts> <run folder>`, `systemctl stop x-nix-run-<run id>.service` | `sudoAllow.runUnits` (agent only) | the agent's runner as a non-root user, with the module's properties |
+| `bootctl set-oneshot <entry>`, `grub-reboot <entry>`, `efibootmgr --bootnext XXXX` | `sudoAllow.bootEntries`              | one entry, no options |
+| `/bin/sh -c …`                                                          | `sudoAllow.postSwitch`                       | any command |
+| `ssh …`                                                                 | `sudoAllow.targetHost`                       | any |
 
-A service that activates whole systems can do anything root can, which is why some rules take any arguments. Treat the
-`x-nix-agent` user as root, and the `x-nix` user too when `localAgent` is on, as its unit is then left unsandboxed so a
-switch can write the system. Set `sudoRules = false` on either module to write your own, such as for a
-`rebuild_bin` outside the system profile.
+The `x-nix-agent` user is root-equivalent, and so is the `x-nix` user when `localAgent` is on, whatever you turn off:
+`nixos-rebuild` builds and activates whatever flake it is given, and `switch-to-configuration` runs from any store path
+named like a NixOS system, which any user can add to the store. The `post_switch`, `ssh` and unrestricted
+`nix-collect-garbage` and `nix flake update` rules are each a root shell on their own, too. The narrow rules keep a
+mistake or a confused command to the one thing it was meant for; they are not a boundary against someone who controls
+the agent or the server. The server module's unit is left unsandboxed with `localAgent`, so a switch can write the
+system. Set `sudoRules = false` on either module to write your own, such as for a `rebuild_bin` outside the system
+profile.
+
+### Least privilege
+
+Every `sudoAllow` option defaults to what the code may need, so an upgrade changes nothing a host uses. Turn off on a
+host what no deployment switched on it uses (the server module takes the same options for `localAgent`):
+
+```nix
+services.x-nix-agent.sudoAllow = {
+  postSwitch = false;   # no deployment on this host sets post_switch
+  targetHost = false;   # none switches another machine with target_host
+  bootEntries = false;  # nobody uses Set next boot here
+  lockHolders = false;  # none sets close_nix_lock_holders
+  flakeUpdates = false; # no flake updated here is a local checkout
+  cacheSwitch = false;  # none switches from a cache (cache or cache_url)
+  collectGarbageArgs = [ "--delete-older-than" "7d" ]; # exactly this host's gc.gc_args
+};
+```
+
+A deployment whose setting needs a rule you turned off fails at that step with sudo's "a password is required". Setting
+`users.users.x-nix-agent.uid` and `users.groups.x-nix-agent.gid` lets the run unit rule name the agent's own ids rather
+than any id but root's; set them only to the ids the user already has. `runUnits` follows `runUnits.enable`.
 
 Both services carry `nix-diff`, `nixos-anywhere`, `ssh` and `nix-eval-jobs` on their PATH.

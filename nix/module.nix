@@ -16,7 +16,9 @@ let
 
   json = pkgs.formats.json { };
 
-  sudo_rules = import ./sudo-rules.nix { inherit pkgs; };
+  sudo_rules = import ./sudo-rules.nix { inherit pkgs lib; };
+
+  sudo_allow = import ./sudo-allow.nix { inherit lib; };
 
   # systemd places each loaded secret here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix.service";
@@ -260,6 +262,9 @@ in
         write your own, such as for a rebuild_bin outside the system profile.
       '';
     };
+
+    # The built-in agent runs no long run as a transient unit, so the server's rules never include those.
+    sudoAllow = sudo_allow.options { };
   };
 
   config = mkIf cfg.enable {
@@ -373,7 +378,13 @@ in
       };
     };
 
-    security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix") ];
+    security.sudo.extraRules = mkIf cfg.sudoRules [
+      (sudo_rules {
+        user = "x-nix";
+        allow = cfg.sudoAllow;
+        sudo_package = config.security.sudo.package;
+      })
+    ];
 
     # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
     nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;
