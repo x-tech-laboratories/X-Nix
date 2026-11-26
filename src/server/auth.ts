@@ -45,6 +45,8 @@ const download_routes = [/^\/api\/builds\/[^/]+\/products\/[^/]+$/, /^\/api\/pro
 // Reading is open to every user, but for downloads; anything else needs an admin. MCP is open to every user too, as
 // each tool's route is checked again on its own.
 export function needed(method: string, path: string): Need {
+  // A path still holding an escape needs an admin, so no spelling of a download reads as an open route.
+  if (path.includes("%")) return { role: "admin" };
   if (download_routes.some((route) => route.test(path))) return { role: "admin" };
   return method === "GET" || path === "/api/mcp" ? "any" : { role: "admin" };
 }
