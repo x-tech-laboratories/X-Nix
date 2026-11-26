@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 
@@ -317,6 +318,67 @@ describe("logging in", () => {
     await inject("POST", "/api/logout");
 
     expect((await inject("GET", "/api/deployments")).statusCode).toBe(401);
+  });
+});
+
+describe("a path not spelled canonically", () => {
+  // Sends one raw request line over a socket, as a client may send a target the test injector would rewrite.
+  async function raw_request(server: FastifyInstance, target: string): Promise<string> {
+    const address = new URL(await server.listen({ host: "127.0.0.1", port: 0 }));
+    const socket = connect(Number(address.port), address.hostname);
+    socket.end(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+    let answer = "";
+    for await (const chunk of socket) answer += String(chunk);
+    return answer.split("\r\n")[0];
+  }
+
+  it("is refused without a session before any route runs", async () => {
+    const harness = make_deployment();
+    const { server } = await start_app(harness, [], [], [harness.host]);
+    const targets: ["GET" | "POST", string][] = [
+      ["GET", "/%61pi/hosts"], ["POST", "/%61pi/hosts/host/actions/reboot"], ["POST", "/%61pi/deployments/host-deploy/actions/switch"],
+      ["GET", "/%61pi/users"], ["GET", "/api/%68osts"], ["GET", "//api/hosts"], ["GET", "/api;x/hosts"], ["GET", "/%2561pi/hosts"],
+      ["GET", "/%61Pi/hosts"], ["GET", "/%41pi/hosts"], ["POST", "/api/hosts/host/actions/%72eboot"], ["GET", "/api/./hosts"],
+    ];
+
+    for (const [method, url] of targets) {
+      const response = await server.inject({ method, url });
+      expect([400, 401], `${method} ${url}`).toContain(response.statusCode);
+    }
+    expect(harness.store.jobs()).toEqual([]);
+    expect(harness.agent.commands).toEqual([]);
+  });
+
+  it("is refused when sent as an absolute URL", async () => {
+    const { server } = await start_app();
+
+    expect(await raw_request(server, "http://localhost/api/hosts")).toBe("HTTP/1.1 400 Bad Request");
+  });
+
+  it("does not let a viewer download", async () => {
+    const { server, inject } = await start_app();
+    await inject("POST", "/api/users", { name: "vera", role: "viewer", access: null, password: "a long viewer password" });
+    const login = await server.inject({ method: "POST", url: "/api/login", payload: { name: "vera", password: "a long viewer password" } });
+    const headers = { cookie: String(login.headers["set-cookie"]).split(";")[0] };
+
+    for (const url of ["/api/builds/1/%70roducts/0", "/api/provisioning/media/1/%64ownload?path=nixos.iso", "/api/builds/1/products/%30%2F"]) {
+      const response = await server.inject({ method: "GET", url, headers });
+      expect([400, 403], url).toContain(response.statusCode);
+    }
+    expect((await server.inject({ method: "GET", url: "/api/hosts", headers })).statusCode).toBe(200);
+  });
+
+  it("leaves canonical paths, escaped names and query strings as they were", async () => {
+    const harness = make_deployment();
+    const { server, inject } = await start_app(harness, [], [], [harness.host]);
+
+    expect((await server.inject({ method: "GET", url: "/api/health?x=%61" })).statusCode).toBe(200);
+    expect((await server.inject({ method: "POST", url: "/api/webhook" })).statusCode).toBe(404);
+    expect((await server.inject({ method: "GET", url: "/api/hosts" })).statusCode).toBe(401);
+    expect((await inject("GET", "/api/hosts/host")).statusCode).toBe(200);
+    expect((await inject("GET", "/api/hosts/no%20such%20host")).json()).toEqual({ error: "No host named 'no such host'" });
+    expect((await inject("GET", "/api/hosts/h%C3%B6st")).json()).toEqual({ error: "No host named 'höst'" });
+    expect((await inject("GET", "/api/deployments/host-deploy?view=%61")).statusCode).toBe(200);
   });
 });
 
