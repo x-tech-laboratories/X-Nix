@@ -10,6 +10,10 @@ version.
 
 ## Unreleased
 
+### 2026-11-26
+
+- fix(fleet): match selectors with a glob matcher and cap their length and terms
+
 ### 2026-11-24
 
 - docs(roadmap): note the flaky agent key test

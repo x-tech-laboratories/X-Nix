@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ConfigError, deployment_settings, fleet_settings, parse_config } from "../src/server/config.ts";
-import { Fleet, selector_matches, type FleetRun } from "../src/server/fleet.ts";
+import { Fleet, glob_matches, max_selector_length, max_selector_terms, selector_matches, selector_problem, term_matches, type FleetRun } from "../src/server/fleet.ts";
 import { pinned_flake } from "../src/server/nixos/flake.ts";
 import { stop_job } from "../src/server/runs.ts";
 import { Store } from "../src/server/store.ts";
@@ -70,6 +70,39 @@ describe("a selector", () => {
     expect(selector_matches("db-* @db", web)).toBe(false);
     expect(selector_matches("db-*, @web", web)).toBe(true);
     expect(selector_matches("web", web)).toBe(false);
+  });
+
+  // The regular expression selectors were matched with before the glob matcher, kept to compare against.
+  const regular_expression_matches = (term: string, text: string) =>
+    new RegExp(`^${term.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*").replaceAll("?", ".")}$`).test(text);
+
+  it("matches every glob exactly as the regular expression it replaced did", () => {
+    const globs = ["*", "**", "?", "web-*", "*-1", "w*b*1", "web?1", "Web?one", "WEB-*", "web-1", "web-1*", "*web-1*", "?eb-?", "w?*1", "*?", "a*b*c",
+      "web.1", "web+1", "(web)", "[web]", "w|b", "^web", "web$", "\\w", "{1}", "*.*", "web-**1", "*1*1*", "", "é*", "*\u{1F600}"];
+    const texts = ["web-1", "web.1", "web+1", "Web one", "web", "", "w", "abc", "aXbXc", "web-11", "(web)", "[web]", "w|b", "^web", "web$", "\\w", "{1}",
+      "multi\nline", "carriage\rline", "é-1", "x\u{1F600}", "web-1\n"];
+    for (const glob of globs) {
+      for (const text of texts) expect([glob, text, glob_matches(glob, text)]).toEqual([glob, text, regular_expression_matches(glob, text)]);
+    }
+  });
+
+  it("answers at once for a term with many wildcards, and refuses a selector over the limits", () => {
+    const started = performance.now();
+    for (let round = 0; round < 1000; round++) term_matches(`${"*".repeat(500)}Z`, { id: "a".repeat(200), name: "b".repeat(200), tags: [] });
+    expect(glob_matches(`${"*".repeat(500)}Z`, `${"a".repeat(5000)}`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(selector_problem("web-* @canary")).toBeNull();
+    expect(selector_problem("*".repeat(max_selector_length + 1))).toContain(`${max_selector_length} characters`);
+    expect(selector_problem(Array.from({ length: max_selector_terms + 1 }, (_, index) => `web-${index}`).join(" "))).toContain(`${max_selector_terms} terms`);
+  });
+
+  it("over the limits is refused by a fleet run, its stages and the select route's check", async () => {
+    const { fleet } = make_fleet([{ id: "web-1", host: "web-1" }]);
+    expect(fleet.selector_problem("x".repeat(max_selector_length + 1))).not.toBeNull();
+    expect(await fleet.start({ action: "build", selector: "x".repeat(max_selector_length + 1) })).toMatchObject({ ok: false, message: expect.stringContaining("characters") });
+    expect(await fleet.start({ action: "build", selector: "web-*", staged: true, stages: ["y".repeat(max_selector_length + 1)] })).toMatchObject({ ok: false });
+    expect(await fleet.start({ action: "build", selector: "web-*", staged: true, stages: Array.from({ length: max_selector_terms + 1 }, () => "@canary") }))
+      .toMatchObject({ ok: false, message: expect.stringContaining("stages") });
   });
 });
 

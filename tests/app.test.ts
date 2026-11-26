@@ -155,6 +155,17 @@ describe("/api/deployments", () => {
   });
 });
 
+describe("/api/fleet/select", () => {
+  it("lists what a selector picks, and refuses one over the limits with 400", async () => {
+    const { inject } = await start_app();
+
+    expect((await inject("GET", "/api/fleet/select?selector=host-*")).json()).toEqual(["host-deploy"]);
+    const refused = await inject("GET", `/api/fleet/select?selector=${"*".repeat(2000)}`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toContain("characters");
+  });
+});
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
 describe("/api/jobs/:id/stop", () => {
