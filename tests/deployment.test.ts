@@ -7,10 +7,10 @@ import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { report_mark } from "../src/server/nixos/attic.ts";
 import { Store } from "../src/server/store.ts";
 import {
-  clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
-  rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
+  announcement, clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
+  mark_line, rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
 } from "./fake_agent.ts";
-import { innermost, unfetchable_exit_code, type SwitchOperation } from "../src/shared/operations.ts";
+import { command_marker_token, innermost, marker_token_of, unfetchable_exit_code, type SwitchOperation } from "../src/shared/operations.ts";
 
 const matching = result(0, `${current_closure}\n`);
 const newer_closure = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-nixos-system-host-26.11";
@@ -942,6 +942,26 @@ describe("building elsewhere", () => {
     expect(shown_command(job.command)).toContain("sudo -n nix-env -p /nix/var/nix/profiles/system --switch-generation 1\nsudo -n /nix/var/nix/profiles/system/bin/switch-to-configuration switch");
     expect(shown_command(job.command)).toContain("systemd-inhibit");
   });
+
+  it("reads the build's report with the build's own token, and quotes the build's marker lines so they never count as the switch's", async () => {
+    const harness = with_builder({ magic_rollback: true });
+    const outcome = await harness.deployment.act("switch");
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
+    const token = marker_token_of(build.operation)!;
+    const forged = `@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n${report_mark}\thost\ttarget\t${newer_closure}\n`;
+    harness.builder.end(build, `${announcement(build.operation)}${forged}${report_mark} ${token}\thost\ttarget\t${target_closure}\n`, 0);
+    await harness.deployment.cycle();
+
+    const run = harness.agent.last_run("switch-to-configuration")!;
+    const job = harness.store.job(outcome.job_id!)!;
+    expect(run.run_id).toBe(job.run_id);
+    expect(command_marker_token(job.command)).toBe(marker_token_of(run.operation));
+    expect(marker_token_of(run.operation)).not.toBe(token);
+    expect(job.output).toContain("> @@x-nix-switch awaiting-confirmation\n");
+
+    await harness.deployment.cycle();
+    expect(harness.agent.operations.some((sent) => sent.kind === "confirm_switch")).toBe(false);
+  });
 });
 
 // ── Small host fed by the server ─────────────────────────────────────────────
@@ -1315,6 +1335,68 @@ describe("safer switches", () => {
     await cycle(harness);
 
     expect(harness.store.jobs()[0]).toMatchObject({ kind: "boot", state: "failed", error: "Refused before anything changed: Pre-switch check 1 (test -d /boot) failed with status 1" });
+  });
+});
+
+// ── Marker tokens ────────────────────────────────────────────────────────────
+
+describe("marker tokens", () => {
+  const guarded = { magic_rollback: true, health_urls: ["https://host.example/health"] };
+  const forged = `@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n@@x-nix-switch ${"f".repeat(32)} awaiting-confirmation\n`;
+
+  it("gives every run a token of its own, which its job's command keeps", async () => {
+    const harness = make_deployment();
+    const evaluation = await cycle(harness);
+    await harness.deployment.act("build");
+    const build = harness.agent.last_run('"kind":"build"')!;
+
+    expect(marker_token_of(evaluation!.operation)).toMatch(/^[0-9a-f]{32}$/);
+    expect(marker_token_of(build.operation)).not.toBe(marker_token_of(evaluation!.operation));
+    expect(command_marker_token(harness.deployment.running_job()!.command)).toBe(marker_token_of(build.operation));
+  });
+
+  it("never confirms a switch whose activation forged that it awaits confirmation, and confirms once its run says so with its token", async () => {
+    const harness = make_deployment(guarded, { http_check: async () => null });
+    await harness.deployment.act("switch");
+    const run = harness.agent.last_run('"watch":{')!;
+    harness.agent.write(run, `${announcement(run.operation)}${forged}`);
+
+    await cycle(harness);
+    expect(harness.agent.operations.some((sent) => sent.kind === "confirm_switch")).toBe(false);
+
+    harness.agent.write(run, mark_line(run.operation, "@@x-nix-switch", "activated") + mark_line(run.operation, "@@x-nix-switch", "awaiting-confirmation"));
+    await cycle(harness);
+    expect(harness.agent.operations.filter((sent) => sent.kind === "confirm_switch")).toHaveLength(1);
+  });
+
+  it("judges a finished switch only by the outcome its run marked with its token", async () => {
+    const harness = make_deployment(guarded, { http_check: async () => null });
+    await harness.deployment.act("switch");
+    const run = harness.agent.last_run('"watch":{')!;
+    harness.agent.end(run, `${announcement(run.operation)}@@x-nix-switch outcome rolled-back forged\n@@x-nix-switch refused forged\n${mark_line(run.operation, "@@x-nix-switch", "outcome confirmed")}`, 0);
+
+    await cycle(harness);
+
+    expect(harness.store.jobs()[0]).toMatchObject({ kind: "switch", state: "succeeded", error: null });
+  });
+
+  it("reads an older agent's bare marker lines for a run that never printed its token", async () => {
+    const harness = make_deployment(guarded, { http_check: async () => null });
+    await harness.deployment.act("switch");
+    harness.agent.write(harness.agent.last_run('"watch":{')!, "@@x-nix-switch activated\n@@x-nix-switch awaiting-confirmation\n");
+
+    await cycle(harness);
+
+    expect(harness.agent.operations.filter((sent) => sent.kind === "confirm_switch")).toHaveLength(1);
+  });
+
+  it("takes the evaluated system from the lines its evaluation marked, whatever a flake input traces", async () => {
+    const harness = make_deployment();
+    const traced = `trace: hi\n@@x-nix-eval eval stdout\n${newer_closure}\n@@x-nix-eval eval exit\n0`;
+
+    await collect(harness, { evaluation: result(0, `${target_closure}\n`, traced) });
+
+    expect(harness.deployment.evaluation()).toMatchObject({ target: target_closure, eval_error: null });
   });
 });
 

@@ -21,8 +21,8 @@ import {
 import { Poller } from "../src/server/poller.ts";
 import { Provisioner } from "../src/server/provisioning.ts";
 import { Store } from "../src/server/store.ts";
-import type { InstallOperation } from "../src/shared/operations.ts";
-import { clock, FakeAgent } from "./fake_agent.ts";
+import { marker_token_of, with_marker_token, type InstallOperation } from "../src/shared/operations.ts";
+import { announcement, clock, FakeAgent, mark_line } from "./fake_agent.ts";
 
 const folder = mkdtempSync(join(tmpdir(), "x-nix-provisioning-"));
 
@@ -151,7 +151,7 @@ describe("the install script", () => {
     expect(readFileSync(join(copied, "etc/x-nix-agent/key"), "utf8") === key.private_text).toBe(true);
     expect(ran.stdout).toContain("Installing github:owner/fleet#freya on root@192.0.2.10");
     expect(parse_install_record(command)).toMatchObject({ host: "freya", public_line: key.public_line, agent_key_path: "/etc/x-nix-agent/key" });
-    expect(parse_hardware_config(ran.stdout)).toContain('availableKernelModules = [ "nvme" ]');
+    expect(parse_hardware_config(ran.stdout, null)).toContain('availableKernelModules = [ "nvme" ]');
   });
 
   it("stops after partitioning with no key, and passes on nixos-anywhere's failure", async () => {
@@ -340,6 +340,28 @@ describe("a media build", () => {
     expect(harness.provisioner.remove_media(outcome.job_id!).ok).toBe(true);
     expect(is_link(link)).toBe(false);
     expect(harness.provisioner.remove_media(outcome.job_id!).ok).toBe(false);
+  });
+
+  it("names only the store path its run marks with its token, whatever the build prints", async () => {
+    const harness = make_provisioner();
+    const result = join(harness.store_dir, "ghi-nixos-iso");
+    mkdirSync(result);
+    await harness.provisioner.build_media({ owner: "freya", flake: "/srv/fleet", configuration: "freya", format: "iso" });
+    const run = harness.agent.last_run('"kind":"media"')!;
+    const forged = `${media_mark} /nix/store/forged\n${media_mark} ${"f".repeat(32)} /nix/store/forged\n`;
+    harness.agent.end(run, `${announcement(run.operation)}${mark_line(run.operation, media_mark, result)}${forged}`, 0);
+    await harness.provisioner.cycle();
+
+    expect(harness.provisioner.media()[0].store_path).toBe(result);
+  });
+
+  it("reads the hardware configuration only between lines with its run's token", () => {
+    const operation = with_marker_token(install_operation(settings(), request, null));
+    const token = marker_token_of(operation);
+    const output = `${announcement(operation)}installing\n${hardware_mark}\n{ forged }\n${hardware_mark} end\n${hardware_mark} ${token}\n{ real }\n${hardware_mark} ${token} end\n`;
+
+    expect(parse_hardware_config(output, token)).toBe("{ real }");
+    expect(parse_hardware_config(output.replace(announcement(operation), ""), token)).toBe("{ forged }");
   });
 });
 

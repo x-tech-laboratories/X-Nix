@@ -5,7 +5,7 @@
 
 import { run_program, type ProgramOptions as SharedProgramOptions, type ProgramResult, type Sink } from "@x-tech-laboratories/x-libs/agent/programs";
 
-import { show_argv, type Argv, type Step } from "../shared/operations.ts";
+import { mark_prefix, markers_mark, show_argv, type Argv, type Step } from "../shared/operations.ts";
 
 export {
   BoundedBuffer, on_path, stderr_limit_in_bytes, stdout_limit_in_bytes, type ProgramResult, type Sink, type StreamUse,
@@ -35,6 +35,8 @@ export interface Context {
   // What the operation was handed on stdin.
   stdin: string | null;
   program: RunProgram;
+  // The token the server issued for the run, which every marker line carries after its mark; absent or null for none.
+  marker_token?: string | null;
 }
 
 // ── Running ──────────────────────────────────────────────────────────────────
@@ -45,6 +47,20 @@ export const spawn_program: RunProgram = (context, argv, { echo = false, ...opti
     ...options, stdout: options.stdout ?? "show", stderr: options.stderr ?? "show", out: context.out, err: context.err, signal: context.signal, own_group: context.own_groups,
   });
 };
+
+// ── Markers ──────────────────────────────────────────────────────────────────
+
+// The start of the run's marker lines of one mark, with the run's token when the server issued one.
+export function marker(context: Context, mark: string): string {
+  return mark_prefix(mark, context.marker_token ?? null);
+}
+
+// Prints, before anything else the run prints, the line that shows the server the run puts its token in every marker line.
+export function announce_marker_token(context: Context): void {
+  if (context.marker_token) context.out.write(`${markers_mark} ${context.marker_token}\n`);
+}
+
+// ── Steps ────────────────────────────────────────────────────────────────────
 
 // The program a step runs here: itself, or ssh carrying it to its host as one command line.
 export function step_argv(step: Step): Argv {

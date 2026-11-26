@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { hardware_mark, media_mark, missing_tool_exit_code, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
-import { on_path, type Context } from "../programs.ts";
+import { marker, on_path, type Context } from "../programs.ts";
 import { real } from "./reads.ts";
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ export async function install(context: Context, operation: InstallOperation): Pr
 
     const installed = await context.program(context, argv, { echo: true });
     const generated = operation.generate_hardware_config ? read_text(hardware) : "";
-    if (generated !== "") say(`${hardware_mark}\n${generated}\n${hardware_mark} end`);
+    if (generated !== "") say(`${marker(context, hardware_mark)}\n${generated}\n${marker(context, hardware_mark)} end`);
     return installed.exit_code;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -119,6 +119,6 @@ export async function media(context: Context, operation: MediaOperation): Promis
   const argv = [...operation.nix, "build", "--impure", "--print-build-logs", "--out-link", operation.link, "--expr", operation.expression];
   const built = await context.program(context, argv, { echo: true });
   if (built.exit_code !== 0) return built.exit_code;
-  context.out.write(`${media_mark} ${real(operation.link) ?? ""}\n`);
+  context.out.write(`${marker(context, media_mark)} ${real(operation.link) ?? ""}\n`);
   return 0;
 }

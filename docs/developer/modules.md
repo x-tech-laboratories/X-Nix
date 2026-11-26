@@ -48,7 +48,7 @@ flowchart TB
 
 | Module               | Holds                                                                                     |
 | -------------------- | ----------------------------------------------------------------------------------------- |
-| `operations.ts`      | Every `Operation` type, `innermost()`, output marker lines (`@@x-nix-eval`, `@@x-nix-switch`, `@@x-nix-cache`, `@@x-nix-diff`, `@@x-nix-stall`), watch folders. |
+| `operations.ts`      | Every `Operation` type, `innermost()`, output marker lines (`@@x-nix-eval`, `@@x-nix-switch`, `@@x-nix-cache`, `@@x-nix-diff`, `@@x-nix-stall`) and their marker tokens, watch folders. |
 | `agent_protocol.ts`  | The `x_nix_app` description for X-Libs' agent protocol, and the `PullReport` shape.        |
 | `facts.ts`           | What the reads answer: `ProbeFields`, `GcFields`, `Boot`, `Generation`, `BuildProduct`.    |
 | `build_plan.ts`      | What a build plans to build and fetch, and the tree the job page draws.                    |

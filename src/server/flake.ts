@@ -17,7 +17,7 @@ import { format_age, format_duration } from "@x-tech-laboratories/x-libs/duratio
 import { AgentError, type AgentPool } from "./agents/agent.ts";
 import { level_of_status, worse, type FlakeSettings, type Status } from "./config.ts";
 import { latest_slot, type Message } from "./deployment.ts";
-import type { RemoteHeads } from "../shared/operations.ts";
+import { with_marker_token, type RemoteHeads } from "../shared/operations.ts";
 import { can_update, metadata_operation, remote_heads_operation, update_operation } from "./nixos/commands.ts";
 import { parse_metadata, resolve_ref, short_revision, type LockedInput } from "./nixos/flake.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
@@ -321,7 +321,7 @@ export class Flake {
   // ── Jobs ─────────────────────────────────────────────────────────────────
 
   private async launch(trigger: string): Promise<{ job_id: number | null; error: string; unreachable: boolean }> {
-    const operation = update_operation(this.settings, this.checked_attributes(this));
+    const operation = with_marker_token(update_operation(this.settings, this.checked_attributes(this)));
     const run_id = `${this.id}-update-${this.now()}-${randomBytes(3).toString("hex")}`;
     let waking: Promise<void> | null;
     try {

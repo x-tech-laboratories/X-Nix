@@ -3,9 +3,11 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { RunResult } from "../shared/agent_protocol.ts";
-import type { Operation } from "../shared/operations.ts";
+import { marker_token_of, type Operation } from "../shared/operations.ts";
 import { perform } from "./operations/index.ts";
-import { BoundedBuffer, spawn_program, stderr_limit_in_bytes, stdout_limit_in_bytes, type RunProgram } from "./programs.ts";
+import {
+  announce_marker_token, BoundedBuffer, spawn_program, stderr_limit_in_bytes, stdout_limit_in_bytes, type Context, type RunProgram,
+} from "./programs.ts";
 
 // ── Running ──────────────────────────────────────────────────────────────────
 
@@ -25,9 +27,13 @@ export async function run_operation(operation: Operation, options: RunOptions): 
     timed_out = true;
     controller.abort();
   }, options.timeout_in_seconds * 1000);
-  const context = { out, err, signal: controller.signal, own_groups: true, log: false, stdin: options.stdin ?? null, program: options.program ?? spawn_program };
+  const context: Context = {
+    out, err, signal: controller.signal, own_groups: true, log: false, stdin: options.stdin ?? null, program: options.program ?? spawn_program,
+    marker_token: marker_token_of(operation),
+  };
   let exit_code: number;
   try {
+    announce_marker_token(context);
     exit_code = await perform(context, operation);
   } catch (error) {
     err.write((error as Error).message);
