@@ -20,7 +20,7 @@
 import { format_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { DeploymentSettings } from "../config.ts";
-import { read_facts, type Generation } from "../../shared/facts.ts";
+import { max_parsed_line_length, read_facts, type Generation } from "../../shared/facts.ts";
 import {
   innermost, operation_of, switch_mark, type ConfirmSwitchOperation, type KeptAwakeOperation, type Operation, type SignalRollbackOperation, type Step,
   type SwitchDefer, type SwitchOperation, type SwitchWatch,
@@ -145,7 +145,7 @@ export function rollback_signal_operation(token: string, reason: string): Signal
 export function switch_verdict(output: string): SwitchVerdict {
   const verdict: SwitchVerdict = { refused: null, activated: false, units_failed: null, awaiting_confirmation: false, outcome: null };
   for (const line of output.split("\n")) {
-    const failed = /the following units failed: (.+)$/.exec(line);
+    const failed = line.length > max_parsed_line_length ? null : /the following units failed: (.+)$/.exec(line);
     if (failed !== null) verdict.units_failed = failed[1]!.trim();
     if (!line.startsWith(`${switch_mark} `)) continue;
     const words = line.slice(switch_mark.length + 1).trim();

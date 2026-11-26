@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { AgentError } from "../src/server/agents/agent.ts";
 import { ConfigError, host_settings } from "../src/server/config.ts";
-import { format_bytes } from "../src/server/nixos/garbage.ts";
+import { finished_collection, format_bytes, observed_collection } from "../src/server/nixos/garbage.ts";
+import { max_parsed_line_length, type GcFields } from "../src/shared/facts.ts";
 import { operation_of } from "../src/shared/operations.ts";
 import { clock, make_host, result, store_facts, type HostHarness as Harness } from "./fake_agent.ts";
 
@@ -248,6 +249,21 @@ describe("yield", () => {
 });
 
 // ── Schedule ─────────────────────────────────────────────────────────────────
+
+describe("a hostile collection output", () => {
+  it("is read in linear time however long its lines, and a line over the limit is skipped", () => {
+    const digits = "1".repeat(200_000);
+    const started = performance.now();
+    const run = finished_collection(`${digits}\n${digits} store paths deleted, 1 GiB freed\n12 store paths deleted, 2.0 GiB freed\n`, true, null, 100);
+    const fields = { summary: `100 ${digits}`, outcome: "", error: "", svc_exit: "@100", svc_result: "success" } as unknown as GcFields;
+    expect(observed_collection(fields)).toMatchObject({ deleted: null, freed_bytes: null });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect([run.deleted, run.freed_bytes]).toEqual([12, 2 * gib]);
+    const long_summary = `${" ".repeat(max_parsed_line_length)}5 store paths deleted, 1 GiB freed`;
+    expect(finished_collection(long_summary, true, null, 100).deleted).toBeNull();
+    expect(finished_collection("x5 store paths deleted, 1 KiB freed", true, null, 100).deleted).toBe(5);
+  });
+});
 
 describe("schedule", () => {
   it("warns when the timer is inactive, with its status from timer_status", async () => {

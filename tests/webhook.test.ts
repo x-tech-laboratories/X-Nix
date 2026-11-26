@@ -45,6 +45,13 @@ describe("a repository", () => {
     expect(normalize_repository("file:///srv/config")).toBeNull();
   });
 
+  it("is read at once from a URL ending in a great many slashes", () => {
+    const started = performance.now();
+    expect(normalize_repository(`https://github.com/owner/config${"/".repeat(200_000)}`)).toBe("github.com/owner/config");
+    expect(normalize_repository(`https://github.com/owner/${"/".repeat(200_000)}x`)).not.toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   it("is read from a forge or git flake with the branch it follows", () => {
     expect(repository_of("github:owner/config")).toEqual({ repository: "github.com/owner/config", branch: null });
     expect(repository_of("github:owner/config/staging")).toEqual({ repository: "github.com/owner/config", branch: "staging" });

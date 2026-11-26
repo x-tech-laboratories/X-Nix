@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(nixos): bound the agent output lines parsers run patterns on
 - fix(fleet): match selectors with a glob matcher and cap their length and terms
 
 ### 2026-11-24

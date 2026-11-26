@@ -331,3 +331,12 @@ describe("the wrappers", () => {
     expect(output()).not.toContain("No inhibitor");
   });
 });
+
+describe("a switch's verdict on hostile output", () => {
+  it("skips a failed-units line too long to be one, in linear time", () => {
+    const started = performance.now();
+    const verdict = switch_verdict(`${"the following units failed: ".repeat(40_000)}\r\nthe following units failed: nginx.service\n`);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(verdict.units_failed).toBe("nginx.service");
+  });
+});
