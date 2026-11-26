@@ -5,7 +5,8 @@
 // that outlives a restart of the server; later cycles poll it and judge drift against the stored evaluation until it
 // ends. A failed evaluation is retried after `retry_interval`. Build and switch run as long runs on the agent the
 // settings name, one at a time, and every action lands in the job history with its output. With `auto_switch`, drift
-// lasting `auto_switch_after` starts a switch once per target closure, and `build_at` starts a daily build. Updating
+// lasting `auto_switch_after` starts a switch once per target closure, once no earlier fleet stage holds it, and
+// `build_at` starts a daily build. Updating
 // the flake's lock is the flake's own job (see flake.ts).
 // The store, boot entries and reboot are the host's own (see host.ts). A pin, from the settings
 // or set on the page, fixes evaluation, build and switch at one commit or tag instead of the branch head.
@@ -98,6 +99,12 @@ export interface Evaluation {
   deferred_switch?: { reason: string; running: string | null };
   // The units that failed to start in the system a switch kept, until the host runs another; running is that system once read.
   units_failed?: { units: string; running: string | null };
+  // The revision the host has run in sync with since when; absent while it drifts.
+  in_sync?: { revision: string | null; since_epoch: number };
+  // The revision the last switch failed or rolled back at, and why; absent once a switch succeeds.
+  switch_failure?: { revision: string | null; reason: string };
+  // The target an automatic switch was last noted as held for, so each hold is noted once.
+  auto_switch_held?: string;
 }
 
 // What a switch waits on: a build on another host, or the system it built reaching the cache.
@@ -159,6 +166,8 @@ export interface DeploymentOptions {
   check_cache?: (cache: Cache) => void;
   // Has the flake with this id read its metadata again now, so its revision can be compared with the evaluation's.
   read_flake?: (flake_id: string) => void;
+  // Why an automatic switch to this revision waits on other deployments, such as earlier fleet stages, or null when it need not.
+  auto_switch_hold?: (deployment: Deployment, revision: string | null) => Message | null;
 }
 
 // What a request for the package diff answers: the diff, or why there is none.
@@ -221,6 +230,7 @@ export class Deployment {
   readonly host: Host | null;
   private readonly check_cache: (cache: Cache) => void;
   private readonly read_flake: (flake_id: string) => void;
+  private readonly auto_switch_hold: (deployment: Deployment, revision: string | null) => Message | null;
   // The disagreement between the evaluation's revision and the flake's own reading last asked about, so each is asked about once.
   private revision_mismatch_asked: string | null = null;
   // Switch jobs this server has confirmed or told to roll back, which need nothing more from it.
@@ -238,6 +248,7 @@ export class Deployment {
     this.host = options.host ?? null;
     this.check_cache = options.check_cache ?? (() => {});
     this.read_flake = options.read_flake ?? (() => {});
+    this.auto_switch_hold = options.auto_switch_hold ?? (() => null);
   }
 
   get id(): string {
@@ -480,8 +491,10 @@ export class Deployment {
       if (up_to_date) {
         evaluation.drift_target = null;
         evaluation.drift_since_epoch = null;
+        if (evaluation.in_sync === undefined || evaluation.in_sync.revision !== evaluation.flake_revision) evaluation.in_sync = { revision: evaluation.flake_revision, since_epoch: now };
         messages.push({ level: "info", text: "System matches the flake" });
       } else {
+        delete evaluation.in_sync;
         raise(this.settings.drift_status);
         messages.push({ level: level_of_status[this.settings.drift_status], text: `System is out of date: ${this.effective_settings().flake} evaluates to ${target}, running ${fields.current}` });
         if (evaluation.drift_target !== target) {
@@ -680,6 +693,13 @@ export class Deployment {
     if (waited < this.settings.auto_switch_after) {
       return [{ level: "info", text: `Switching automatically once the drift has lasted ${format_duration(this.settings.auto_switch_after)}` }];
     }
+    const hold = this.auto_switch_hold(this, evaluation.flake_revision);
+    if (hold !== null) {
+      const text = `Not switching automatically: ${hold.text}`;
+      if (evaluation.auto_switch_held !== target) this.store.add_event(this.id, now, hold.level, text);
+      evaluation.auto_switch_held = target;
+      return [{ level: hold.level, text }];
+    }
     this.auto_switch_due = target;
     return [{ level: "warning", text: `Drift has lasted ${format_age(waited)}; switching automatically` }];
   }
@@ -698,6 +718,8 @@ export class Deployment {
     if (this.host?.collection_refusal() != null) return;
     const mismatch = this.revision_refusal();
     if (mismatch !== null) return this.ask_about_revision(mismatch);
+    // A hold that began since the cycle that found the switch due is noted by the next one.
+    if (this.auto_switch_hold(this, this.evaluation().flake_revision) !== null) return;
     const operation = this.operation_for("switch");
     // Built elsewhere, the switch builds there first, as any switch does.
     const waiting = await this.wait_for_dependencies("switch", operation, "automatic");
@@ -1083,6 +1105,16 @@ export class Deployment {
     this.store.append_output(job.id, `${reason}\n`);
     this.store.finish_job(job.id, "failed", null, reason, this.now());
     this.store.add_event(this.id, this.now(), "error", `${capitalise(job_noun(job.kind))} failed: ${reason}`);
+    this.note_switch_end(job.kind, reason);
+  }
+
+  // Keeps the revision a switch or test failed at, with why, or forgets the last failure once one succeeds.
+  private note_switch_end(kind: JobKind, failure: string | null): void {
+    if (kind !== "switch" && kind !== "test") return;
+    const evaluation = this.evaluation();
+    if (failure === null) delete evaluation.switch_failure;
+    else evaluation.switch_failure = { revision: evaluation.flake_revision, reason: failure };
+    this.store.save_evaluation(this.id, evaluation);
   }
 
   // Shows in the switch's job what its step's job printed since the last poll, ending its last line once the step is done.
@@ -1225,6 +1257,7 @@ export class Deployment {
       const judged = this.judge_switch(finished, noun);
       if (judged !== null) event = judged;
       finished = this.store.job(job.id)!;
+      this.note_switch_end(job.kind, finished.state === "succeeded" ? null : finished.error ?? "The switch failed");
     }
     this.store.add_event(this.id, this.now(), event.level, event.text);
     // A build on the host itself is compared with the running system at once, so the page shows what a switch changes.

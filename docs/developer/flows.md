@@ -170,10 +170,18 @@ flowchart TD
     newer -- yes --> refuse([note: not switching, it came from elsewhere])
     newer -- no --> long{drift lasted auto_switch_after?}
     long -- no --> wait([note: switching once it has])
-    long -- yes --> due[auto_switch_due = target]
+    long -- yes --> staged{auto_switch_hold: an earlier fleet stage<br/>not yet in sync and soaked at this revision,<br/>or failed to switch to it?}
+    staged -- yes --> held([note why; event once per target])
+    staged -- no --> due[auto_switch_due = target]
     due --> next[next cycle: launch_auto_switch<br/>trigger automatic]
     next --> mark[auto_switch_target = target<br/>so it runs once per target]
 ```
+
+`Fleet.auto_switch_hold()` answers for the deployment through the `auto_switch_hold` callback `main.ts` passes, so
+`deployment.ts` never imports the fleet. With `fleet.auto_switch_staged`, a deployment of a later stage waits on every
+deployment of an earlier stage that switches automatically, follows the same remote flake and has no pin: each must have
+`evaluation.in_sync` at the same `flake_revision` for the fleet's `soak` without reading failed, and none may have
+`evaluation.switch_failure` at that revision. The revision, not the store path, is compared, as each host's system differs.
 
 ## Build and switch
 

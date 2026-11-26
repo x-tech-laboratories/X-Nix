@@ -194,6 +194,8 @@ export interface FleetSettings {
   soak: number;
   // Whether an admin must approve each next stage.
   approve_stages: boolean;
+  // Whether an automatic switch waits for every earlier stage to have switched to the same revision and soaked.
+  auto_switch_staged: boolean;
 }
 
 // A host that builds the fleet's closures, and the Attic cache they are pushed to.
@@ -463,9 +465,10 @@ export function fleet_settings(entry: unknown): FleetSettings {
   const read = new Reader((entry ?? {}) as Record<string, unknown>, "the fleet");
   const parallel = read.limit("parallel", 4) ?? 4;
   if (!Number.isInteger(parallel) || parallel < 1) throw new ConfigError("`parallel` of the fleet must be a whole number of at least 1");
+  const stages = read.list("stages", []);
   return {
-    parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m"), soak: read.duration("soak", "0s"),
-    approve_stages: read.flag("approve_stages", false),
+    parallel, stages, sync_timeout: read.duration("sync_timeout", "30m"), soak: read.duration("soak", "0s"),
+    approve_stages: read.flag("approve_stages", false), auto_switch_staged: read.flag("auto_switch_staged", stages.length > 0),
   };
 }
 

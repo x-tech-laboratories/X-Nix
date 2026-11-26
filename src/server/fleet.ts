@@ -6,13 +6,17 @@
 // stage a selector such as "@canary": a staged switch waits for each host to read as in sync against a fresh evaluation
 // before the next starts, and the first failure stops the rollout. Between stages the run can hold: the finished stage
 // soaks, failing a host that turns failed or drifts, and the next waits for an admin's approval when the run needs one.
+// With auto_switch_staged, the fleet's stages also order automatic switches: a deployment of a later stage switches by
+// itself only once every automatically switching deployment of each earlier stage runs the same flake revision in sync
+// and has for the soak, and holds while one of them failed to switch to it.
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import { format_duration, parse_duration } from "@x-tech-laboratories/x-libs/durations";
 
 import type { DeploymentSettings, FleetSettings } from "./config.ts";
-import type { Deployment } from "./deployment.ts";
+import type { Deployment, Message } from "./deployment.ts";
+import { local_path, short_revision } from "./nixos/flake.ts";
 import { switch_verdict } from "./nixos/switch.ts";
 import type { Store } from "./store.ts";
 import { command_marker_token } from "../shared/operations.ts";
@@ -171,6 +175,12 @@ export function selector_matches(selector: string, settings: Pick<DeploymentSett
   return selector_terms(selector).some((term) => term_matches(term, settings));
 }
 
+// The index of the first stage whose selector picks the deployment, or null when no stage names it.
+export function first_stage(stages: string[], settings: Pick<DeploymentSettings, "id" | "name" | "tags">): number | null {
+  const found = stages.findIndex((stage) => selector_matches(stage, settings));
+  return found === -1 ? null : found;
+}
+
 // ── Fleet ────────────────────────────────────────────────────────────────────
 
 export class Fleet {
@@ -327,6 +337,41 @@ export class Fleet {
       await this.advance_run(run);
       return { ok: true, message: `Fleet run #${id} may start its next stage`, run: this.run(id) };
     });
+  }
+
+  // ── Staged automatic switches ────────────────────────────────────────────
+
+  // Why the deployment's automatic switch to this revision waits on an earlier stage, or null when it need not.
+  auto_switch_hold(deployment: Deployment, revision: string | null): Message | null {
+    const stages = this.settings.stages;
+    const stage = this.settings.auto_switch_staged ? first_stage(stages, deployment.settings) : null;
+    if (stage === null || stage === 0 || local_path(deployment.settings.flake) !== null) return null;
+    // Only deployments that follow the same remote flake by themselves can switch to the same revision first.
+    const earlier = [...this.deployments.values()].flatMap((other) => {
+      const other_stage = first_stage(stages, other.settings);
+      const follows = other.settings.auto_switch && other.settings.flake === deployment.settings.flake && other.pin() === null;
+      return follows && other.id !== deployment.id && other_stage !== null && other_stage < stage ? [{ other, other_stage }] : [];
+    }).sort((first, second) => first.other_stage - second.other_stage);
+    if (earlier.length === 0) return null;
+    if (revision === null) return { level: "info", text: "the evaluation names no flake revision to match with the earlier stages" };
+    const now = this.now();
+    const at = short_revision(revision);
+    for (const { other, other_stage } of earlier) {
+      const label = `${other.settings.name} of stage ${other_stage + 1} (${stages[other_stage]})`;
+      const evaluation = other.evaluation();
+      const failure = evaluation.switch_failure;
+      if (failure !== undefined && failure.revision === revision) return { level: "warning", text: `${label} failed to switch to ${at}: ${failure.reason}` };
+      const in_sync = evaluation.in_sync;
+      if (in_sync === undefined || in_sync.revision !== revision) return { level: "info", text: `waiting for ${label} to switch to ${at}` };
+      const reading = other.reading();
+      if (reading?.status === "failed") {
+        const reason = reading.messages.find((message) => message.level === "error")?.text;
+        return { level: "warning", text: `${label} reads failed at ${at}${reason === undefined ? "" : `: ${reason}`}` };
+      }
+      const soaked = now - in_sync.since_epoch;
+      if (soaked < this.settings.soak) return { level: "info", text: `waiting for ${label} to soak at ${at} for ${format_duration(this.settings.soak - soaked)} more` };
+    }
+    return null;
   }
 
   // ── Advancing ────────────────────────────────────────────────────────────
@@ -518,6 +563,5 @@ function soak_of(value: unknown, fallback: number): number | null {
 // The index of the first stage whose selector picks the deployment, or one past the last for a host no stage names.
 function stage_of(deployment: Deployment, stages: string[], index: number): number {
   if (stages.length === 0) return index;
-  const found = stages.findIndex((stage) => selector_matches(stage, deployment.settings));
-  return found === -1 ? stages.length : found;
+  return first_stage(stages, deployment.settings) ?? stages.length;
 }

@@ -5,7 +5,7 @@ import { Fleet, glob_matches, max_selector_length, max_selector_terms, selector_
 import { pinned_flake } from "../src/server/nixos/flake.ts";
 import { stop_job } from "../src/server/runs.ts";
 import { Store } from "../src/server/store.ts";
-import { clock, collect, current_closure, FakeAgent, make_deployment, result, type Harness } from "./fake_agent.ts";
+import { clock, collect, current_closure, cycle, FakeAgent, make_deployment, metadata, result, rewind_drift, rewind_evaluation, type Harness } from "./fake_agent.ts";
 
 const commit = "0123456789abcdef0123456789abcdef01234567";
 
@@ -13,12 +13,14 @@ const commit = "0123456789abcdef0123456789abcdef01234567";
 function make_fleet(entries: Record<string, unknown>[], settings: Record<string, unknown> = {}): { fleet: Fleet; harnesses: Map<string, Harness>; store: Store; agent: FakeAgent } {
   const store = new Store(":memory:");
   const agent = new FakeAgent();
+  // The fleet orders the deployments' automatic switches, as the server wires it.
+  let fleet: Fleet | null = null;
   const harnesses = new Map(entries.map((entry) => {
-    const harness = make_deployment(entry, { store, agent });
+    const harness = make_deployment(entry, { store, agent, auto_switch_hold: (deployment, revision) => fleet!.auto_switch_hold(deployment, revision) });
     return [harness.deployment.id, harness];
   }));
   const deployments = new Map([...harnesses].map(([id, harness]) => [id, harness.deployment]));
-  const fleet = new Fleet(deployments, { store, settings: fleet_settings(settings), now: () => clock.now });
+  fleet = new Fleet(deployments, { store, settings: fleet_settings(settings), now: () => clock.now });
   return { fleet, harnesses, store, agent };
 }
 
@@ -41,9 +43,10 @@ function states(run: FleetRun | null): Record<string, string> {
 
 describe("fleet settings", () => {
   it("default to four at once, no stages and a 30 minute sync timeout", () => {
-    expect(parse_config({}).fleet).toEqual({ parallel: 4, stages: [], sync_timeout: 1800, soak: 0, approve_stages: false });
+    expect(parse_config({}).fleet).toEqual({ parallel: 4, stages: [], sync_timeout: 1800, soak: 0, approve_stages: false, auto_switch_staged: false });
     expect(parse_config({ fleet: { parallel: 2, stages: ["@canary", "web-*"], sync_timeout: "10m", soak: "15m", approve_stages: true } }).fleet)
-      .toEqual({ parallel: 2, stages: ["@canary", "web-*"], sync_timeout: 600, soak: 900, approve_stages: true });
+      .toEqual({ parallel: 2, stages: ["@canary", "web-*"], sync_timeout: 600, soak: 900, approve_stages: true, auto_switch_staged: true });
+    expect(parse_config({ fleet: { stages: ["@canary"], auto_switch_staged: false } }).fleet.auto_switch_staged).toBe(false);
     expect(() => parse_config({ fleet: { parallel: 0 } })).toThrow(ConfigError);
     expect(() => parse_config({ fleet: [] })).toThrow(ConfigError);
   });
@@ -378,5 +381,140 @@ describe("a staged rollout", () => {
     expect(fleet.run(run!.id)!.hosts[0].message).toContain("within 1 minute");
     expect(states(fleet.run(run!.id))).toEqual({ first: "failed", second: "skipped" });
     clock.now = start;
+  });
+});
+
+// ── Staged automatic switches ────────────────────────────────────────────────
+
+describe("staged automatic switches", () => {
+  const flake = "github:owner/config";
+  const automatic = { flake, auto_switch: true, auto_switch_after: "30m" };
+  const other_commit = "89abcdef0123456789abcdef0123456789abcdef";
+  // The flake at a commit, changed after the running generation, so switching moves the host forward.
+  const at = (revision = commit) => metadata({ revision, last_modified_epoch: clock.now - 3600 });
+  const matching = result(0, `${current_closure}\n`);
+  const entries = [{ id: "canary", tags: ["canary"], ...automatic }, { id: "server", tags: ["servers"], ...automatic }, { id: "loose", ...automatic }];
+
+  // Has the deployment drift to the flake at a revision for longer than auto_switch_after.
+  async function drift(harness: Harness, revision = commit): Promise<void> {
+    await collect(harness, { metadata: at(revision) });
+    rewind_drift(harness, 1801);
+    await cycle(harness);
+  }
+
+  // Has the deployment read as in sync at a revision, as after a switch.
+  async function in_sync(harness: Harness, revision = commit): Promise<void> {
+    await collect(harness, { evaluation: matching, metadata: at(revision) });
+  }
+
+  function texts(harness: Harness): string[] {
+    return harness.deployment.reading()?.messages.map((message) => message.text) ?? [];
+  }
+
+  it("has a later stage wait for the earlier one to switch to the same revision, noting it once", async () => {
+    const { harnesses } = make_fleet(entries, { stages: ["@canary", "@servers"] });
+    const server = harnesses.get("server")!;
+
+    await drift(server);
+    await collect(server);
+
+    expect(server.deployment.running_job()).toBeNull();
+    expect(texts(server)).toContain("Not switching automatically: waiting for canary of stage 1 (@canary) to switch to 0123456789ab");
+    expect(server.store.events("server").filter((event) => event.message.startsWith("Not switching automatically"))).toHaveLength(1);
+  });
+
+  it("switches a later stage once the earlier one runs the revision in sync and has soaked", async () => {
+    const { harnesses } = make_fleet(entries, { stages: ["@canary", "@servers"], soak: "15m" });
+    const canary = harnesses.get("canary")!;
+    const server = harnesses.get("server")!;
+    await in_sync(canary);
+    await drift(server);
+
+    await collect(server);
+    expect(texts(server)).toContain("Not switching automatically: waiting for canary of stage 1 (@canary) to soak at 0123456789ab for 15 minutes more");
+
+    const evaluation = canary.deployment.evaluation();
+    canary.store.save_evaluation("canary", { ...evaluation, in_sync: { revision: commit, since_epoch: clock.now - 901 } });
+    await collect(server);
+    await cycle(server);
+    expect(server.deployment.running_job()?.trigger).toBe("automatic");
+  });
+
+  it("holds a later stage while the earlier one failed to switch to the revision, until a new revision comes", async () => {
+    const { harnesses, agent } = make_fleet(entries, { stages: ["@canary", "@servers"] });
+    const canary = harnesses.get("canary")!;
+    const server = harnesses.get("server")!;
+    await drift(canary);
+    await cycle(canary);
+    expect(canary.deployment.running_job()?.trigger).toBe("automatic");
+    agent.end(run_of(agent, "canary")!, "error: activation failed\n", 1);
+    await cycle(canary);
+    expect(canary.deployment.evaluation().switch_failure?.revision).toBe(commit);
+
+    await drift(server);
+    await collect(server);
+    expect(server.deployment.running_job()).toBeNull();
+    const held = server.deployment.reading()!.messages.find((message) => message.text.startsWith("Not switching automatically"))!;
+    expect(held.level).toBe("warning");
+    expect(held.text).toContain("canary of stage 1 (@canary) failed to switch to 0123456789ab");
+
+    rewind_evaluation(server, 7200);
+    await drift(server, other_commit);
+    expect(texts(server)).toContain("Not switching automatically: waiting for canary of stage 1 (@canary) to switch to 89abcdef0123");
+  });
+
+  it("holds a later stage behind an earlier switch that rolled back", async () => {
+    const { harnesses, agent } = make_fleet(entries, { stages: ["@canary", "@servers"] });
+    const canary = harnesses.get("canary")!;
+    const server = harnesses.get("server")!;
+    await drift(canary);
+    await cycle(canary);
+    agent.end(run_of(agent, "canary")!, "@@x-nix-switch outcome rolled-back Health check 1 (curl) failed with status 7\n", 1);
+    await cycle(canary);
+
+    await drift(server);
+    await collect(server);
+
+    expect(texts(server).find((text) => text.startsWith("Not switching automatically"))).toContain("failed to switch to 0123456789ab: Rolled back to the previous system");
+  });
+
+  it("forgets an earlier stage's failure once a switch there succeeds", async () => {
+    const { harnesses, agent } = make_fleet(entries, { stages: ["@canary", "@servers"] });
+    const canary = harnesses.get("canary")!;
+    await drift(canary);
+    await cycle(canary);
+    agent.end(run_of(agent, "canary")!, "", 1);
+    await cycle(canary);
+
+    await canary.deployment.act("switch");
+    agent.end(run_of(agent, "canary")!, "done\n", 0);
+    await cycle(canary);
+
+    expect(canary.deployment.evaluation().switch_failure).toBeUndefined();
+  });
+
+  it("leaves a deployment no stage names, the first stage, and a fleet with auto_switch_staged off to switch as before", async () => {
+    for (const [settings, id] of [[{ stages: ["@canary", "@servers"] }, "loose"], [{ stages: ["@canary", "@servers"] }, "canary"], [{ stages: ["@canary", "@servers"], auto_switch_staged: false }, "server"]] as const) {
+      const { harnesses } = make_fleet(entries, settings);
+      const harness = harnesses.get(id)!;
+
+      await drift(harness);
+      await cycle(harness);
+
+      expect(harness.deployment.running_job()?.trigger).toBe("automatic");
+    }
+  });
+
+  it("waits only on earlier deployments that switch the same flake by themselves", async () => {
+    const { harnesses } = make_fleet([
+      { id: "canary", tags: ["canary"], flake }, { id: "pinned", tags: ["canary"], ...automatic, pin: commit }, { id: "elsewhere", tags: ["canary"], ...automatic, flake: "github:owner/other" },
+      { id: "server", tags: ["servers"], ...automatic },
+    ], { stages: ["@canary", "@servers"] });
+    const server = harnesses.get("server")!;
+
+    await drift(server);
+    await cycle(server);
+
+    expect(server.deployment.running_job()?.trigger).toBe("automatic");
   });
 });

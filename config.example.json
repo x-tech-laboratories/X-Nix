@@ -85,7 +85,8 @@
       "@canary",
       "@servers"
     ],
-    "sync_timeout": "30m"
+    "sync_timeout": "30m",
+    "auto_switch_staged": true
   },
   "caches": [
     {

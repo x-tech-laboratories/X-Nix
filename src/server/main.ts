@@ -135,6 +135,8 @@ const deployments = config.deployments.map((settings) => new Deployment(settings
     const flake = flakes.find((candidate) => candidate.id === flake_id);
     if (flake !== undefined) void poller.refresh(flake);
   },
+  // The fleet's stages order automatic switches, so a later stage waits for the earlier ones to switch and soak.
+  auto_switch_hold: (deployment, revision) => fleet.auto_switch_hold(deployment, revision),
 }));
 // An update or a push that changed a flake has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {

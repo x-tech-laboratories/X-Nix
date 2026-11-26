@@ -42,6 +42,9 @@ first sees the host drift to that exact system, which is never before the lock c
 system. Raise it to give a bad upstream commit more time to be noticed before anything switches to it; a person, a
 fleet run or a manual switch never waits for it.
 
+With the fleet's `stages`, an automatic switch of a later stage waits for the earlier stages, as
+[staged automatic switches](/user/fleet/#staged-automatic-switches) describes.
+
 With `auto_switch_max_input_age`, a deployment does not switch by itself while the oldest locked input changed longer
 ago than that, and says so on its page; a person can still switch it.
 
