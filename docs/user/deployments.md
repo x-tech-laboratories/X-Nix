@@ -48,8 +48,9 @@ agent is connected, else on the first that can be woken, so a build moves to a f
 deployment whose host, `eval_agent`, `build_agent` or `switch_agent` names a host whose agent is not connected reads as
 unavailable.
 
-With a `cache`, Build runs that cache's build of the system, at the deployment's pin when it has one, and pushes what it
-built. No action ever waits on a cache being healthy: a cache only speeds things up.
+Build, daily or by hand, builds the commit X-Nix last evaluated for a remote flake, so it builds the system the page
+names as the target even after the branch moved on; before any evaluation it builds the pin, or else the branch head.
+With a `cache`, Build runs that cache's build of the system at that commit, and pushes what it built. No action ever waits on a cache being healthy: a cache only speeds things up.
 
 ## Switch, boot, test, dry-activate
 
@@ -75,15 +76,32 @@ remote flake it builds and switches the commit X-Nix last evaluated, not whateve
 between the build and the activation cannot make the activation build a newer system against `activation_timeout`. A
 local checkout switches as it is on disk. A switch built anywhere else goes in two steps:
 
-1. Its job builds on the build host first, showing the build's output as it prints. A failed build fails the switch
-   without touching the host.
-2. Once the system reaches `cache_url`, the switch fetches it with `nix build`, so the host's Nix daemon downloads it,
+1. Its job builds on the build host first, at the commit X-Nix last evaluated, showing the build's output as it prints.
+   A failed build fails the switch without touching the host.
+2. X-Nix checks that the build made exactly the store path the evaluation named. When it made anything else, or named
+   something that is not a store path, the switch fails without touching the host, saying which path the build made and
+   which one the evaluation named, and the deployment evaluates again; switch once the new evaluation is in.
+3. Once the system reaches `cache_url`, the switch fetches it with `nix build`, so the host's Nix daemon downloads it,
    and activates it. A cache's build pushes the system there; without a cache, something else must, such as
    `attic watch-store`, within 15 minutes.
 
 So a host too small to evaluate or build never has to. For this to work, `cache_url` must be one of the host's
-substituters and the system signed by a key the host trusts. Without a `cache_url` to carry the system, such a switch is
-refused.
+substituters and the system signed by a key the host trusts. Without a `cache_url` to carry the system, or before the
+flake has been evaluated once, such a switch is refused.
+
+### Checking the evaluated commit
+
+The host that evaluates also reports which commit it evaluated, and switches use that commit. Before a switch starts, by
+hand, from a fleet run or automatically, X-Nix compares it with what it knows independently:
+
+- With a pin that is a full commit hash, the evaluated commit must be that commit.
+- When the deployment names a flake from `flakes` whose own `host` is not the host that evaluated, the evaluated commit
+  and its date must be the ones the flake's last read found.
+
+When they disagree, the switch is refused with both commits named, the deployment evaluates again and the flake reads
+its metadata again, and an automatic switch waits until they agree. A tag pin, a local checkout, or a flake read on the
+same host that evaluates is not compared. The hosts named as `eval_agent`, `build_agent` or a cache's `host` are trusted as
+much as the machines they build for: when one host both evaluates and builds, the two agreeing proves nothing.
 
 A new switch takes over one still building, and a Build asked for meanwhile answers with that build.
 

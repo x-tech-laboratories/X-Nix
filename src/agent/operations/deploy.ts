@@ -12,7 +12,7 @@ import {
   diff_mark, eval_mark, fresh_lookup, is_store_path, show_argv, toplevel, unfetchable_exit_code, type BuildOperation, type CacheHoldsOperation,
   type ClosureDiffOperation, type EvaluateOperation, type GithubUpdateOperation, type LocalUpdateOperation, type UpdateCheck, type UpdatePullRequest,
 } from "../../shared/operations.ts";
-import { on_path, type Context } from "../programs.ts";
+import { marker, on_path, type Context } from "../programs.ts";
 
 // ── Evaluation ───────────────────────────────────────────────────────────────
 
@@ -25,12 +25,13 @@ export async function evaluate(context: Context, operation: EvaluateOperation): 
     metadata: [...operation.nix, "flake", "metadata", "--json", "--no-write-lock-file", ...refresh, operation.flake],
   };
   const results = [];
+  const mark = marker(context, eval_mark);
   for (const [name, argv] of Object.entries(commands)) {
-    context.out.write(`\n${eval_mark} ${name} stderr\n`);
+    context.out.write(`\n${mark} ${name} stderr\n`);
     results.push({ name, ...(await context.program(context, argv, { stdout: "keep" })) });
   }
   for (const result of results) {
-    context.out.write(`\n${eval_mark} ${result.name} stdout\n${result.stdout}\n${eval_mark} ${result.name} exit\n${result.exit_code}\n`);
+    context.out.write(`\n${mark} ${result.name} stdout\n${result.stdout}\n${mark} ${result.name} exit\n${result.exit_code}\n`);
   }
   return results.every((result) => result.exit_code === 0) ? 0 : 1;
 }
@@ -86,7 +87,7 @@ export async function cache_holds(context: Context, operation: CacheHoldsOperati
 // Compares two system closures, printing each part after a marker line; a missing new closure is reported, not fetched.
 export async function closure_diff(context: Context, operation: ClosureDiffOperation): Promise<number> {
   const { nix, from, to } = operation;
-  const mark = (words: string) => context.out.write(`${diff_mark} ${words}\n`);
+  const mark = (words: string) => context.out.write(`${marker(context, diff_mark)} ${words}\n`);
   if (!(await has_path(context, nix, to))) {
     mark("missing");
     return 0;

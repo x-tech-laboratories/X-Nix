@@ -11,7 +11,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { ProvisioningSettings } from "../config.ts";
-import { hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
+import { accepted_prefix, hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
 
 export { hardware_mark, media_mark, missing_tool_exit_code, nix_string } from "../../shared/operations.ts";
 
@@ -135,11 +135,12 @@ export function parse_install_record(command: string): InstallRecord | null {
 }
 
 // The hardware configuration an install printed, or null when it printed none.
-export function parse_hardware_config(output: string): string | null {
-  const start = output.indexOf(`\n${hardware_mark}\n`);
+export function parse_hardware_config(output: string, token: string | null): string | null {
+  const mark = accepted_prefix(output, hardware_mark, token);
+  const start = output.indexOf(`\n${mark}\n`);
   if (start === -1) return null;
-  const body_start = start + hardware_mark.length + 2;
-  const end = output.indexOf(`\n${hardware_mark} end`, body_start);
+  const body_start = start + mark.length + 2;
+  const end = output.indexOf(`\n${mark} end`, body_start);
   if (end === -1) return null;
   return output.slice(body_start, end).replace(/\n+$/, "\n");
 }
@@ -229,7 +230,8 @@ export function parse_media_record(command: string): MediaRecord | null {
 }
 
 // The store path a media build printed, or null when it printed none.
-export function parse_media_path(output: string): string | null {
-  const line = output.split("\n").filter((text) => text.startsWith(`${media_mark} `)).pop();
-  return line === undefined ? null : line.slice(media_mark.length + 1).trim() || null;
+export function parse_media_path(output: string, token: string | null): string | null {
+  const mark = accepted_prefix(output, media_mark, token);
+  const line = output.split("\n").filter((text) => text.startsWith(`${mark} `)).pop();
+  return line === undefined ? null : line.slice(mark.length + 1).trim() || null;
 }

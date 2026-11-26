@@ -156,9 +156,9 @@ Despite its name, this is the state of **every owner**: deployments (by id), fla
 
 | Owner        | `evaluation` holds                                            | `reading` holds                     |
 | ------------ | ------------------------------------------------------------- | ----------------------------------- |
-| Deployment   | `Evaluation`: the target store path, eval and metadata errors, flake revision and ages, drift start, the auto-switch target, handled schedule slots, a pin override, the last package diff, and a waiting switch (`switch_wait`). | `Reading`: status, messages, running/booted system, generation, version, last switch, in sync, reboot required. |
+| Deployment   | `Evaluation`: the target store path, eval and metadata errors, flake revision, the host that read it (`evaluated_on`) and ages, drift start, the auto-switch target, handled schedule slots, a pin override, the last package diff, and a waiting switch (`switch_wait`). | `Reading`: status, messages, running/booted system, generation, version, last switch, in sync, reboot required. |
 | Host         | `HostState`: the last collection seen, the last daily collection slot. | `HostReading`: status, the store reading, the boot entries. |
-| Flake        | `FlakeState`: the last update's outcome, the daily slot, the input heads already tried, the last input check error. | `FlakeReading`: status, messages, revision, ages, locked inputs. |
+| Flake        | `FlakeState`: the last update's outcome, the daily slot, the input heads already tried, the last input check error. | `FlakeReading`: status, messages, revision, ages, locked inputs, the host that read it. |
 | Cache        | What the cache remembers between cycles, such as handled slots. | (unused; see `cache_state`)         |
 
 `save_evaluation` and `save_reading` each upsert only their own column, so one never overwrites the other.

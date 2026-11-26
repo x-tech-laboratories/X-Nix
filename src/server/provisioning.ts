@@ -15,7 +15,7 @@ import { basename, join } from "node:path";
 import { generate_agent_key, key_fingerprint } from "@x-tech-laboratories/x-libs/agent/keys";
 
 import { AgentError, type AgentPool } from "./agents/agent.ts";
-import type { Operation } from "../shared/operations.ts";
+import { command_marker_token, with_marker_token, type Operation } from "../shared/operations.ts";
 import type { ProvisioningSettings } from "./config.ts";
 import {
   install_operation, install_snippets, media_operation, missing_host_key, missing_tool_exit_code, parse_hardware_config, parse_install_record, parse_media_path,
@@ -203,6 +203,7 @@ export class Provisioner {
     owner: string, kind: JobKind, agent: string | null, operation: Operation, stdin: string | null, trigger: string, run_id?: string,
   ): Promise<{ job_id: number | null; error: string }> {
     const id = run_id ?? `${owner}-${kind}-${this.now()}-${randomBytes(3).toString("hex")}`;
+    operation = with_marker_token(operation);
     let waking: Promise<void> | null;
     try {
       ({ waking } = await start_run(this.agents, agent, id, operation, stdin));
@@ -276,14 +277,14 @@ export class Provisioner {
       const record = parse_install_record(job.command);
       const key_accepted = record?.public_line != null && accepted.get(record.host) === record.public_line;
       const snippets = record !== null && record.public_line !== null && job.state === "succeeded" ? install_snippets(record, this.settings.agent_url) : null;
-      return { job, record, hardware_config: parse_hardware_config(output), key_accepted, snippets };
+      return { job, record, hardware_config: parse_hardware_config(output, command_marker_token(job.command)), key_accepted, snippets };
     });
   }
 
   media(limit = 20): MediaView[] {
     return this.store.jobs({ kind: "media", limit }).map((job) => {
       const record = parse_media_record(job.command);
-      const store_path = job.state === "succeeded" ? parse_media_path(this.store.job(job.id)?.output ?? "") : null;
+      const store_path = job.state === "succeeded" ? parse_media_path(this.store.job(job.id)?.output ?? "", command_marker_token(job.command)) : null;
       return {
         job, store_path,
         format: record?.format ?? null,
@@ -327,7 +328,7 @@ export class Provisioner {
   media_download(job_id: number, path: string): { file: string; name: string } | { error: string } {
     const job = this.store.job(job_id);
     if (job === null || job.kind !== "media") return { error: "No such media build" };
-    const store_path = job.state === "succeeded" ? parse_media_path(job.output) : null;
+    const store_path = job.state === "succeeded" ? parse_media_path(job.output, command_marker_token(job.command)) : null;
     if (store_path === null) return { error: "That build has no result" };
     const files = this.media_files(store_path);
     if (files === null) return { error: "That build's result is gone from the store" };

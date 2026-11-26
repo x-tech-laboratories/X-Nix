@@ -26,10 +26,10 @@ export default defineConfig({
       // The floor only rises: a run above it raises it to the whole percent below, to be committed.
       thresholds: {
         autoUpdate: (new_threshold) => Math.floor(new_threshold),
-        lines: 73,
+        lines: 74,
         statements: 71,
         functions: 60,
-        branches: 63,
+        branches: 64,
       },
     },
   },

@@ -19,6 +19,10 @@ Answers are JSON. Errors answer `{ message }` with a 4xx or 5xx status through X
 | Any other method                                     | An `admin` session or a non-read-only admin token. |
 | Account and user routes                              | A session; X-Libs refuses tokens there.           |
 
+Paths must be spelled canonically: a path with an escape of a character that needs none, lower-case hex, an encoded
+slash, an empty or dot segment, a `;`, or a target that does not start with `/` is refused with 400 before any of this, and
+any route whose path still holds an escape needs an admin.
+
 A token is sent as `Authorization: Bearer xn_…`. A read-only token can only make `GET` requests.
 
 ## Routes

@@ -6,7 +6,7 @@
 import { format_duration } from "@x-tech-laboratories/x-libs/durations";
 import type { Notifier } from "@x-tech-laboratories/x-libs/server/notify/channels";
 
-import { stall_mark } from "../shared/operations.ts";
+import { accepted_prefix, command_marker_token, marker_words, stall_mark } from "../shared/operations.ts";
 import type { Job, Store } from "./store.ts";
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -31,13 +31,15 @@ export function overdue_text(store: Store, job: Job, now: number): string | null
   const ran = now - job.started_epoch;
   const allowed = allowance(store, job);
   if (ran <= allowed) return null;
-  const note = stall_note(store.job(job.id)?.output ?? "");
+  const note = stall_note(store.job(job.id)?.output ?? "", command_marker_token(job.command));
   return `The ${job.kind} job ${job.id} has run for ${format_duration(ran)}, well past the ${format_duration(allowed)} it should take${note === null ? "" : `: ${note}`}`;
 }
 
-// The run's last word on what it waits for, or else the last thing it said about its stall.
-export function stall_note(output: string): string | null {
-  const notes = output.split("\n").filter((line) => line.startsWith(`${stall_mark} `)).map((line) => line.slice(stall_mark.length + 1).trim());
+// The run's last word on what it waits for, or else the last thing it said about its stall, from the marker lines that
+// carry the job's marker token, or the bare ones of an agent that prints none.
+export function stall_note(output: string, token: string | null): string | null {
+  const prefix = accepted_prefix(output, stall_mark, token);
+  const notes = output.split("\n").map((line) => marker_words(line, prefix)?.trim()).filter((note): note is string => note !== undefined && note !== "");
   return notes.findLast((note) => note.includes(" waits for ")) ?? notes.at(-1) ?? null;
 }
 
