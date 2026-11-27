@@ -7,7 +7,7 @@ import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { report_mark } from "../src/server/nixos/attic.ts";
 import { output_cut_line, Store } from "../src/server/store.ts";
 import {
-  announcement, clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
+  announcement, clock, collect, current_closure, cycle, eval_output, FakeAgent, from_flake, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
   mark_line, rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
 } from "./fake_agent.ts";
 import { command_marker_token, innermost, marker_token_of, unfetchable_exit_code, type SwitchOperation } from "../src/shared/operations.ts";
@@ -996,6 +996,7 @@ describe("a small host evaluated and built elsewhere", () => {
       auto_switch_after: "30m", magic_rollback: true, post_switch: "systemctl restart greetd",
     }, 0, undefined, () => host_settings({ id: "pi", keep_awake: true }));
     const deployment = new Deployment(settings, { store, agents, now: () => clock.now });
+    from_flake(store, deployment.id);
 
     await deployment.cycle();
     const evaluation = server.last_run('"kind":"evaluate"')!;
@@ -1133,15 +1134,58 @@ describe("automatic switch", () => {
     expect(messages_of(harness)).toContain("Not switching automatically: the oldest locked input nixpkgs changed 1 day ago, longer ago than the 12 hours auto_switch_max_input_age allows");
   });
 
-  it("leaves alone a generation newer than the flake", async () => {
+  it("switches a system the flake built even when its generation is newer than the flake's last change", async () => {
+    // Switched after the commit was made but before it merged, the generation's time is later than the flake's.
     const harness = make_deployment(automatic);
     await collect(harness, { probe: probe({ created_epoch: clock.now - 60 }) });
     rewind_drift(harness, 7200);
 
     await collect(harness, { probe: probe({ created_epoch: clock.now - 60 }) });
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()?.trigger).toBe("automatic");
+  });
+
+  it("leaves alone a system the flake was never seen to build, saying why", async () => {
+    const harness = make_deployment(automatic, { from_flake: false });
+    await collect(harness, { metadata: newer_flake() });
+    rewind_drift(harness, 7200);
+
+    await collect(harness);
+    await cycle(harness);
 
     expect(harness.deployment.busy()).toBe(false);
-    expect(messages_of(harness).some((text) => text.includes("newer than the flake"))).toBe(true);
+    expect(messages_of(harness).some((text) => text.startsWith("Not switching automatically: the running system was not built from this flake as far as X-Nix knows"))).toBe(true);
+  });
+
+  it("leaves alone a system switched out of band after the flake's last one", async () => {
+    const harness = make_deployment(automatic);
+    from_flake(harness.store, harness.deployment.id, newer_closure);
+    await collect(harness, { metadata: newer_flake() });
+    rewind_drift(harness, 7200);
+
+    await collect(harness);
+    await cycle(harness);
+
+    expect(harness.deployment.busy()).toBe(false);
+  });
+
+  it("knows the system a succeeded switch runs even when the flake moved on during it", async () => {
+    const harness = make_deployment({ auto_switch: true, auto_switch_after: "30m" }, { from_flake: false });
+    await collect(harness, { metadata: metadata({ revision: "a".repeat(40) }) });
+    await harness.deployment.act("switch");
+    harness.agent.end(harness.agent.last_run("switch")!, "", 0);
+    await cycle(harness);
+    expect(harness.deployment.evaluation().flake_system).toEqual({ system: null, revision: "a".repeat(40) });
+
+    // The branch moved while the switch ran, so the system it switched to never matches a fresh evaluation.
+    await collect(harness, { probe: probe({ current: target_closure }), evaluation: result(0, `${newer_closure}\n`), metadata: metadata({ revision: "b".repeat(40) }) });
+    expect(harness.deployment.evaluation().flake_system).toEqual({ system: target_closure, revision: "a".repeat(40) });
+    rewind_drift(harness, 7200);
+    await collect(harness, { probe: probe({ current: target_closure }) });
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()?.trigger).toBe("automatic");
   });
 
   it("never switches on a failed evaluation", async () => {

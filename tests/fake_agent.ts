@@ -256,6 +256,7 @@ export function make_deployment(
   existing: {
     store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings>; caches?: Cache[];
     check_cache?: (cache: Cache) => void; read_flake?: (flake_id: string) => void; auto_switch_hold?: DeploymentOptions["auto_switch_hold"];
+    from_flake?: boolean;
   } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
@@ -268,7 +269,14 @@ export function make_deployment(
   const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache, read_flake: existing.read_flake,
     auto_switch_hold: existing.auto_switch_hold,
   });
+  // The host starts on the system its flake last built, as after a switch X-Nix ran, unless a test says otherwise.
+  if (existing.from_flake !== false) from_flake(store, deployment.id);
   return { deployment, host, agent, store, agents };
+}
+
+// Records that the flake was seen to build this system at this revision, as the host running it in sync would.
+export function from_flake(store: Store, deployment_id: string, system = current_closure, revision: string | null = "e".repeat(40)): void {
+  store.save_evaluation(deployment_id, { ...store.evaluation<Record<string, unknown>>(deployment_id), flake_system: { system, revision } });
 }
 
 // Splits test values into the deployment's and its host's, as inhibit_sleep is the host's keep_awake.
