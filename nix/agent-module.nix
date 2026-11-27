@@ -51,6 +51,32 @@ let
 
   server_keys_file = json.generate "x-nix-agent-server-keys.json" cfg.serverPublicKeys;
 
+  # Each post_switch command as a script of its own in the store, which the sudo rules allow by its exact path.
+  post_switch_scripts = lib.mapAttrs (
+    name: command: pkgs.writeShellScript "x-nix-post-switch-${name}" command
+  ) cfg.switchCommands.postSwitch;
+
+  # What the host declares for the agent, read from /etc so a switch that changes it runs the new system's own once activated.
+  host_file = json.generate "x-nix-agent-host.json" {
+    switch_commands =
+      if cfg.switchCommands.enable then
+        {
+          pre_switch_checks = cfg.switchCommands.preSwitchChecks;
+          health_commands = cfg.switchCommands.healthCommands;
+          post_switch = lib.mapAttrs (_: toString) post_switch_scripts;
+        }
+      else
+        null;
+    units = lib.optional cfg.collectGarbage.enable gc_unit;
+  };
+
+  gc_unit = "x-nix-gc.service";
+
+  # The names the server may give these commands by, which the agent checks too.
+  command_names = lib.attrNames (
+    cfg.switchCommands.preSwitchChecks // cfg.switchCommands.healthCommands // cfg.switchCommands.postSwitch
+  );
+
   # systemd places the loaded key here, readable only by the service.
   credentials_directory = "/run/credentials/x-nix-agent.service";
 in
@@ -123,6 +149,55 @@ in
       '' // {
         default = cfg.runUnits.enable;
         defaultText = literalExpression "config.services.x-nix-agent.runUnits.enable";
+      };
+    };
+
+    switchCommands = {
+      enable = mkEnableOption ''
+        running only this host's own switch commands, by the names the server's `host_pre_switch_checks`,
+        `host_health_commands` and `host_post_switch` give, and none of the command text the server sends
+      '' // {
+        default = cfg.switchCommands.preSwitchChecks != { } || cfg.switchCommands.healthCommands != { } || cfg.switchCommands.postSwitch != { };
+        defaultText = literalExpression "whether any switch command is declared";
+      };
+
+      preSwitchChecks = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        example = { boot-space = "test \"$(df --output=pcent /boot | tail -1 | tr -dc 0-9)\" -lt 90"; };
+        description = "Shell commands run as the agent's user before a switch changes anything, by name; the first to fail refuses the switch.";
+      };
+
+      healthCommands = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        example = { sshd = "systemctl is-active --quiet sshd.service"; };
+        description = "Shell commands run as the agent's user after a switch until they pass, by name; one still failing rolls the switch back.";
+      };
+
+      postSwitch = mkOption {
+        type = types.attrsOf types.str;
+        default = { };
+        example = { phosh = "systemctl is-active -q phosh.service || systemctl restart phosh.service"; };
+        description = "Shell commands run as root after a switch activates, by name, each as a script whose store path alone the sudo rules allow.";
+      };
+    };
+
+    collectGarbage = {
+      enable = mkEnableOption ''
+        the `x-nix-gc.service` unit, which Collect Garbage starts with `systemctl start` in place of running
+        `nix-collect-garbage` with the server's arguments
+      '' // { default = true; };
+
+      args = mkOption {
+        type = types.listOf types.str;
+        default =
+          let
+            options = builtins.filter (argument: argument != "") (lib.splitString " " config.nix.gc.options);
+          in
+          if options == [ ] then [ "--delete-older-than" "7d" ] else options;
+        defaultText = literalExpression "config.nix.gc.options, or [ \"--delete-older-than\" \"7d\" ] when it is empty";
+        description = "The arguments the unit runs `nix-collect-garbage` with.";
       };
     };
 
@@ -256,6 +331,10 @@ in
         message = "services.x-nix-agent.pull needs allowedSignersFile, the keys its commits are signed with, or allowUnsigned = true.";
       }
       {
+        assertion = builtins.all (name: builtins.match "[A-Za-z0-9_-]+" name != null) command_names;
+        message = "services.x-nix-agent.switchCommands names its commands with letters, digits, - and _ only.";
+      }
+      {
         assertion = builtins.all (line: builtins.match "ssh-ed25519 [A-Za-z0-9+/]+={0,2}( .*)?" line != null) cfg.serverPublicKeys;
         message = "services.x-nix-agent.serverPublicKeys takes OpenSSH public lines such as \"ssh-ed25519 AAAA... x-nix-server\".";
       }
@@ -291,8 +370,25 @@ in
         inherit (config.users.groups.x-nix-agent) gid;
         sudo_package = config.security.sudo.package;
         boot_loader = sudo_allow.boot_loader config;
+        post_switch_scripts = lib.attrValues post_switch_scripts;
+        gc_unit = if cfg.collectGarbage.enable then gc_unit else null;
       })
     ];
+
+    # The server's own post_switch text needs the shell rule only on a host that declares no commands of its own.
+    services.x-nix-agent.sudoAllow.postSwitch = lib.mkDefault (!cfg.switchCommands.enable);
+    # A server too old to start the unit still collects, with exactly the unit's arguments.
+    services.x-nix-agent.sudoAllow.collectGarbageArgs = lib.mkIf cfg.collectGarbage.enable (lib.mkDefault cfg.collectGarbage.args);
+
+    environment.etc."x-nix-agent/host.json".source = host_file;
+
+    systemd.services.x-nix-gc = mkIf cfg.collectGarbage.enable {
+      description = "Nix garbage collection for X-Nix";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = lib.escapeShellArgs ([ "${config.nix.package.out}/bin/nix-collect-garbage" ] ++ cfg.collectGarbage.args);
+      };
+    };
 
     # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
     nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;

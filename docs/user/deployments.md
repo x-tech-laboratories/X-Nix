@@ -152,7 +152,8 @@ paths.
 
 ## Safer switches
 
-A switch is **guarded** when any of `pre_switch_checks`, `health_commands`, `health_urls` or `magic_rollback` is set.
+A switch is **guarded** when any of `host_pre_switch_checks`, `host_health_commands`, `pre_switch_checks`,
+`health_commands`, `health_urls` or `magic_rollback` is set.
 A guarded switch runs on the switching host itself, so it takes no `target_host`.
 
 1. **Pre-switch checks** run first. The first to fail refuses the switch before anything changes.
@@ -189,8 +190,34 @@ means X-Nix still reaches that host's agent. Keep `confirm_timeout` well above `
 A guarded switch whose activation hangs ends as soon as its watchdog gives an outcome. The watchdog changes nothing while
 another switch still holds the system's switch lock, and names the process holding it.
 
-`post_switch` runs after the activation as root (through `sudo -n /bin/sh -c` with `require_sudo`), so it can restart a
-service such as a display manager. Its exit status never changes the switch's.
+`post_switch` runs after the activation as root, so it can restart a service such as a display manager. Its exit
+status never changes the switch's.
+
+### The host's own commands
+
+The checks and commands a switch runs belong in the host's own NixOS config, under the agent module's
+`switchCommands`, each by name. The deployment then only names which to run, so the server never sends a command's text:
+
+```nix
+# On the host
+services.x-nix-agent.switchCommands = {
+  preSwitchChecks.boot-space = "test $(df --output=pcent /boot | tail -1 | tr -dc 0-9) -lt 90";
+  healthCommands.sshd = "systemctl is-active --quiet sshd.service";
+  postSwitch.display = "systemctl is-active -q display-manager.service || systemctl restart display-manager.service";
+};
+
+# In the server's deployment
+host_pre_switch_checks = [ "boot-space" ];
+host_health_commands = [ "sshd" ];
+host_post_switch = [ "display" ];
+```
+
+Each `postSwitch` command becomes a script whose store path alone the sudo rules allow, and a host that declares its
+commands loses the `/bin/sh -c` rule. Such a host never runs the text in `pre_switch_checks`, `health_commands` or
+`post_switch`: given text and no names, it runs every command of that kind it declares. A name the host does not
+declare refuses the switch as a pre-switch check, fails it as a health check, and is shown and skipped as a
+`post_switch`. The text settings still work on a host that declares nothing, with a warning on the deployment and in
+each switch's job; they will be removed.
 
 ### Keeping the host awake
 
@@ -248,14 +275,17 @@ named `configuration`; a switch to a `target_host` always switches.
 | `auto_switch_max_input_age` | none                      | Do not switch by itself while the oldest locked input is older than this. |
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command each program of the switch runs inside, outside sudo.      |
-| `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`.         |
-| `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
+| `host_post_switch`  | none                              | The host's own `switchCommands.postSwitch` run after the switch, by name. |
+| `host_pre_switch_checks` | none                         | The host's own `switchCommands.preSwitchChecks` run before a switch, by name. |
+| `post_switch`       | none                              | Deprecated: a command's text, run after the switch as root with `require_sudo`. |
+| `pre_switch_checks` | none                              | Deprecated: commands' text run before a switch; the first to fail refuses it. |
 | `magic_rollback`    | `true`, or `false` with `target_host` | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Stop what holds the Nix store database once the activation has waited a minute for it. Not with `target_host`. |
 | `defer_switch_on`   | none                              | Set a switch for the next boot instead when the new system changes any of `kernel`, `systemd` or `dbus`. |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; fetching or building the system comes before and is not counted. |
 | `confirm_timeout`   | `30s`, or `2m` on the server's own host with the default `magic_rollback` | How long after the activation X-Nix has to confirm. |
-| `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
+| `host_health_commands` | none                           | The host's own `switchCommands.healthCommands` run after a switch, by name; a failure rolls it back. |
+| `health_commands`   | none                              | Deprecated: commands' text run on the host after a switch; a failure rolls it back. |
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |
 | `health_timeout`    | `2m`                              | How long health checks may keep failing before the rollback.         |

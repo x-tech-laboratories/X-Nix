@@ -21,6 +21,10 @@
   sudo_package ? pkgs.sudo,
   # The host's boot loader, "systemd-boot", "grub" or "efi", whose tools alone are allowed; null allows every loader's.
   boot_loader ? null,
+  # The host's own post_switch scripts, each allowed by its exact store path with no arguments.
+  post_switch_scripts ? [ ],
+  # The host's fixed garbage collection unit, started with `systemctl start`, or null for none.
+  gc_unit ? null,
 }:
 let
   system_bin = "/run/current-system/sw/bin";
@@ -138,6 +142,9 @@ let
       ++ lib.optional (loader "grub") (either "${system_bin}/grub-reboot" patterns.grub_reboot_entry "*")
       ++ lib.optional (loader "efi") (either "${system_bin}/efibootmgr" patterns.efi_boot_next "--bootnext *")
     )
+    # The host's own post_switch commands and garbage collection, each fixed by the host's config.
+    ++ map (script: ''${script} ""'') post_switch_scripts
+    ++ lib.optional (gc_unit != null) "${system_bin}/systemctl start ${gc_unit}"
     # post_switch runs any shell command as root, so this rule alone makes the user root.
     ++ lib.optional allow.postSwitch "/bin/sh -c *"
     # A switch over SSH to target_host logs in with root's own SSH setup and any NIX_SSHOPTS options, so this rule alone makes the user root.

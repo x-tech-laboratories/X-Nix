@@ -57,6 +57,10 @@ without step 2, until you declare it.
 | `sudoAllow.targetHost`, `.flakeUpdates` | `false` | Each adds a group of sudo rules that is a root shell by itself. |
 | `sudoAllow.runUnits` | `runUnits.enable` | Keep the rules that start and stop run units. |
 | `sudoAllow.collectGarbageArgs` | any | The exact arguments Collect Garbage may pass to `nix-collect-garbage` as root. |
+| `switchCommands.preSwitchChecks`, `.healthCommands`, `.postSwitch` | none | The host's own switch commands, by name, which the server's `host_*` settings name; see [The host's own commands](/user/deployments/#the-hosts-own-commands). |
+| `switchCommands.enable` | any declared | Run only the host's own switch commands, never the server's text, and drop the `/bin/sh -c` sudo rule. |
+| `collectGarbage.enable` | `true` | Add `x-nix-gc.service`, which Collect Garbage starts instead of running `nix-collect-garbage` with the server's arguments. |
+| `collectGarbage.args` | `nix.gc.options`, else `--delete-older-than 7d` | The unit's `nix-collect-garbage` arguments. |
 | `runUnits.enable` | `true`    | Run each job as a transient systemd unit, `x-nix-run-<run id>.service`, so stopping it stops every process it started. |
 | `runUnits.slice` | `nix-work.slice` | The slice those units share, and with it the slice's memory and CPU limits. |
 | `runUnits.properties` | the agent's scheduling | Further unit properties; by default the agent unit's `Nice`, `CPUSchedulingPolicy`, `IOSchedulingClass`, `IOSchedulingPriority`, `OOMScoreAdjust` and `UMask`. |
@@ -65,10 +69,12 @@ without step 2, until you declare it.
 ## What the agent runs
 
 The agent runs only the programs X-Nix needs, such as `nix`, `nixos-rebuild`, `git` and `bootctl`, each with its
-arguments. The only shell commands it runs are the ones written in the server's config, `pre_switch_checks`,
-`health_commands`, `post_switch` and `push_command`, each with `/bin/sh -c` exactly as written; they reach the agent
-from the server with each job, and `post_switch` runs as root, so whoever controls the server or its config can run
-commands on the host.
+arguments. A host that declares its `switchCommands` runs only those, by the names the server sends, and its
+`postSwitch` commands as root through scripts the sudo rules name exactly. Otherwise the deprecated text in the server's
+`pre_switch_checks`, `health_commands` and `post_switch` runs with `/bin/sh -c`, `post_switch` as root, so whoever
+controls the server or its config can run commands on that host. `push_command` still runs as written on the cache's
+build host. Collect Garbage starts the host's `x-nix-gc.service` when it has one. See
+[Running the agent without root](/developer/agent-without-root/) for what is left.
 
 A job's page shows what it asked the agent to do, and its output shows each program as it starts. Long jobs keep running
 if the agent restarts or loses its connection, and the server follows them again once the agent is back.

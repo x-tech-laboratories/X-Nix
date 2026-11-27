@@ -314,8 +314,8 @@ function deployment_view(deployment: Deployment): DeploymentView {
       confirm: confirmations[id]?.(settings.name) ?? null,
     })),
     safety: {
-      pre_switch_checks: settings.pre_switch_checks, magic_rollback: settings.magic_rollback, activation_timeout: settings.activation_timeout,
-      confirm_timeout: settings.confirm_timeout, health_commands: settings.health_commands, health_urls: settings.health_urls,
+      pre_switch_checks: [...settings.pre_switch_checks, ...settings.host_pre_switch_checks.map((name) => `the host's ${name}`)], magic_rollback: settings.magic_rollback, activation_timeout: settings.activation_timeout,
+      confirm_timeout: settings.confirm_timeout, health_commands: [...settings.health_commands, ...settings.host_health_commands.map((name) => `the host's ${name}`)], health_urls: settings.health_urls,
       health_period: settings.health_period, health_timeout: settings.health_timeout, inhibit_sleep: settings.inhibit_sleep,
       close_nix_lock_holders: settings.close_nix_lock_holders,
     },

@@ -146,8 +146,11 @@ export function collect_argv(gc: GcSettings, require_sudo: boolean): Argv {
   return [...(require_sudo ? ["sudo", "-n"] : []), gc.gc_bin, ...gc.gc_args];
 }
 
+// The agent module's fixed collection unit, which the agent starts instead of the command when its host declares it.
+export const host_gc_unit = "x-nix-gc.service";
+
 export function collect_operation(gc: GcSettings, require_sudo: boolean): Operation {
-  return { kind: "programs", steps: [{ argv: collect_argv(gc, require_sudo) }] };
+  return { kind: "programs", steps: [{ argv: collect_argv(gc, require_sudo) }], host_unit: { unit: host_gc_unit, sudo: require_sudo } };
 }
 
 // The collection as a line a person reads.

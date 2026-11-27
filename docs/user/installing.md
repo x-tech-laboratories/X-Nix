@@ -205,13 +205,15 @@ command line and no other; with an older sudo the module falls back to wider she
 | `systemctl reboot`                                                      | reboot                                       | exact |
 | `bootctl list --json=short`, or `cat /boot/grub/grub.cfg` and `grub-editenv list` | boot entries, for the host's own boot loader | exact |
 | `systemd-inhibit … cat`                                                 | `sudoAllow.sleepInhibitors`                  | exact |
-| `nix-collect-garbage`                                                   | Collect Garbage                              | any, or exactly `sudoAllow.collectGarbageArgs` |
+| `nix-collect-garbage`                                                   | Collect Garbage from an older server         | exactly `sudoAllow.collectGarbageArgs`, by default `collectGarbage.args`; any when null |
 | `nix-env -p /nix/var/nix/profiles/system --set /nix/store/<hash>-nixos-system-…` | `sudoAllow.cacheSwitch`             | one NixOS system |
 | `nix … flake update --flake …` and `cp -T <tmp>/x-nix-update-XXXXXX/flake.lock …/flake.lock` | `sudoAllow.flakeUpdates` | any `nix_args`; the copy is exact |
 | `kill -TERM <pids>`, `kill -KILL <pids>`                                | `sudoAllow.lockHolders`                      | process ids other than 1 |
 | `systemd-run --unit=x-nix-run-<run id>.service … -- <node> <runner.ts> <run folder>`, `systemctl stop x-nix-run-<run id>.service` | `sudoAllow.runUnits` (agent only) | the agent's runner as a non-root user, with the module's properties |
 | `bootctl set-oneshot <entry>`, `grub-reboot <entry>` or `efibootmgr --bootnext XXXX`, whichever the host boots with | `sudoAllow.bootEntries` | one entry, no options |
-| `/bin/sh -c …`                                                          | `sudoAllow.postSwitch`                       | any command |
+| `/nix/store/<hash>-x-nix-post-switch-<name>`                            | the host's own `switchCommands.postSwitch`   | none |
+| `systemctl start x-nix-gc.service`                                      | Collect Garbage, `collectGarbage.enable`     | exact |
+| `/bin/sh -c …`                                                          | `sudoAllow.postSwitch`, off on a host that declares `switchCommands` | any command |
 | `ssh …`                                                                 | `sudoAllow.targetHost`                       | any |
 
 The `x-nix-agent` user is root-equivalent, and so is the `x-nix` user when `localAgent` is on, whatever you turn off:

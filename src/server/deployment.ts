@@ -510,6 +510,13 @@ export class Deployment {
       raise("warning");
       messages.push({ level: "warning", text: "Switches automatically with nothing to roll a bad switch back: turn on magic_rollback or add health checks" });
     }
+    const sent = command_text_settings(this.settings);
+    if (sent.length > 0) {
+      messages.push({
+        level: "warning",
+        text: `${sent.join(", ")} send command text to the host, which is deprecated: declare the commands in its services.x-nix-agent.switchCommands and name them in host_pre_switch_checks, host_health_commands and host_post_switch`,
+      });
+    }
     if (evaluation.metadata_error !== null) {
       raise("unavailable");
       messages.push({ level: "warning", text: `Could not read flake metadata: ${evaluation.metadata_error}` });
@@ -1510,4 +1517,13 @@ function clip(text: string, length: number): string {
 
 function capitalise(word: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// The settings that send the host command text to run, rather than naming commands its agent module declares.
+export function command_text_settings(settings: DeploymentSettings): string[] {
+  return [
+    ...(settings.pre_switch_checks.length > 0 ? ["pre_switch_checks"] : []),
+    ...(settings.health_commands.length > 0 ? ["health_commands"] : []),
+    ...(settings.post_switch !== null ? ["post_switch"] : []),
+  ];
 }
