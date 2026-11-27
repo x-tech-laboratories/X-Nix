@@ -7,6 +7,15 @@ sidebar:
 A deployment is one NixOS configuration on one host: the host, the flake that describes it, and the
 `nixosConfigurations` attribute to build. Its page is the host's System tab.
 
+## Upgrading
+
+Defaults that changed, and the line that keeps the earlier behaviour:
+
+- `magic_rollback` is on unless the deployment has a `target_host`, so a switch X-Nix cannot confirm reaching the host
+  afterwards is rolled back. Keep switches unwatched with `"magic_rollback": false`.
+- On the server's own host, a switch whose `magic_rollback` comes from that default has `confirm_timeout` `2m`, as the
+  server and its agent restart first. Set `"confirm_timeout": "30s"` to keep the shorter wait.
+
 ![A deployment's System tab, showing drift and the actions](/assets/screenshots/system.png)
 
 ## Drift
@@ -28,6 +37,20 @@ With `auto_switch`, a deployment switches by itself once drift has lasted `auto_
 target system, and never when the running generation is newer than the flake's last change, since that generation came
 from somewhere else, such as an unpushed checkout, and switching would undo it. While the agent that builds or switches
 the system is not connected and its host cannot be woken, it waits and says so, and switches once the agent is back.
+
+`auto_switch_after` is also how long a new lock waits before it reaches the host by itself: its clock starts when X-Nix
+first sees the host drift to that exact system, which is never before the lock changed, and starts again for every new
+system. Raise it to give a bad upstream commit more time to be noticed before anything switches to it; a person, a
+fleet run or a manual switch never waits for it.
+
+A deployment that switches automatically with `magic_rollback` off and no health checks warns that nothing would roll
+a bad switch back.
+
+With the fleet's `stages`, an automatic switch of a later stage waits for the earlier stages, as
+[staged automatic switches](/user/fleet/#staged-automatic-switches) describes.
+
+With `auto_switch_max_input_age`, a deployment does not switch by itself while the oldest locked input changed longer
+ago than that, and says so on its page; a person can still switch it.
 
 ## Build
 
@@ -146,6 +169,15 @@ The watchdog rolls back to the previous system when:
 - with `magic_rollback`, no confirmation arrives within `confirm_timeout` (plus `health_timeout` when there are health
   checks). Without `magic_rollback` an unconfirmed switch is kept.
 
+`magic_rollback` is on by default, so every switch and test runs guarded, except for a deployment with a `target_host`,
+which a guarded switch cannot reach. Boot and dry activate never run a watchdog, since they activate nothing. A host
+that sleeps must stay awake until the switch is confirmed, which `keep_awake` sees to. On the server's own host the
+confirmation comes only once the server and its agent are back from any restart the switch caused, so there the default
+`confirm_timeout` is `2m` when `magic_rollback` is left to its default.
+
+A switch whose checks failed, or that nothing confirmed with `magic_rollback`, while the system had not changed, has
+nothing to roll back; it still fails, saying so, and a fleet run counts that host as failed.
+
 An activation that only failed to start some units (switch-to-configuration's status 4) counts as activated: the health
 checks decide, and a switch they pass is kept. Its job succeeds, and the history and the host's status warn with the
 units that failed until the host runs another system.
@@ -213,15 +245,16 @@ named `configuration`; a switch to a `target_host` always switches.
 | `target_host`       | none                              | `--target-host` for a plain switch; not with a guarded switch.       |
 | `auto_switch`       | `false`                           | Switch by itself once drift lasts `auto_switch_after`.               |
 | `auto_switch_after` | `30m`                             | How long drift lasts before an automatic switch.                     |
+| `auto_switch_max_input_age` | none                      | Do not switch by itself while the oldest locked input is older than this. |
 | `build_at`          | none                              | Build daily at this local time.                                      |
 | `switch_wrapper`    | none                              | A command each program of the switch runs inside, outside sudo.      |
 | `post_switch`       | none                              | A command run after the switch, as root with `require_sudo`.         |
 | `pre_switch_checks` | none                              | Commands run on the host before a switch; the first to fail refuses it. |
-| `magic_rollback`    | `false`                           | Roll a switch back unless X-Nix confirms it still reaches the host.  |
+| `magic_rollback`    | `true`, or `false` with `target_host` | Roll a switch back unless X-Nix confirms it still reaches the host.  |
 | `close_nix_lock_holders` | `false`                      | Stop what holds the Nix store database once the activation has waited a minute for it. Not with `target_host`. |
 | `defer_switch_on`   | none                              | Set a switch for the next boot instead when the new system changes any of `kernel`, `systemd` or `dbus`. |
 | `activation_timeout`| `4m`                              | How long the activation may take before it is rolled back; fetching or building the system comes before and is not counted. |
-| `confirm_timeout`   | `30s`                             | How long after the activation X-Nix has to confirm.                  |
+| `confirm_timeout`   | `30s`, or `2m` on the server's own host with the default `magic_rollback` | How long after the activation X-Nix has to confirm. |
 | `health_commands`   | none                              | Commands run on the host after a switch; a failure rolls it back.    |
 | `health_urls`       | none                              | URLs X-Nix fetches after a switch; a non-2xx answer rolls it back.   |
 | `health_period`     | `5s`                              | How often failing health checks are tried again.                     |

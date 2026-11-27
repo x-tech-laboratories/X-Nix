@@ -142,7 +142,14 @@ export function parse_hardware_config(output: string, token: string | null): str
   const body_start = start + mark.length + 2;
   const end = output.indexOf(`\n${mark} end`, body_start);
   if (end === -1) return null;
-  return output.slice(body_start, end).replace(/\n+$/, "\n");
+  return with_one_final_newline(output.slice(body_start, end));
+}
+
+// The text with its trailing newlines made one, found by a loop so a long run of newlines anywhere stays linear.
+function with_one_final_newline(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "\n") end--;
+  return end === text.length ? text : `${text.slice(0, end)}\n`;
 }
 
 // ── Snippets ─────────────────────────────────────────────────────────────────

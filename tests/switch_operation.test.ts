@@ -177,11 +177,14 @@ describe("a switch on the agent", () => {
     expect(existsSync(watch_folder(watched.token))).toBe(false);
   });
 
-  it("asks its watchdog to roll back a failing health check, with the check's output as the reason", async () => {
+  it("asks its watchdog to roll back a failing health check, with the check's output as the reason, and fails", async () => {
     const watched = watch({ token: token(), require_sudo: false, health_commands: ["curl -f localhost"], health_timeout: 0 });
     const { context, output } = fake_context((argv) => (argv[2] === "curl -f localhost" ? { exit_code: 1, stdout: "nginx is down\n" } : {}));
 
-    await switch_system(context, plain_switch({ watch: watched }));
+    const status = await switch_system(context, plain_switch({ watch: watched }));
+
+    // Even with nothing to roll back, a switch whose checks failed exits with a failure.
+    expect(status).toBe(1);
 
     const verdict = switch_verdict(output(), null);
     expect(verdict.activated).toBe(true);
@@ -190,6 +193,26 @@ describe("a switch on the agent", () => {
     expect(["unchanged", "rollback-failed"]).toContain(verdict.outcome?.kind);
     expect(verdict.outcome?.reason).toContain("Health check 1 (curl -f localhost) failed with status 1: nginx is down");
     expect(existsSync(watch_folder(watched.token))).toBe(false);
+  }, 20_000);
+
+  it("fails a switch nothing confirmed under magic_rollback, even when the system had not changed", async () => {
+    const watched = watch({ token: token(), require_sudo: false, confirm_window: 0, magic_rollback: true });
+    const { context, output } = fake_context();
+
+    const status = await switch_system(context, plain_switch({ watch: watched }));
+
+    expect(["unchanged", "rollback-failed"]).toContain(switch_verdict(output(), null).outcome?.kind);
+    expect(status).toBe(1);
+  }, 20_000);
+
+  it("succeeds with a switch kept unconfirmed without magic_rollback", async () => {
+    const watched = watch({ token: token(), require_sudo: false, confirm_window: 0 });
+    const { context, output } = fake_context();
+
+    const status = await switch_system(context, plain_switch({ watch: watched }));
+
+    expect(switch_verdict(output(), null).outcome?.kind).toBe("kept");
+    expect(status).toBe(0);
   }, 20_000);
 
   it("ends once its watchdog gives an outcome, while the activation still hangs", async () => {

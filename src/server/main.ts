@@ -154,6 +154,8 @@ const deployments = config.deployments.map((settings) => new Deployment(settings
     const flake = flakes.find((candidate) => candidate.id === flake_id);
     if (flake !== undefined) void poller.refresh(flake);
   },
+  // The fleet's stages order automatic switches, so a later stage waits for the earlier ones to switch and soak.
+  auto_switch_hold: (deployment, revision) => fleet.auto_switch_hold(deployment, revision),
 }));
 // An update or a push that changed a flake has every deployment and cache naming the flake evaluate afresh.
 const on_updated = (flake: Flake) => {
@@ -171,7 +173,9 @@ const checked_attributes = (flake: Flake) => [...new Set([
   }),
   ...caches.filter((cache) => cache.settings.flake_id === flake.id).flatMap((cache) => target_attributes(cache.settings)),
 ])];
-const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated, checked_attributes }));
+// A flake warns when the deployments switching to it by themselves would take an update nothing checked.
+const auto_switched_by = (flake: Flake) => deployments.filter((deployment) => deployment.settings.flake_id === flake.id && deployment.settings.auto_switch).map((deployment) => deployment.settings.name);
+const flakes = config.flakes.map((settings) => new Flake(settings, { store, agents, on_updated, checked_attributes, auto_switched_by }));
 const poller = new Poller(deployments, null, caches, [provisioner], flakes, [...hosts.values()]);
 poller.follow_new_jobs(store);
 const fleet = new Fleet(poller.deployments, {

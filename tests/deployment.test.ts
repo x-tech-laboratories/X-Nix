@@ -5,7 +5,7 @@ import { Cache } from "../src/server/cache.ts";
 import { cache_settings, deployment_settings, flake_settings, host_settings } from "../src/server/config.ts";
 import { Deployment, latest_slot } from "../src/server/deployment.ts";
 import { report_mark } from "../src/server/nixos/attic.ts";
-import { Store } from "../src/server/store.ts";
+import { output_cut_line, Store } from "../src/server/store.ts";
 import {
   announcement, clock, collect, current_closure, cycle, eval_output, FakeAgent, generations_result, kernel, make_deployment, messages_of, metadata, new_kernel, probe, result,
   mark_line, rewind_drift, rewind_evaluation, rewind_schedule, shown_command, status_of, target_closure,
@@ -541,6 +541,23 @@ describe("building elsewhere", () => {
     expect(shown_command(switching.command)).not.toContain("nixos-rebuild");
     expect(harness.store.job(outcome.job_id!)!.output).toContain("The cache holds the system; switching");
     expect(harness.deployment.evaluation().switch_wait).toBeUndefined();
+  });
+
+  it("keeps showing a build's output in its waiting switch after the build's stored output was cut", async () => {
+    const harness = with_builder();
+    const outcome = await harness.deployment.act("switch");
+    const build = harness.builder.last_run('"kind":"cache_build"')!;
+    const lines = (megabytes: number) => `${"x".repeat(99)}\n`.repeat((megabytes * 2 ** 20) / 100);
+    harness.builder.write(build, lines(12));
+    await harness.deployment.cycle();
+    expect(harness.deployment.evaluation().switch_wait?.copied).toBeGreaterThan(12 * 10 ** 6);
+
+    harness.builder.write(build, `${lines(6)}after the cut\n`);
+    await harness.deployment.cycle();
+
+    const build_job = harness.store.job(harness.deployment.evaluation().switch_wait!.step_job_id!)!;
+    expect(build_job.output).toContain(output_cut_line);
+    expect(harness.store.job(outcome.job_id!)!.output.endsWith("after the cut\n")).toBe(true);
   });
 
   it("waits to build while another system builds on the same host, then builds", async () => {
@@ -1079,6 +1096,43 @@ describe("automatic switch", () => {
     expect(harness.deployment.running_job()?.trigger).toBe("automatic");
   });
 
+  it("warns when it switches automatically with nothing to roll a bad switch back", async () => {
+    const exposed = "Switches automatically with nothing to roll a bad switch back: turn on magic_rollback or add health checks";
+    const reading = async (values: Record<string, unknown>) => {
+      const harness = make_deployment(values);
+      await collect(harness, { probe: probe({ current: target_closure }) });
+      return harness.deployment.reading()!;
+    };
+
+    expect((await reading(automatic)).status).toBe("online");
+    const bare = await reading({ ...automatic, magic_rollback: false });
+    expect(bare.messages).toContainEqual({ level: "warning", text: exposed });
+    expect(bare.status).toBe("warning");
+    expect((await reading({ ...automatic, target_host: "root@host" })).messages).toContainEqual({ level: "warning", text: exposed });
+    for (const values of [automatic, { ...automatic, magic_rollback: false, health_commands: ["true"] }, { ...automatic, magic_rollback: false, health_urls: ["https://host.example/health"] }, { magic_rollback: false }]) {
+      expect((await reading(values)).messages.map((message) => message.text)).not.toContain(exposed);
+    }
+  });
+
+  it("switches onto inputs of any age unless auto_switch_max_input_age is set", async () => {
+    const harness = await drift_long_enough({ ...automatic, auto_switch_max_input_age: "2d" });
+
+    await cycle(harness);
+
+    expect(harness.deployment.settings.auto_switch_max_input_age).toBe(172800);
+    expect(make_deployment(automatic).deployment.settings.auto_switch_max_input_age).toBeNull();
+    expect(harness.deployment.running_job()?.trigger).toBe("automatic");
+  });
+
+  it("holds while the oldest locked input is older than auto_switch_max_input_age", async () => {
+    const harness = await drift_long_enough({ ...automatic, auto_switch_max_input_age: "12h" });
+
+    await cycle(harness);
+
+    expect(harness.deployment.running_job()).toBeNull();
+    expect(messages_of(harness)).toContain("Not switching automatically: the oldest locked input nixpkgs changed 1 day ago, longer ago than the 12 hours auto_switch_max_input_age allows");
+  });
+
   it("leaves alone a generation newer than the flake", async () => {
     const harness = make_deployment(automatic);
     await collect(harness, { probe: probe({ created_epoch: clock.now - 60 }) });
@@ -1356,6 +1410,31 @@ describe("safer switches", () => {
     const job = harness.store.jobs()[0];
     expect(job.error).toBe("Rolled back to the previous system: Health check 1 (curl) failed with status 7");
     expect(harness.store.events(harness.deployment.id)[0].message).toContain("Switch rolled back to the previous system: Health check 1");
+  });
+
+  it("fails a switch whose checks failed with nothing to roll back, even when its run ended well", async () => {
+    for (const exit_code of [0, 1]) {
+      const { harness, run } = await awaiting();
+      harness.agent.end(run, "@@x-nix-switch outcome unchanged Health check 1 (curl) failed with status 7\n", exit_code);
+
+      await cycle(harness);
+
+      const job = harness.store.jobs()[0];
+      expect(job.state).toBe("failed");
+      expect(job.error).toBe("The checks failed, but the system had not changed, so nothing was rolled back: Health check 1 (curl) failed with status 7");
+      expect(harness.store.events(harness.deployment.id)[0]).toMatchObject({ level: "error", message: expect.stringContaining("Switch failed: The checks failed") });
+      expect(harness.deployment.evaluation().switch_failure?.reason).toContain("nothing was rolled back");
+    }
+  });
+
+  it("names what failed for an unchanged switch that never activated", async () => {
+    const harness = make_deployment({ magic_rollback: false });
+    await harness.deployment.act("switch");
+    harness.agent.end(harness.agent.last_run("switch")!, "@@x-nix-switch outcome unchanged Building or fetching the system failed with status 1\n", 1);
+
+    await cycle(harness);
+
+    expect(harness.store.jobs()[0]).toMatchObject({ state: "failed", error: "Nothing changed: Building or fetching the system failed with status 1" });
   });
 
   it("notes a switch set for the next boot until the host runs another system", async () => {
