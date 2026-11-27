@@ -170,10 +170,18 @@ flowchart TD
     newer -- yes --> refuse([note: not switching, it came from elsewhere])
     newer -- no --> long{drift lasted auto_switch_after?}
     long -- no --> wait([note: switching once it has])
-    long -- yes --> due[auto_switch_due = target]
+    long -- yes --> staged{auto_switch_hold: an earlier fleet stage<br/>not yet in sync and soaked at this revision,<br/>or failed to switch to it?}
+    staged -- yes --> held([note why; event once per target])
+    staged -- no --> due[auto_switch_due = target]
     due --> next[next cycle: launch_auto_switch<br/>trigger automatic]
     next --> mark[auto_switch_target = target<br/>so it runs once per target]
 ```
+
+`Fleet.auto_switch_hold()` answers for the deployment through the `auto_switch_hold` callback `main.ts` passes, so
+`deployment.ts` never imports the fleet. With `fleet.auto_switch_staged`, a deployment of a later stage waits on every
+deployment of an earlier stage that switches automatically, follows the same remote flake and has no pin: each must have
+`evaluation.in_sync` at the same `flake_revision` for the fleet's `soak` without reading failed, and none may have
+`evaluation.switch_failure` at that revision. The revision, not the store path, is compared, as each host's system differs.
 
 ## Build and switch
 
@@ -301,6 +309,10 @@ Stop on such a switch after `activated` and before `outcome` (`stop_job` in `src
 stop with its jobs) sends `signal_rollback` with the reason `Stopped by <who> after the activation` instead of stopping
 the run, whose unit holds the watchdog; the run then ends with the watchdog's outcome. `stop_overdue_rollbacks` stops it
 outright once the watchdog's window has passed without one, and a signal that cannot be delivered stops it at once.
+
+The run exits with a failure for every outcome but `confirmed` and `kept`, `unchanged` included, and `judge_switch()`
+fails the job for `unchanged` too, so a switch whose checks failed with nothing to roll back never reads as a success,
+in its job or in a fleet run, even from an agent that still exits 0 for it.
 
 The watchdog's own states:
 

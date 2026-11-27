@@ -133,7 +133,8 @@ export async function switch_system(context: Context, operation: SwitchOperation
   // A watchdog that never reported may still be running, so its folder is left for the next switch's sweep.
   if (outcome !== "") rmSync(folder, { recursive: true, force: true });
   mark(`outcome ${outcome || "unknown The watchdog never reported an outcome"}`);
-  if (/^(confirmed|kept|unchanged)\b/.test(outcome)) return status;
+  // An unchanged outcome means the checks failed or no confirmation came, with nothing to roll back, so the switch failed.
+  if (/^(confirmed|kept)\b/.test(outcome)) return status;
   return status !== 0 ? status : 1;
 }
 

@@ -15,7 +15,7 @@ const originals = {
   home: { type: "git", url: "https://git.example.org/me/home.git" },
 };
 
-function make_flake(values: Record<string, unknown> = {}) {
+function make_flake(values: Record<string, unknown> = {}, auto_switched_by: string[] = []) {
   const store = new Store(":memory:");
   const agent = new FakeAgent();
   agent.answers.push(["flake metadata", metadata({ inputs: { nixpkgs: clock.now - 86400, home: clock.now - 3 * 86400 }, originals })]);
@@ -23,6 +23,7 @@ function make_flake(values: Record<string, unknown> = {}) {
   let passed = 0;
   const flake = new Flake(flake_settings({ id: "config", url: "/etc/nixos", ...values }), {
     store, agents: new AgentPool("host", agent), now: () => clock.now + passed, on_updated: (changed) => updated.push(changed.id),
+    auto_switched_by: () => auto_switched_by,
   });
   // Moves this flake's clock on.
   const pass = (seconds: number) => void (passed += seconds);
@@ -67,6 +68,39 @@ describe("a flake", () => {
     const unlimited = make_flake();
     await unlimited.flake.cycle();
     expect(unlimited.flake.reading()?.status).toBe("online");
+  });
+
+  it("warns when updates land unchecked on a flake deployments switch to by themselves", async () => {
+    const texts = async (flake: Flake) => (await flake.cycle(), flake.reading()!.messages.filter((message) => message.level !== "info"));
+
+    const unchecked = make_flake({ check_update: "none" }, ["Web", "Database"]);
+    expect(await texts(unchecked.flake)).toEqual([{ level: "warning", text: "Updates land unchecked, and Web, Database switch to them automatically: set check_update to build" }]);
+    expect(unchecked.flake.reading()!.status).toBe("warning");
+
+    for (const [values, switching] of [[{ check_update: "none" }, []], [{ check_update: "evaluate" }, ["Web"]], [{}, ["Web"]], [{ check_update: "none", input_check_interval: null }, ["Web"]]] as const) {
+      const { flake } = make_flake(values, [...switching]);
+      expect(await texts(flake)).toEqual([]);
+    }
+    const scheduled = make_flake({ check_update: "none", input_check_interval: null, update_at: "02:00" }, ["Web"]);
+    expect((await texts(scheduled.flake)).map((message) => message.level)).toEqual(["warning"]);
+  });
+
+  it("notes that every input moving upstream lands at once, naming the options that narrow it", async () => {
+    const github = { url: "github:owner/config", push_ssh_key: "/var/lib/x-nix/push-identity" };
+    const note = async (values: Record<string, unknown>) => {
+      const { flake } = make_flake(values);
+      await flake.cycle();
+      return flake.reading()!.messages.find((message) => message.text.startsWith("Any input that moves upstream"));
+    };
+
+    expect(await note({})).toEqual({ level: "info", text: "Any input that moves upstream is updated and lands on the branch at once: set watch_inputs to pick which" });
+    expect((await note(github))?.text).toContain("or land_update to pull_request to review each one");
+    expect(await note({ watch_inputs: ["home"] })).toBeUndefined();
+    expect(await note({ input_check_interval: null })).toBeUndefined();
+    expect(await note({ ...github, land_update: "pull_request", access_tokens_file: "/etc/x-nix/forge.conf" })).toBeUndefined();
+    const { flake } = make_flake();
+    await flake.cycle();
+    expect(flake.reading()!.status).toBe("online");
   });
 
   it("reads its metadata again only once its interval has passed", async () => {

@@ -6,6 +6,13 @@ sidebar:
 
 The Hosts page runs Build, Switch or Reboot across many deployments at once.
 
+## Upgrading
+
+Defaults that changed, and the line that keeps the earlier behaviour:
+
+- With `stages` set, `auto_switch_staged` is on, so an automatic switch in a later stage waits for the earlier stages.
+  Keep every deployment switching on its own clock with `"auto_switch_staged": false` in `fleet`.
+
 ![The Hosts page with a fleet run](/assets/screenshots/hosts.png)
 
 ## Picking deployments
@@ -45,6 +52,20 @@ Once a stage has finished, the run can hold before the next:
 
 A run started from the API or MCP may set `soak` and `approve` for itself.
 
+## Staged automatic switches
+
+With `auto_switch_staged`, on by default once `stages` is set, the stages also order switches deployments make by
+themselves with `auto_switch`. A deployment of a later stage switches by itself only once every deployment of each
+earlier stage that also switches by itself, follows the same remote flake and has no pin runs the same flake revision in
+sync, and has for `soak` without its status turning failed. The revision is compared rather than the system, since each
+host's system differs.
+
+While it waits, its page says "Not switching automatically: …" naming the deployment it waits for, and its history notes
+the hold once per system. When one of those earlier deployments failed to switch to that revision, or rolled back, the
+later stages hold until a newer revision arrives or a switch there succeeds; a person can still switch any of them.
+Deployments no stage names, those of the first stage, and local checkouts such as `/etc/nixos`, which each host holds
+its own copy of, switch as they would without stages. A switch set for the next boot counts once the host runs it.
+
 ## Settings
 
 The config's `fleet` object:
@@ -56,3 +77,4 @@ The config's `fleet` object:
 | `sync_timeout` | `30m`   | How long a staged switch may take to read as in sync.            |
 | `soak`           | `0s`    | How long each finished stage must stay healthy before the next starts. |
 | `approve_stages` | `false` | Wait for an admin's approval before each next stage.             |
+| `auto_switch_staged` | `true` with `stages`, else `false` | Have automatic switches of a later stage wait for the earlier stages to switch and soak. |

@@ -3,7 +3,7 @@
 import type { Cache } from "../src/server/cache.ts";
 import { AgentError, AgentPool, type Agent, type LongRun, type LongRunPoll, type RunResult } from "../src/server/agents/agent.ts";
 import { deployment_settings, host_settings, type FlakeSettings } from "../src/server/config.ts";
-import { Deployment } from "../src/server/deployment.ts";
+import { Deployment, type DeploymentOptions } from "../src/server/deployment.ts";
 import { Host } from "../src/server/host.ts";
 import { eval_mark } from "../src/server/nixos/commands.ts";
 import { Store } from "../src/server/store.ts";
@@ -255,7 +255,7 @@ export function make_deployment(
   values: Record<string, unknown> = {},
   existing: {
     store?: Store; agent?: FakeAgent; http_check?: (url: string) => Promise<string | null>; flakes?: Map<string, FlakeSettings>; caches?: Cache[];
-    check_cache?: (cache: Cache) => void; read_flake?: (flake_id: string) => void;
+    check_cache?: (cache: Cache) => void; read_flake?: (flake_id: string) => void; auto_switch_hold?: DeploymentOptions["auto_switch_hold"];
   } = {},
 ): Harness {
   const store = existing.store ?? new Store(":memory:");
@@ -265,7 +265,9 @@ export function make_deployment(
   const host = new Host(host_settings({ id: "host", ...of_host }), { store, agents, now: () => clock.now, deployments: () => [settings] });
   const caches = new Map((existing.caches ?? []).map((cache) => [cache.id, cache.settings]));
   const settings = deployment_settings({ id: "host-deploy", flake: "/etc/nixos", ...own }, 0, existing.flakes, () => host.settings, caches);
-  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache, read_flake: existing.read_flake });
+  const deployment = new Deployment(settings, { store, agents, now: () => clock.now, http_check: existing.http_check, caches: existing.caches, host, check_cache: existing.check_cache, read_flake: existing.read_flake,
+    auto_switch_hold: existing.auto_switch_hold,
+  });
   return { deployment, host, agent, store, agents };
 }
 

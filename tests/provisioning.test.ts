@@ -433,6 +433,17 @@ describe("a media build", () => {
     expect(parse_hardware_config(output, token)).toBe("{ real }");
     expect(parse_hardware_config(output.replace(announcement(operation), ""), token)).toBe("{ forged }");
   });
+
+  it("keeps one final newline of the hardware configuration, in linear time however many newlines it holds", () => {
+    const body = (text: string) => `installing\n${hardware_mark}\n${text}\n${hardware_mark} end\n`;
+    const blank_lines = "\n".repeat(200_000);
+
+    const started = performance.now();
+    expect(parse_hardware_config(body(`${blank_lines}{ real }\n\n\n`), null)).toBe(`${blank_lines}{ real }\n`);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(parse_hardware_config(body("{ real }"), null)).toBe("{ real }");
+    expect(parse_hardware_config(body("\n\n"), null)).toBe("\n");
+  });
 });
 
 // ── Routes ───────────────────────────────────────────────────────────────────

@@ -275,18 +275,19 @@ describe("the update", () => {
     expect(update_operation(flake({ check_update: "none" }), attributes)).toEqual(in_place);
   });
 
-  it("checks a local flake's new lock before writing it, building with check_update build", () => {
+  it("checks a local flake's new lock before writing it, building by default and only evaluating with check_update evaluate", () => {
     expect(update_operation(flake(), attributes)).toEqual({
-      kind: "local_update", nix, path: "/etc/nixos", sudo: true, keep_nix_config: false, check: { attributes, build: false },
+      kind: "local_update", nix, path: "/etc/nixos", sudo: true, keep_nix_config: false, check: { attributes, build: true },
     });
-    expect((update_operation(flake({ check_update: "build" }), attributes) as LocalUpdateOperation).check.build).toBe(true);
+    expect((update_operation(flake({ check_update: "evaluate" }), attributes) as LocalUpdateOperation).check.build).toBe(false);
+    expect(flake().check_update).toBe("build");
     expect(() => flake({ check_update: "sometimes" })).toThrow(ConfigError);
   });
 
   it("writes a local lock only once every attribute evaluates against it", async () => {
     const checkout = mkdtempSync(join(tmpdir(), "x-nix-checkout-"));
     writeFileSync(join(checkout, "flake.lock"), "old");
-    const operation = update_operation(flake({ url: checkout, require_sudo: false }), [...attributes, "packages.x86_64-linux.tool"]) as LocalUpdateOperation;
+    const operation = update_operation(flake({ url: checkout, require_sudo: false, check_update: "evaluate" }), [...attributes, "packages.x86_64-linux.tool"]) as LocalUpdateOperation;
     // nix writes the new lock where it is told to.
     const lock_of = (argv: string[]) => (argv.includes("--output-lock-file") ? void writeFileSync(argv[argv.indexOf("--output-lock-file") + 1], "new") : undefined);
     const failing = fake_context((argv) => (lock_of(argv), argv.includes("eval") && argv.at(-1)!.includes("tool") ? { exit_code: 1 } : {}));
@@ -307,7 +308,7 @@ describe("the update", () => {
 
   it("does not push a github: flake's lock that fails its check", async () => {
     const operation = update_operation(flake(github), attributes) as GithubUpdateOperation;
-    const { context, ran, output } = fake_context((argv) => (argv.includes("diff") ? { exit_code: 1 } : argv.includes("eval") ? { exit_code: 1 } : {}));
+    const { context, ran, output } = fake_context((argv) => (argv.includes("diff") ? { exit_code: 1 } : argv.includes("build") ? { exit_code: 1 } : {}));
 
     expect(await github_update(context, operation)).toBe(1);
     expect(ran.some((argv) => argv.includes("commit") || argv.includes("push"))).toBe(false);
@@ -563,6 +564,12 @@ describe("a flake in the config", () => {
     expect(flake({ input_check_interval: null, watch_inputs: ["nixpkgs"] })).toMatchObject({ input_check_interval: null, watch_inputs: ["nixpkgs"] });
   });
 
+  it("builds every checked system before an update lands, unless check_update says otherwise", () => {
+    expect(flake().check_update).toBe("build");
+    expect(flake({ check_update: "evaluate" }).check_update).toBe("evaluate");
+    expect(flake({ check_update: "none" }).check_update).toBe("none");
+  });
+
   it.each(["update_at", "push_ssh_key", "commit_author", "commit_message", "max_input_age"])("takes %s, which a deployment refuses", (key) => {
     expect(() => deployment_settings({ id: "odin", [key]: key === "update_at" ? "02:00" : "7d" })).toThrow(/belongs to its flake/);
   });
@@ -580,6 +587,20 @@ describe("a host in the config", () => {
 
     expect(config.deployments.map(({ require_sudo, inhibit_sleep }) => [require_sudo, inhibit_sleep])).toEqual([[false, true], [true, false]]);
     expect(config.hosts.map((host) => host.id)).toEqual(["thor", "heimdall"]);
+  });
+
+  it("rolls back unconfirmed switches by default, waiting longer on the server's own host, unless the deployment says otherwise", () => {
+    const config = parse_config({
+      deployments: [
+        { id: "own" }, { id: "thor", host: "thor" }, { id: "loki", host: "loki", target_host: "root@loki" }, { id: "odin", host: "odin", magic_rollback: false },
+        { id: "heimdall", host: "heimdall", magic_rollback: true },
+      ],
+    }, "heimdall-server");
+
+    expect(config.deployments.map(({ id, magic_rollback, confirm_timeout }) => [id, magic_rollback, confirm_timeout])).toEqual([
+      ["own", true, 120], ["thor", true, 30], ["loki", false, 30], ["odin", false, 30], ["heimdall", true, 30],
+    ]);
+    expect(parse_config({ deployments: [{ id: "own", host: "heimdall" }] }, "heimdall").deployments[0].confirm_timeout).toBe(120);
   });
 
   it("runs one deployment, counting a deployment that names no host as the server's own", () => {

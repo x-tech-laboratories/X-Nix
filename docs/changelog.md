@@ -16,6 +16,13 @@ version.
 - feat(agents): sign what the server sends agents with a server key, and have agents check it
 - fix(auth): decide who may call a route by its matched pattern
 - build(deps): bump X-Libs to 0.89.0
+- test: raise the coverage floor to what the safer automatic update's tests reach
+- fix(jobs): keep showing a build's output in its switch after a cut, and trim an install's trailing newlines in linear time
+- fix(switch): fail a switch whose checks failed with nothing to roll back, in its job and in fleet runs
+- feat(deployment): warn about automatic switches nothing rolls back and unchecked updates they take
+- feat(fleet)!: have automatic switches of a later stage wait for the earlier stages to switch and soak
+- feat(deployment): hold automatic switches onto inputs older than auto_switch_max_input_age
+- feat(deployment)!: roll back unconfirmed switches and build every checked system before an update lands, by default
 - fix(auth): refuse request paths that are not spelled canonically
 - fix(jobs): read only marker lines that carry the run's own token
 - fix(deployment): switch only to the evaluated system, built at the evaluated commit
