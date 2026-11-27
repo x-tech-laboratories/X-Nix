@@ -6,12 +6,13 @@ import { LongRuns } from "@x-tech-laboratories/x-libs/agent/long_runs";
 import { describe, expect, it } from "vitest";
 
 import { local_update } from "../src/agent/operations/deploy.ts";
-import type { Context, ProgramOptions, ProgramResult, RunProgram } from "../src/agent/programs.ts";
+import { spawn_program, step_argv, type Context, type ProgramOptions, type ProgramResult, type RunProgram } from "../src/agent/programs.ts";
+import { off_groups, sudo_group, sudo_groups_variable, sudo_refusal } from "../src/agent/sudo_groups.ts";
 import { operation_runner, run_unit } from "../src/agent/tasks.ts";
 import { deployment_settings, flake_settings, host_settings } from "../src/server/config.ts";
 import { next_boot_operation } from "../src/server/nixos/boot.ts";
-import { cache_switch_steps, update_operation } from "../src/server/nixos/commands.ts";
-import { rollback_operation } from "../src/server/nixos/switch.ts";
+import { cache_switch_steps, post_switch_argv, reboot_operation, update_operation } from "../src/server/nixos/commands.ts";
+import { inhibitor_step, rollback_operation } from "../src/server/nixos/switch.ts";
 import type { LocalUpdateOperation, Operation, ProgramsOperation } from "../src/shared/operations.ts";
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -125,5 +126,54 @@ describe("the sudo rules", () => {
     expect(pattern("start_run_unit").test(`${started} --property User=root ${runner} ${agent_state_directory}/runs/a`)).toBe(false);
     expect(pattern("start_run_unit").test(`${started} -- /bin/sh -c id`)).toBe(false);
     expect(pattern("stop_run_unit").test("stop x-nix-run-a.service sshd.service")).toBe(false);
+  });
+});
+
+// ── Groups the module leaves out ─────────────────────────────────────────────
+
+describe("the sudo groups", () => {
+  it("name the group whose rule allows each privileged command the server builds", () => {
+    const [set, activate] = cache_switch_steps(settings(), system, "switch").map((step) => step.argv).filter((argv) => argv[0] === "sudo");
+    expect(sudo_group(set!)).toBe("cacheSwitch");
+    expect(sudo_group(activate!)).toBeNull();
+    expect(sudo_group(post_switch_argv(settings({ post_switch: "systemctl restart example.service" }))!)).toBe("postSwitch");
+    expect(sudo_group(step_argv(inhibitor_step(settings())))).toBe("sleepInhibitors");
+    expect(sudo_group(step_argv(inhibitor_step(settings({ target_host: "root@example" }))))).toBe("targetHost");
+    expect(sudo_group((reboot_operation(settings()) as ProgramsOperation).steps[0]!.argv)).toBeNull();
+    expect(sudo_group(["sudo", "-n", "kill", "-TERM", "1234"])).toBe("lockHolders");
+    expect(sudo_group(["sudo", "-n", "bootctl", "set-oneshot", "nixos-generation-42.conf"])).toBe("bootEntries");
+    expect(sudo_group(["sudo", "-n", "bootctl", "list", "--json=short"])).toBeNull();
+    expect(sudo_group(["sudo", "-n", "nix", "flake", "update", "--flake", "/etc/nixos"])).toBe("flakeUpdates");
+    expect(sudo_group(["sudo", "-n", "-u", "example", "screen-off"])).toBeNull();
+    expect(sudo_group(["nix-env", "--set", system])).toBeNull();
+  });
+
+  it("refuse a command whose group the module turned off, naming the option, and run the rest", async () => {
+    const state = mkdtempSync(join(tmpdir(), "x-nix-sudo-"));
+    const file = join(state, "groups.json");
+    writeFileSync(file, JSON.stringify({ off: ["targetHost", "flakeUpdates"] }));
+    const off = off_groups({ [sudo_groups_variable]: file });
+    expect([...off].sort()).toEqual(["flakeUpdates", "targetHost"]);
+    expect(sudo_refusal(["sudo", "-n", "ssh", "root@example", "true"], off)).toContain("sudoAllow.targetHost = true");
+    expect(sudo_refusal(["sudo", "-n", "kill", "-TERM", "12"], off)).toBeNull();
+    expect(off_groups({})).toEqual(new Set());
+    expect(off_groups({ [sudo_groups_variable]: join(state, "missing.json") })).toEqual(new Set());
+
+    const previous = process.env[sudo_groups_variable];
+    process.env[sudo_groups_variable] = file;
+    let shown = "";
+    const sink = { write: (chunk: Buffer | string) => void (shown += chunk.toString()) };
+    const context: Context = { out: sink, err: sink, signal: new AbortController().signal, own_groups: false, log: false, stdin: null, program: spawn_program };
+    try {
+      const result = await spawn_program(context, ["sudo", "-n", "ssh", "root@example", "true"], { stderr: "keep" });
+      expect(result.exit_code).toBe(1);
+      expect(result.stderr).toContain("sudoAllow.targetHost");
+      await spawn_program(context, ["sudo", "-n", "cp", "-T", "a", "b"]);
+      expect(shown).toContain("sudoAllow.flakeUpdates");
+    } finally {
+      if (previous === undefined) delete process.env[sudo_groups_variable];
+      else process.env[sudo_groups_variable] = previous;
+      rmSync(state, { recursive: true });
+    }
   });
 });

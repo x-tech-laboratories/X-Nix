@@ -3,9 +3,10 @@
 
 // ── Imports ──────────────────────────────────────────────────────────────────
 
-import { run_program, type ProgramOptions as SharedProgramOptions, type ProgramResult, type Sink } from "@x-tech-laboratories/x-libs/agent/programs";
+import { run_program, type ProgramOptions as SharedProgramOptions, type ProgramResult, type Sink, type StreamUse } from "@x-tech-laboratories/x-libs/agent/programs";
 
 import { mark_prefix, markers_mark, show_argv, type Argv, type Step } from "../shared/operations.ts";
+import { sudo_refusal } from "./sudo_groups.ts";
 
 export {
   BoundedBuffer, on_path, stderr_limit_in_bytes, stdout_limit_in_bytes, type ProgramResult, type Sink, type StreamUse,
@@ -41,12 +42,20 @@ export interface Context {
 
 // ── Running ──────────────────────────────────────────────────────────────────
 
-export const spawn_program: RunProgram = (context, argv, { echo = false, ...options } = {}) => {
+export const spawn_program: RunProgram = async (context, argv, { echo = false, ...options } = {}) => {
   if (echo && context.log) context.out.write(`$ ${show_argv(argv)}\n`);
+  const refusal = sudo_refusal(argv);
+  if (refusal !== null) return refused(context, refusal, options.stderr ?? "show");
   return run_program(argv, {
     ...options, stdout: options.stdout ?? "show", stderr: options.stderr ?? "show", out: context.out, err: context.err, signal: context.signal, own_group: context.own_groups,
   });
 };
+
+// A program the host's sudo rules leave out, answered with why rather than run.
+function refused(context: Context, refusal: string, stderr: StreamUse): ProgramResult {
+  if (stderr === "show" || stderr === "both") context.err.write(`${refusal}\n`);
+  return { exit_code: 1, stdout: "", stderr: stderr === "keep" || stderr === "both" ? refusal : "" };
+}
 
 // ── Markers ──────────────────────────────────────────────────────────────────
 

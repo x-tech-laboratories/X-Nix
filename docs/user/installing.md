@@ -93,7 +93,7 @@ reference](/user/configuration/). The module writes them into the config file th
 | `signIn.adminSecondFactor` | `true`   | Admins must set up a second factor before they change anything.          |
 | `localAgent`        | `false`         | Work on the server's own machine from the server itself rather than through its agent. |
 | `sudoRules`         | `localAgent`    | Install the sudo rules the built-in agent needs; see [below](#what-runs-as-root). |
-| `sudoAllow.*`       | all on          | Drop groups of those rules this host does not use; see [Least privilege](#least-privilege). |
+| `sudoAllow.*`       | see below       | Add or drop groups of those rules; see [Least privilege](#least-privilege). |
 
 ### Without the module
 
@@ -202,13 +202,15 @@ command line and no other; with an older sudo the module falls back to wider she
 | `/nix/store/*-nixos-system-*/bin/switch-to-configuration <mode>`        | switch from the cache, the watchdog's rollback | any NixOS system in the store |
 | `nix-env -p /nix/var/nix/profiles/system --switch-generation N`         | rollback, the watchdog                       | a generation number |
 | `/nix/var/nix/profiles/system/bin/switch-to-configuration switch`       | rollback                                     | exact |
-| `systemctl reboot`, `bootctl list --json=short`, `cat /boot/grub/grub.cfg`, `grub-editenv list`, `systemd-inhibit … cat` | reboot, boot entries, `keep_awake` | exact |
+| `systemctl reboot`                                                      | reboot                                       | exact |
+| `bootctl list --json=short`, or `cat /boot/grub/grub.cfg` and `grub-editenv list` | boot entries, for the host's own boot loader | exact |
+| `systemd-inhibit … cat`                                                 | `sudoAllow.sleepInhibitors`                  | exact |
 | `nix-collect-garbage`                                                   | Collect Garbage                              | any, or exactly `sudoAllow.collectGarbageArgs` |
 | `nix-env -p /nix/var/nix/profiles/system --set /nix/store/<hash>-nixos-system-…` | `sudoAllow.cacheSwitch`             | one NixOS system |
 | `nix … flake update --flake …` and `cp -T <tmp>/x-nix-update-XXXXXX/flake.lock …/flake.lock` | `sudoAllow.flakeUpdates` | any `nix_args`; the copy is exact |
 | `kill -TERM <pids>`, `kill -KILL <pids>`                                | `sudoAllow.lockHolders`                      | process ids other than 1 |
 | `systemd-run --unit=x-nix-run-<run id>.service … -- <node> <runner.ts> <run folder>`, `systemctl stop x-nix-run-<run id>.service` | `sudoAllow.runUnits` (agent only) | the agent's runner as a non-root user, with the module's properties |
-| `bootctl set-oneshot <entry>`, `grub-reboot <entry>`, `efibootmgr --bootnext XXXX` | `sudoAllow.bootEntries`              | one entry, no options |
+| `bootctl set-oneshot <entry>`, `grub-reboot <entry>` or `efibootmgr --bootnext XXXX`, whichever the host boots with | `sudoAllow.bootEntries` | one entry, no options |
 | `/bin/sh -c …`                                                          | `sudoAllow.postSwitch`                       | any command |
 | `ssh …`                                                                 | `sudoAllow.targetHost`                       | any |
 
@@ -223,22 +225,25 @@ profile.
 
 ### Least privilege
 
-Every `sudoAllow` option defaults to what the code may need, so an upgrade changes nothing a host uses. Turn off on a
-host what no deployment switched on it uses (the server module takes the same options for `localAgent`):
+A host gets only the rules its own configuration shows it needs. The boot loader rules are those of the loader it boots
+with, systemd-boot, GRUB or another EFI loader. `targetHost` and `flakeUpdates`, each a root shell by itself, are off
+until you turn them on. The rest stay on, since only the server's config shows whether a deployment uses them; turn off
+on a host what no deployment switched on it uses (the server module takes the same options for `localAgent`):
 
 ```nix
 services.x-nix-agent.sudoAllow = {
-  postSwitch = false;   # no deployment on this host sets post_switch
-  targetHost = false;   # none switches another machine with target_host
-  bootEntries = false;  # nobody uses Set next boot here
-  lockHolders = false;  # none sets close_nix_lock_holders
-  flakeUpdates = false; # no flake updated here is a local checkout
-  cacheSwitch = false;  # none switches from a cache (cache or cache_url)
+  targetHost = true;       # a deployment switched from here sets target_host
+  flakeUpdates = true;     # a flake updated here is a local checkout with require_sudo
+  postSwitch = false;      # no deployment on this host sets post_switch
+  bootEntries = false;     # nobody uses Set next boot here
+  lockHolders = false;     # none sets close_nix_lock_holders
+  cacheSwitch = false;     # none switches from a cache (cache or cache_url)
+  sleepInhibitors = false; # the host never sleeps
   collectGarbageArgs = [ "--delete-older-than" "7d" ]; # exactly this host's gc.gc_args
 };
 ```
 
-A deployment whose setting needs a rule you turned off fails at that step with sudo's "a password is required". Setting
+A step that needs a group you left out fails at once, naming the `sudoAllow` option that adds it. Setting
 `users.users.x-nix-agent.uid` and `users.groups.x-nix-agent.gid` lets the run unit rule name the agent's own ids rather
 than any id but root's; set them only to the ids the user already has. `runUnits` follows `runUnits.enable`.
 

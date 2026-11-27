@@ -473,7 +473,8 @@ in
       }
       // lib.optionalAttrs (cfg.serverKeyFile != null) {
         X_NIX_SERVER_KEY_FILE = "${credentials_directory}/server-key";
-      };
+      }
+      // lib.optionalAttrs cfg.sudoRules { X_NIX_AGENT_SUDO_FILE = toString (sudo_allow.groups_file pkgs cfg.sudoAllow); };
 
       # With the built-in agent it is left unsandboxed, because sudo inherits the unit's sandbox and a switch run under it
       # could not write the system; without it the server runs no command as root and is kept to its own state.
@@ -521,6 +522,7 @@ in
         user = "x-nix";
         allow = cfg.sudoAllow;
         sudo_package = config.security.sudo.package;
+        boot_loader = sudo_allow.boot_loader config;
       })
     ];
 
