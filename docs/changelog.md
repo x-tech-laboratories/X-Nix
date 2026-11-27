@@ -38,6 +38,9 @@ version.
 - fix(nixos): bound the agent output lines parsers run patterns on
 - fix(fleet): match selectors with a glob matcher and cap their length and terms
 - ci: merge only X-Tech packages on their own, checked by the base branch's exact provenance check, with least token permissions
+- feat(nix): refuse real-time scheduling to the agent's unit
+- feat(nix): refuse private keys in the server's settings and warn about other inline secrets
+- feat(nix): narrow the sudo rules to the command lines X-Nix runs and let hosts drop the groups they do not use
 
 ### 2026-11-24
 

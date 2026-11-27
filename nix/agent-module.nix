@@ -19,7 +19,9 @@ let
 
   json = pkgs.formats.json { };
 
-  sudo_rules = import ./sudo-rules.nix { inherit pkgs; };
+  sudo_rules = import ./sudo-rules.nix { inherit pkgs lib; };
+
+  sudo_allow = import ./sudo-allow.nix { inherit lib; };
 
   pull_file = json.generate "x-nix-agent-pull.json" {
     inherit (cfg.pull)
@@ -113,6 +115,16 @@ in
       the NOPASSWD sudo rules for every command the agent runs under `sudo -n` on this host, pull
       mode's switch included, as README.md lists; turn them off only to write your own
     '' // { default = true; };
+
+    sudoAllow = sudo_allow.options {
+      runUnits = lib.mkEnableOption ''
+        the rules that start and stop each long run's transient unit, `x-nix-run-<run id>.service`,
+        running the agent's own runner as the agent's user; needed only with `runUnits.enable`
+      '' // {
+        default = cfg.runUnits.enable;
+        defaultText = literalExpression "config.services.x-nix-agent.runUnits.enable";
+      };
+    };
 
     runUnits = {
       enable = mkEnableOption ''
@@ -269,7 +281,17 @@ in
     };
     users.groups.x-nix-agent = { };
 
-    security.sudo.extraRules = mkIf cfg.sudoRules [ (sudo_rules "x-nix-agent") ];
+    security.sudo.extraRules = mkIf cfg.sudoRules [
+      (sudo_rules {
+        user = "x-nix-agent";
+        allow = cfg.sudoAllow;
+        inherit state_directory;
+        run_unit_properties = cfg.runUnits.properties;
+        inherit (config.users.users.x-nix-agent) uid;
+        inherit (config.users.groups.x-nix-agent) gid;
+        sudo_package = config.security.sudo.package;
+      })
+    ];
 
     # A switch's cache check asks the daemon, which would otherwise answer from a miss cached before the push for an hour.
     nix.settings.narinfo-cache-negative-ttl = lib.mkDefault 60;
@@ -308,7 +330,7 @@ in
       // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
       // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
 
-      # Left unsandboxed because sudo inherits the unit's sandbox, and a switch run under it could not write the system.
+      # Only RestrictRealtime sandboxes it, because sudo and every switch it runs inherit the unit's sandbox and must still write the system.
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
         User = "x-nix-agent";
@@ -321,6 +343,8 @@ in
         # A restart stops only the agent, so a switch run by a runner of an older agent, inside this unit, is not killed mid-activation.
         KillMode = "process";
         UMask = "0077";
+        # Real-time scheduling is refused to the agent and everything it starts, which no switch, build or activation here asks for.
+        RestrictRealtime = true;
       };
     };
   };

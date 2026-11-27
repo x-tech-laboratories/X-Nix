@@ -85,8 +85,11 @@ it to GitHub Pages on every push to `main` that touches `docs/`.
 Both packages use `buildNpmPackage` with `importNpmLock`, which reads `package-lock.json` directly, so there is no npm
 dependency hash to keep up to date. Each wraps Node 24 around the TypeScript sources, which Node runs directly.
 
-Both modules import `nix/sudo-rules.nix`, which lists every command X-Nix runs under `sudo -n`. A new privileged
-command needs a rule there, as narrow as works.
+Both modules import `nix/sudo-rules.nix`, which lists every command X-Nix runs under `sudo -n`, and `nix/sudo-allow.nix`,
+the `sudoAllow` options that drop groups of those rules. A new privileged command needs a rule there, as narrow as
+works: an exact argument list where it is fixed, else a `^…$` regular expression in `nix/sudo-patterns.json`, which
+`tests/sudo_rules.test.ts` checks against the command lines the code builds, so a change to one that the rule no longer
+allows fails the tests.
 
 ## Code conventions
 
