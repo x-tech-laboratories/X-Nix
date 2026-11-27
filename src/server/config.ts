@@ -154,6 +154,8 @@ export interface DeploymentSettings {
   target_host: string | null;
   auto_switch: boolean;
   auto_switch_after: number;
+  // How old the oldest locked input may be for a switch to start by itself; null lets any age switch.
+  auto_switch_max_input_age: number | null;
   build_at: TimeOfDay | null;
   switch_wrapper: string[];
   post_switch: string | null;
@@ -192,6 +194,8 @@ export interface FleetSettings {
   soak: number;
   // Whether an admin must approve each next stage.
   approve_stages: boolean;
+  // Whether an automatic switch waits for every earlier stage to have switched to the same revision and soaked.
+  auto_switch_staged: boolean;
 }
 
 // A host that builds the fleet's closures, and the Attic cache they are pushed to.
@@ -324,7 +328,7 @@ export function parse_config(raw: unknown, own_host = hostname()): Config {
   const by_id = new Map(flakes.map((flake) => [flake.id, flake]));
   const parsed_caches = list("caches").map((entry, index) => cache_settings(entry, index, by_id));
   const caches_by_id = new Map(parsed_caches.map((cache) => [cache.id, cache]));
-  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id, host_of, caches_by_id));
+  const parsed = list("deployments").map((entry, index) => deployment_settings(entry, index, by_id, host_of, caches_by_id, own_host));
   // Jobs and events are kept by id, so no two flakes, deployments or caches may share one.
   const seen = new Set<string>();
   for (const { id } of [...flakes, ...parsed, ...parsed_caches]) {
@@ -393,7 +397,7 @@ export function flake_settings(entry: unknown, index = 0): FlakeSettings {
   if (id === null || !/^[A-Za-z0-9_-]+$/.test(id)) throw new ConfigError(`Flake ${index + 1} needs an \`id\` of letters, digits, - and _`);
   const url = read.text("url");
   if (url === null) throw new ConfigError(`Flake '${id}' needs the \`url\` of its flake reference`);
-  const check_update = read.text("check_update") ?? "evaluate";
+  const check_update = read.text("check_update") ?? "build";
   if (!check_update_values.includes(check_update as CheckUpdate)) throw new ConfigError(`\`check_update\` of ${read.owner} must be one of ${check_update_values.join(", ")}`);
   const land_update = read.text("land_update") ?? "push";
   if (!land_update_values.includes(land_update as LandUpdate)) throw new ConfigError(`\`land_update\` of ${read.owner} must be one of ${land_update_values.join(", ")}`);
@@ -461,9 +465,10 @@ export function fleet_settings(entry: unknown): FleetSettings {
   const read = new Reader((entry ?? {}) as Record<string, unknown>, "the fleet");
   const parallel = read.limit("parallel", 4) ?? 4;
   if (!Number.isInteger(parallel) || parallel < 1) throw new ConfigError("`parallel` of the fleet must be a whole number of at least 1");
+  const stages = read.list("stages", []);
   return {
-    parallel, stages: read.list("stages", []), sync_timeout: read.duration("sync_timeout", "30m"), soak: read.duration("soak", "0s"),
-    approve_stages: read.flag("approve_stages", false),
+    parallel, stages, sync_timeout: read.duration("sync_timeout", "30m"), soak: read.duration("soak", "0s"),
+    approve_stages: read.flag("approve_stages", false), auto_switch_staged: read.flag("auto_switch_staged", stages.length > 0),
   };
 }
 
@@ -556,7 +561,7 @@ function default_info_url(cache_url: string): string | null {
 // The settings of one deployment, with the flake and cache it names resolved and its host's sudo and sleep settings.
 export function deployment_settings(
   entry: unknown, index = 0, flakes = new Map<string, FlakeSettings>(), host_of: (name: string | null) => HostSettings = (name) => host_settings({ id: name ?? "localhost" }),
-  caches = new Map<string, CacheSettings>(),
+  caches = new Map<string, CacheSettings>(), own_host: string | null = null,
 ): DeploymentSettings {
   if (typeof entry !== "object" || entry === null) throw new ConfigError(`Deployment ${index + 1} must be an object`);
   const values = entry as Record<string, unknown>;
@@ -584,6 +589,13 @@ export function deployment_settings(
   const bad_tag = tags.find((tag) => !/^[A-Za-z0-9_.-]+$/.test(tag));
   if (bad_tag !== undefined) throw new ConfigError(`Tag ${JSON.stringify(bad_tag)} of ${read.owner} must be letters, digits, ., - and _`);
   const pin = read.text("pin");
+  const target_host = read.text("target_host");
+  // A guarded switch cannot reach a target_host, so magic_rollback is on by default only without one.
+  const magic_rollback = read.flag("magic_rollback", target_host === null);
+  const activated_host = switch_agent ?? read.text("host");
+  const activates_own_host = activated_host === null || activated_host === own_host;
+  // A switch of the server's own host is confirmed only once the server and its agent are back, so the default rollback waits longer there.
+  const default_confirm_timeout = activates_own_host && values.magic_rollback == null ? "2m" : "30s";
   if (pin !== null && !is_pin(pin)) throw new ConfigError(`\`pin\` of ${read.owner} must be a commit hash or a tag name`);
   if (pin !== null && pinned_flake(flake, pin) === null) throw new ConfigError(`\`pin\` of ${read.owner} needs a git or forge flake, not ${flake}`);
   const settings: DeploymentSettings = {
@@ -615,18 +627,19 @@ export function deployment_settings(
     switch_agent,
     direct_on: direct_on as DirectOn,
     inhibit_sleep: host.keep_awake,
-    target_host: read.text("target_host"),
+    target_host,
     auto_switch: read.flag("auto_switch", false),
     auto_switch_after: read.duration("auto_switch_after", "30m"),
+    auto_switch_max_input_age: read.optional_duration("auto_switch_max_input_age"),
     build_at: read.time_of_day("build_at"),
     switch_wrapper: read.list("switch_wrapper", []),
     post_switch: read.text("post_switch"),
     pre_switch_checks: read.list("pre_switch_checks", []),
-    magic_rollback: read.flag("magic_rollback", false),
+    magic_rollback,
     close_nix_lock_holders: read.flag("close_nix_lock_holders", false),
     defer_switch_on: defer_switch_on(read.list("defer_switch_on", []), read.owner),
     activation_timeout: read.duration("activation_timeout", "4m"),
-    confirm_timeout: read.duration("confirm_timeout", "30s"),
+    confirm_timeout: read.duration("confirm_timeout", default_confirm_timeout),
     health_commands: read.list("health_commands", []),
     health_urls: read.urls("health_urls"),
     health_period: Math.max(1, read.duration("health_period", "5s")),
