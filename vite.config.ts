@@ -20,6 +20,8 @@ export default defineConfig({
     // Tests live in tests/, outside the web page's root.
     root: import.meta.dirname,
     include: ["tests/**/*.test.ts"],
+    // The tests never read the declarations of the machine they run on.
+    env: { X_NIX_AGENT_HOST_FILE: "/nonexistent/x-nix-agent-host.json" },
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],

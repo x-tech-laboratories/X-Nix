@@ -15,10 +15,11 @@ import { fileURLToPath } from "node:url";
 import { descendants, lock_file_id, lock_holders, read_locks, read_processes, show_holders, type ProcessInfo } from "@x-tech-laboratories/x-libs/agent/stalls";
 
 import {
-  is_store_path, one_line, shared_watch_folder_parent, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
+  is_store_path, one_line, shared_watch_folder_parent, show_argv, stall_mark, switch_mark, watch_folder, watch_folder_prefix, watch_folders_parent, type ConfirmSwitchOperation, type DeferPart,
   type SignalRollbackOperation, type SwitchDefer, type SwitchOperation, type SwitchWatch,
 } from "../../shared/operations.ts";
-import { marker, person_command, run_steps, type Context } from "../programs.ts";
+import { chosen_commands, sent_commands, type ChosenCommand } from "../host_commands.ts";
+import { marker, run_steps, type Context } from "../programs.ts";
 import { nix_database_lock } from "../stalls.ts";
 import { system_profile, watch_files, write_whole } from "../watchdog.ts";
 import { link_target, real } from "./reads.ts";
@@ -47,13 +48,19 @@ export async function switch_system(context: Context, operation: SwitchOperation
   const mark = (words: string) => context.out.write(`${marker(context, switch_mark)} ${one_line(words)}\n`);
   const say = (line: string) => context.out.write(`${line}\n`);
 
-  if (operation.pre_switch_checks.length > 0) {
-    mark("phase pre-switch-checks");
-    for (const [index, check] of operation.pre_switch_checks.entries()) {
-      say(`$ ${check}`);
-      const result = await context.program(context, person_command(check));
+  const pre = chosen_commands("pre_switch_checks", sent_commands(operation.pre_switch_checks), operation.host_commands?.pre_switch_checks ?? [], false);
+  if (pre.commands.length > 0) mark("phase pre-switch-checks");
+  pre.notes.forEach(say);
+  if (pre.missing.length > 0) {
+    mark(`refused This host declares no pre-switch check named ${pre.missing.join(", ")}`);
+    return 3;
+  }
+  if (pre.commands.length > 0) {
+    for (const [index, check] of pre.commands.entries()) {
+      say(`$ ${check.label}`);
+      const result = await context.program(context, check.argv);
       if (result.exit_code !== 0) {
-        mark(`refused Pre-switch check ${index + 1} (${clip_line(check)}) failed with status ${result.exit_code}`);
+        mark(`refused Pre-switch check ${index + 1} (${clip_line(check.label)}) failed with status ${result.exit_code}`);
         return 3;
       }
     }
@@ -108,7 +115,7 @@ export async function switch_system(context: Context, operation: SwitchOperation
   if (units_failed) mark("units-failed");
   const status = units_failed ? 0 : ended.status;
   // post_switch runs whatever the activation returned, and its own status never changes the switch's.
-  if (operation.post_switch !== null) await context.program(context, operation.post_switch, { echo: true });
+  await post_switch(context, operation);
   if (watch === null || folder === null) return status;
 
   let failure = "";
@@ -118,7 +125,14 @@ export async function switch_system(context: Context, operation: SwitchOperation
   } else {
     touch(join(folder, watch_files.activated));
     mark("activated");
-    if (watch.health_commands.length > 0) failure = await health_checks(context, watch, folder, now);
+    const health = chosen_commands("health_commands", sent_commands(watch.health_commands), watch.host_health_commands ?? [], false);
+    health.notes.forEach(say);
+    if (health.missing.length > 0) {
+      failure = `This host declares no health command named ${health.missing.join(", ")}`;
+      signal_rollback_in(folder, failure);
+    } else if (health.commands.length > 0) {
+      failure = await health_checks(context, watch, health.commands, folder, now);
+    }
     if (failure === "") mark("awaiting-confirmation");
   }
 
@@ -185,17 +199,27 @@ function nix_lock_clearing(context: Context, sudo: boolean, now: () => number): 
   };
 }
 
+// Runs the host's own post_switch commands, or the server's for a host that declares none, each shown as it runs.
+async function post_switch(context: Context, operation: SwitchOperation): Promise<void> {
+  const sent = operation.post_switch === null ? [] : [{ label: show_argv(operation.post_switch), argv: operation.post_switch }];
+  const names = operation.host_commands?.post_switch ?? [];
+  const chosen = chosen_commands("post_switch", sent, names, operation.host_commands?.sudo ?? operation.post_switch?.[0] === "sudo");
+  for (const note of chosen.notes) context.out.write(`${note}\n`);
+  if (chosen.missing.length > 0) context.out.write(`This host declares no post_switch command named ${chosen.missing.join(", ")}\n`);
+  for (const command of chosen.commands) await context.program(context, command.argv, { echo: true });
+}
+
 // Runs the health commands every health_period until they all pass, answering the last failure once health_timeout passes.
-async function health_checks(context: Context, watch: SwitchWatch, folder: string, now: () => number): Promise<string> {
+async function health_checks(context: Context, watch: SwitchWatch, checks: ChosenCommand[], folder: string, now: () => number): Promise<string> {
   context.out.write(`${marker(context, switch_mark)} phase health-checks\n`);
   const started = now();
   for (;;) {
     let failure = "";
-    for (const [index, check] of watch.health_commands.entries()) {
-      const result = await context.program(context, person_command(check), { stdout: "keep", stderr: "keep" });
+    for (const [index, check] of checks.entries()) {
+      const result = await context.program(context, check.argv, { stdout: "keep", stderr: "keep" });
       if (result.exit_code === 0) continue;
       const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-3).join(" ").slice(0, 300);
-      failure = `Health check ${index + 1} (${clip_line(check)}) failed with status ${result.exit_code}: ${tail}`;
+      failure = `Health check ${index + 1} (${clip_line(check.label)}) failed with status ${result.exit_code}: ${tail}`;
       break;
     }
     if (failure === "") {

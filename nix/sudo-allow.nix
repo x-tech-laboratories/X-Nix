@@ -33,7 +33,8 @@ in
       postSwitch = group ''
         the rule that runs a deployment's `post_switch` as root with `/bin/sh -c`, which takes any
         command and so makes the service user root by itself; safe to turn off when no deployment
-        switched on this host sets `post_switch` with `require_sudo`
+        switched on this host sets `post_switch` with `require_sudo`, and off by default on an agent whose
+        host declares its own `switchCommands`
       '';
 
       targetHost = opt_in ''
@@ -81,7 +82,8 @@ in
         description = ''
           The exact arguments Collect Garbage may run `nix-collect-garbage` with as root, which must
           match the host's `gc.gc_args`; null allows any arguments, `--option` included, which makes the
-          service user root by itself.
+          service user root by itself. The agent module sets it to `collectGarbage.args` while
+          `collectGarbage.enable` is on, for a server too old to start its unit.
         '';
       };
     }

@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 
 import { timed_out_exit_code, type KeptAwakeOperation, type NixConfigOperation, type Operation, type TimedOperation } from "../../shared/operations.ts";
 import { send_magic_packet } from "@x-tech-laboratories/x-libs/agent/wake";
+import { declares_unit, start_host_unit } from "../host_commands.ts";
 import { run_steps, step_argv, type Context } from "../programs.ts";
 import { boot_probe } from "./boot.ts";
 import { cache_build, cache_build_all, cache_check, cache_push } from "./cache.ts";
@@ -32,6 +33,7 @@ export async function perform(context: Context, operation: Operation): Promise<n
     case "remote_heads": return remote_heads(context, operation);
     case "programs":
       if (operation.note !== undefined) context.out.write(`${operation.note}\n`);
+      if (operation.host_unit !== undefined && declares_unit(operation.host_unit)) return start_host_unit(context, operation.host_unit);
       return run_steps(context, operation.steps);
     case "wake":
       await send_magic_packet(operation);

@@ -54,7 +54,7 @@ export function activates(mode: SwitchMode): boolean {
 }
 
 export function has_health_checks(settings: DeploymentSettings): boolean {
-  return settings.health_commands.length + settings.health_urls.length > 0;
+  return settings.health_commands.length + settings.host_health_commands.length + settings.health_urls.length > 0;
 }
 
 // Whether a switch in this mode runs under a watchdog on the host.
@@ -94,6 +94,9 @@ export function switch_job_operation(settings: DeploymentSettings, mode: SwitchM
     steps,
     post_switch: post_switch_argv(settings),
     pre_switch_checks: guarded ? settings.pre_switch_checks : [],
+    ...(host_commands_named(settings) ? {
+      host_commands: { pre_switch_checks: guarded ? settings.host_pre_switch_checks : [], post_switch: settings.host_post_switch, sudo: settings.require_sudo },
+    } : {}),
     watch,
     defer,
     // Only the switch agent's own host can be looked at, so a switch to target_host goes without.
@@ -122,6 +125,7 @@ function switch_watch(settings: DeploymentSettings, mode: SwitchMode, token: str
     confirm_window: window,
     magic_rollback: settings.magic_rollback,
     health_commands: settings.health_commands,
+    host_health_commands: settings.host_health_commands,
     health_period: settings.health_period,
     health_timeout: settings.health_timeout,
     activation_reason: `The activation did not finish within ${format_duration(settings.activation_timeout)}`,
@@ -129,6 +133,11 @@ function switch_watch(settings: DeploymentSettings, mode: SwitchMode, token: str
       ? `X-Nix did not confirm it could still reach the host within ${format_duration(window)} of the activation`
       : `Nothing confirmed the switch within ${format_duration(window)}, and magic_rollback is off`,
   };
+}
+
+// Whether the settings name any of the host's own pre-switch checks or post_switch commands.
+function host_commands_named(settings: DeploymentSettings): boolean {
+  return settings.host_pre_switch_checks.length + settings.host_post_switch.length > 0;
 }
 
 // What X-Nix asks the switch agent to confirm a guarded switch.

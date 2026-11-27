@@ -35,7 +35,8 @@ roots it holds, every profile's generations, the collection unit and timer, and 
 journal. The last collection is remembered after the journal rotates past it. The store's use is kept for 180 days and
 charted.
 
-**Collect Garbage** runs the timer's collection (`nix-collect-garbage` with `gc_args`) as a job, which then counts as the
+**Collect Garbage** runs the timer's collection (`nix-collect-garbage` with `gc_args`) as a job, or starts the agent
+module's `x-nix-gc.service`, with the host's own `collectGarbage.args`, when the host has it; either then counts as the
 last collection. With `collect_at`, X-Nix starts that job every day in place of the timer: a host that is away then
 collects once it is back. The timer is then expected to be off, and one still on raises a warning, since two schedules
 would collect side by side.

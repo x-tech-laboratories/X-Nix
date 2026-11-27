@@ -11,7 +11,7 @@ import { read_channels, type Channel } from "@x-tech-laboratories/x-libs/server/
 
 import type { WakeSettings } from "./agents/wake.ts";
 import { is_pin, pinned_flake } from "./nixos/flake.ts";
-import { defer_parts, type DeferPart } from "../shared/operations.ts";
+import { defer_parts, host_command_name, type DeferPart } from "../shared/operations.ts";
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -174,6 +174,10 @@ export interface DeploymentSettings {
   health_urls: string[];
   health_period: number;
   health_timeout: number;
+  // The host's own pre-switch checks, health commands and post_switch commands, by the names its agent module's switchCommands gives them.
+  host_pre_switch_checks: string[];
+  host_health_commands: string[];
+  host_post_switch: string[];
   // Whether Build and a switch read nix's structured log, so their jobs show what is building and downloading.
   build_progress: boolean;
   // Names a fleet selector picks the deployment by, as @tag.
@@ -647,12 +651,16 @@ export function deployment_settings(
     health_urls: read.urls("health_urls"),
     health_period: Math.max(1, read.duration("health_period", "5s")),
     health_timeout: read.duration("health_timeout", "2m"),
+    host_pre_switch_checks: read.command_names("host_pre_switch_checks"),
+    host_health_commands: read.command_names("host_health_commands"),
+    host_post_switch: read.command_names("host_post_switch"),
     build_progress: read.flag("build_progress", true),
     tags,
     pin,
   };
   // A guarded switch's checks and watchdog run inside the agent on the host it activates, so there is no remote host to name.
-  const guarded = settings.pre_switch_checks.length > 0 || settings.health_commands.length > 0 || settings.health_urls.length > 0 || settings.magic_rollback;
+  const guarded = settings.pre_switch_checks.length > 0 || settings.health_commands.length > 0 || settings.health_urls.length > 0 || settings.magic_rollback
+    || settings.host_pre_switch_checks.length > 0 || settings.host_health_commands.length > 0;
   if (guarded && settings.target_host !== null) {
     throw new ConfigError(`Deployment '${id}' guards its switches with pre_switch_checks, health checks or magic_rollback, which run in the agent on the activated host, so it cannot take a \`target_host\`; give that host its own agent and name it in switch_agent`);
   }
@@ -711,6 +719,14 @@ class Reader {
     if (value === undefined || value === null) return fallback;
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new ConfigError(`\`${key}\` of ${this.owner} must be a list of text`);
     return value;
+  }
+
+  // A list of the names a host's agent module gives its own commands.
+  command_names(key: string): string[] {
+    const values = this.list(key, []);
+    const wrong = values.find((value) => !host_command_name.test(value));
+    if (wrong !== undefined) throw new ConfigError(`\`${key}\` of ${this.owner} must list names of letters, digits, - and _, not ${JSON.stringify(wrong)}`);
+    return values;
   }
 
   // One host name, or a list of them in order of preference.

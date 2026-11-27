@@ -111,6 +111,14 @@ export interface ProgramsOperation {
   kind: "programs";
   note?: string;
   steps: Step[];
+  // A unit the host's agent module may declare that does what the steps do, started instead of them when it does; absent from an older server's.
+  host_unit?: HostUnit;
+}
+
+// A fixed unit of the host's own, started with `systemctl start`, under sudo when asked.
+export interface HostUnit {
+  unit: string;
+  sudo: boolean;
 }
 
 // Sends a Wake-on-LAN magic packet from this host.
@@ -188,6 +196,8 @@ export interface SwitchWatch {
   // Whether a switch nobody confirms is rolled back, rather than kept.
   magic_rollback: boolean;
   health_commands: string[];
+  // The host's own health commands, by the names its agent module gives them; absent from an older server's.
+  host_health_commands?: string[];
   health_period: number;
   health_timeout: number;
   // The reasons the watchdog gives, already worded.
@@ -222,12 +232,25 @@ export interface SwitchOperation {
   // Runs after the activation whatever it returned, without changing the switch's status.
   post_switch: Argv | null;
   pre_switch_checks: string[];
+  // The host's own pre-switch checks and post_switch commands, by name; absent from an older server's.
+  host_commands?: HostSwitchCommands;
   watch: SwitchWatch | null;
   // Absent from an older server's switch, which always switches.
   defer?: SwitchDefer | null;
   // Stops what holds the Nix store database open once the activation has waited a minute for it; absent when off.
   close_nix_lock_holders?: { sudo: boolean };
 }
+
+// The commands a host's agent module declares that a switch runs, by name, so the server never sends their text.
+export interface HostSwitchCommands {
+  pre_switch_checks: string[];
+  post_switch: string[];
+  // Whether post_switch runs under sudo.
+  sudo: boolean;
+}
+
+// The pattern a host command's name follows.
+export const host_command_name = /^[A-Za-z0-9_-]+$/;
 
 // What an update checks before it writes or pushes the new lock: each attribute of the flake, evaluated or built.
 export interface UpdateCheck {

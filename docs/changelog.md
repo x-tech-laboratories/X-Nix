@@ -12,6 +12,8 @@ version.
 
 ### 2026-11-27
 
+- docs(developer): plan running the agent without root
+- feat(agent): run switch commands the host declares by name, and collect garbage with a fixed unit
 - test: raise the coverage floor to what the sudo group tests reach
 - feat(agent)!: give each host only the sudo rules its own configuration needs
 
