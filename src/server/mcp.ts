@@ -154,7 +154,7 @@ export const routes: Record<string, RouteToolSpec> = {
   get_provisioning: { route: "GET /api/provisioning", description: "Shows the installs, the install media built and the agent keys made for installed hosts.", params: [] },
   build_media: {
     route: "POST /api/provisioning/media",
-    description: "Builds install media for a deployment's flake and configuration, or for a flake and configuration named.",
+    description: "Builds install media for a deployment's flake and configuration, or for a flake the config names or provisioning.allowed_flakes allows, and a configuration named.",
     params: [
       { name: "format", schema: one_of(media_formats) },
       { name: "deployment", schema: text, optional: true },

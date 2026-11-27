@@ -141,7 +141,9 @@ const hub = create_hub(agents, local_agent, {
 const accept_agent_keys = (provisioned: Map<string, string>) => hub.set_agent_keys(new Map([...provisioned, ...config.agents]));
 const provisioner = new Provisioner(config.provisioning, {
   store, agents, default_media_root_dir: resolve(state_directory, "media"),
-  declared_hosts: () => new Set(config.agents.keys()), on_agent_keys: accept_agent_keys, server_public_line: () => server_key_view(hub)?.public_line ?? null,
+  declared_hosts: () => new Set(config.agents.keys()),
+  configured_flakes: () => [...config.flakes.map((flake) => flake.url), ...config.deployments.map((deployment) => deployment.flake), ...config.caches.map((cache) => cache.flake)],
+  on_agent_keys: accept_agent_keys, server_public_line: () => server_key_view(hub)?.public_line ?? null,
 });
 accept_agent_keys(provisioner.agent_keys());
 // A host holds off its reboot and collection while a deployment on it switches, which the deployment refuses in turn while it collects.

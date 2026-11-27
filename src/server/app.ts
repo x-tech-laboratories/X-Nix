@@ -789,7 +789,7 @@ export async function build_app(options: app_options): Promise<FastifyInstance> 
       return reply.code(outcome.ok ? 200 : 409).send(outcome);
     });
 
-    // Builds install media for a deployment's flake and configuration, or for any flake and configuration named.
+    // Builds install media for a deployment's flake and configuration, or for an allowed flake and configuration named.
     app.post<{ Body: { deployment?: unknown; flake?: unknown; configuration?: unknown; format?: unknown } }>("/api/provisioning/media", async (request, reply) => {
       const body = request.body ?? {};
       const format = body.format as MediaFormat;

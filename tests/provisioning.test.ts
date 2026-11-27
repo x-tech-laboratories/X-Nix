@@ -16,7 +16,7 @@ import { hash_password } from "../src/server/auth.ts";
 import { ConfigError, parse_config, provisioning_settings } from "../src/server/config.ts";
 import {
   hardware_mark, install_operation, media_operation, media_expression, media_mark, parse_hardware_config, parse_install_record,
-  parse_install_request, type InstallRequest,
+  parse_install_request, source_refusal, type InstallRequest,
 } from "../src/server/nixos/provision.ts";
 import { Poller } from "../src/server/poller.ts";
 import { Provisioner } from "../src/server/provisioning.ts";
@@ -64,6 +64,9 @@ describe("provisioning settings", () => {
     expect(parsed.nixos_anywhere_bin).toBe("nixos-anywhere");
     expect(parsed.agent_key_path).toBe("/etc/x-nix-agent/key");
     expect(parsed.job_poll).toBe(30);
+    expect(parsed.allowed_flakes).toEqual([]);
+    expect(provisioning_settings({ allowed_flakes: ["github:example-org/"] }).allowed_flakes).toEqual(["github:example-org/"]);
+    expect(() => provisioning_settings({ allowed_flakes: "github:example-org/" })).toThrow(ConfigError);
   });
 
   it("refuse a key path that is not absolute and plain", () => {
@@ -294,14 +297,16 @@ interface Harness {
   store_dir: string;
 }
 
-function make_provisioner(values: Record<string, unknown> = {}, existing: { store?: Store; agent?: FakeAgent; declared?: string[] } = {}): Harness {
+function make_provisioner(
+  values: Record<string, unknown> = {}, existing: { store?: Store; agent?: FakeAgent; declared?: string[]; configured?: string[] } = {},
+): Harness {
   const store = existing.store ?? new Store(":memory:");
   const agent = existing.agent ?? new FakeAgent();
   const accepted: Map<string, string>[] = [];
   const store_dir = mkdtempSync(join(folder, "store-"));
   const provisioner = new Provisioner(settings(values), {
     store, agents: new AgentPool("host", agent), default_media_root_dir: join(store_dir, "media-roots"), store_dir,
-    declared_hosts: () => new Set(existing.declared ?? []), on_agent_keys: (keys) => accepted.push(keys), now: () => clock.now,
+    declared_hosts: () => new Set(existing.declared ?? []), configured_flakes: () => existing.configured ?? ["/srv/fleet", "github:owner/fleet"], on_agent_keys: (keys) => accepted.push(keys), now: () => clock.now,
   });
   return { provisioner, agent, store, accepted, store_dir };
 }
@@ -446,6 +451,69 @@ describe("a media build", () => {
   });
 });
 
+describe("a requested flake", () => {
+  const configured = ["github:Example/Fleet", "/srv/fleet"];
+
+  it("may be a configured flake in any form naming the same repository", () => {
+    expect(source_refusal("github:Example/Fleet", "web", configured, [])).toBeNull();
+    expect(source_refusal("github:example/fleet?rev=0123456789abcdef0123456789abcdef01234567", "web", configured, [])).toBeNull();
+    expect(source_refusal("git+https://github.com/example/fleet.git?ref=main", "web", configured, [])).toBeNull();
+    expect(source_refusal("/srv/fleet/", "web", configured, [])).toBeNull();
+  });
+
+  it("may be listed in allowed_flakes, or lie under a listed prefix ending in /", () => {
+    expect(source_refusal("github:example/other", "web", configured, ["github:example/other"])).toBeNull();
+    expect(source_refusal("github:example-org/fleet", "web", configured, ["github:example-org/"])).toBeNull();
+    expect(source_refusal("git+https://github.com/example-org/fleet", "web", configured, ["github:example-org/"])).toBeNull();
+    expect(source_refusal("github:example-org-two/fleet", "web", configured, ["github:example-org/"])).toContain("allowed_flakes");
+    expect(source_refusal("github:example/fleet-two", "web", configured, ["github:example/fleet"])).toContain("allowed_flakes");
+  });
+
+  it("is refused anywhere else, including the same repository on another host", () => {
+    expect(source_refusal("github:stranger/fleet", "web", configured, [])).toContain("provisioning.allowed_flakes");
+    expect(source_refusal("github:example/fleet?host=git.example", "web", configured, [])).toContain("allowed_flakes");
+    expect(source_refusal("/srv/other", "web", configured, [])).toContain("allowed_flakes");
+    expect(source_refusal("https://example.org/fleet.tar.gz", "web", configured, [])).toContain("allowed_flakes");
+  });
+
+  it("is refused when it could carry an option, an attribute or a query of its own, whatever is allowed", () => {
+    for (const flake of ["--option", "-L", "github:example/fleet --impure", "github:example/fleet\n", "github:example/fleet\0", "github:example/fleet#evil"]) {
+      expect(source_refusal(flake, "web", [...configured, flake], [flake])).toContain("plain reference");
+    }
+    expect(source_refusal("github:example/fleet?submodules=1", "web", configured, [])).toContain("query");
+    expect(source_refusal("github:example/fleet?ref=a?b", "web", configured, [])).toContain("query");
+    expect(source_refusal("/srv/fleet/../other", "web", configured, [])).toContain("..");
+  });
+
+  it("names a configuration of letters, digits, _, . and - only", () => {
+    expect(source_refusal("/srv/fleet", "web.example_1-a", configured, [])).toBeNull();
+    for (const configuration of ['web"', "web#x", "-web", "web x", ""]) {
+      expect(source_refusal("/srv/fleet", configuration, configured, [])).toContain("nixosConfigurations");
+    }
+  });
+
+  it("outside the configured flakes starts no install or media build", async () => {
+    const harness = make_provisioner();
+
+    const install = await harness.provisioner.install({ ...request, flake: "github:stranger/fleet" });
+    const media = await harness.provisioner.build_media({ owner: "freya", flake: "github:stranger/fleet", configuration: "freya", format: "iso" });
+
+    expect(install).toMatchObject({ ok: false, job_id: null, message: expect.stringContaining("allowed_flakes") });
+    expect(media).toMatchObject({ ok: false, job_id: null, message: expect.stringContaining("allowed_flakes") });
+    expect(harness.agent.long_runs).toEqual([]);
+    expect(harness.store.jobs({ limit: 10 })).toEqual([]);
+  });
+
+  it("listed in allowed_flakes starts a media build", async () => {
+    const harness = make_provisioner({ allowed_flakes: ["github:example-org/"] });
+
+    const media = await harness.provisioner.build_media({ owner: "freya", flake: "github:example-org/fleet", configuration: "freya", format: "iso" });
+
+    expect(media.ok).toBe(true);
+    expect(harness.store.job(media.job_id!)!.kind).toBe("media");
+  });
+});
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 describe("/api/provisioning", () => {
@@ -481,6 +549,9 @@ describe("/api/provisioning", () => {
     expect(started.statusCode).toBe(200);
     expect((await post("/api/provisioning/media", { flake: "/srv/fleet", configuration: "freya", format: "floppy" })).statusCode).toBe(400);
     expect((await post("/api/provisioning/media", { deployment: "nowhere", format: "iso" })).statusCode).toBe(404);
+    const foreign = await post("/api/provisioning/media", { flake: "github:stranger/fleet", configuration: "freya", format: "iso" });
+    expect(foreign.statusCode).toBe(409);
+    expect(foreign.json()).toMatchObject({ ok: false, job_id: null, message: expect.stringContaining("allowed_flakes") });
 
     const view = (await server.inject({ method: "GET", url: "/api/provisioning", headers: { cookie } })).json<ProvisioningView>();
     expect(view.install_refusal).toBeNull();

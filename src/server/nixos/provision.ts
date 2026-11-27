@@ -11,6 +11,7 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 import type { ProvisioningSettings } from "../config.ts";
+import { repository_of, without_trailing_slashes } from "./flake.ts";
 import { accepted_prefix, hardware_mark, innermost, media_mark, nix_string, operation_of, type InstallOperation, type MediaOperation } from "../../shared/operations.ts";
 
 export { hardware_mark, media_mark, missing_tool_exit_code, nix_string } from "../../shared/operations.ts";
@@ -101,6 +102,43 @@ export function parse_install_request(body: unknown): InstallRequest | string {
     host_key,
     trust_unknown_host: host_key === null,
   };
+}
+
+// ── Sources ──────────────────────────────────────────────────────────────────
+
+// A nixosConfigurations attribute an install or a medium may name.
+const configuration_pattern = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+// The query parameters a requested flake may carry: those X-Nix pins with, and the ones it reads.
+const flake_query_keys = new Set(["ref", "rev", "allRefs", "dir", "host"]);
+
+// A flake reference as the allowlist compares it: its repository for a remote flake, else the reference without its query and trailing slashes.
+export function flake_key(flake: string): string {
+  const repository = repository_of(flake);
+  if (repository !== null) return repository.repository;
+  return without_trailing_slashes(flake.split("?", 1)[0]);
+}
+
+// A prefix entry as the allowlist compares it, keyed with a stand-in repository name that is then cut off again.
+function prefix_key(entry: string): string {
+  const key = flake_key(`${entry}x`);
+  return key.endsWith("x") ? key.slice(0, -1) : key;
+}
+
+// Why a flake or configuration may not be installed or built, or null when the operator configured or allowed it.
+export function source_refusal(flake: string, configuration: string, configured: string[], allowed: string[]): string | null {
+  if (flake.startsWith("-") || /[\s\0#]/.test(flake)) return "Give the flake as a plain reference, with no leading -, spaces or #";
+  if (!configuration_pattern.test(configuration)) return "Name the nixosConfigurations attribute with letters, digits, _, . and -";
+  if (configured.includes(flake) || allowed.includes(flake)) return null;
+  const query = flake.includes("?") ? flake.slice(flake.indexOf("?") + 1) : "";
+  const unknown = [...new URLSearchParams(query).keys()].find((key) => !flake_query_keys.has(key));
+  if (flake.split("?").length > 2 || unknown !== undefined || flake.includes("..")) {
+    return `The flake may only carry ${[...flake_query_keys].join(", ")} in its query, and no ..`;
+  }
+  const key = flake_key(flake);
+  if (configured.some((entry) => flake_key(entry) === key)) return null;
+  if (allowed.some((entry) => (entry.endsWith("/") ? key.startsWith(prefix_key(entry)) : flake_key(entry) === key))) return null;
+  return `${flake} is not a flake X-Nix is configured with; add it to provisioning.allowed_flakes to install or build media from it`;
 }
 
 // Why an install with no host key is refused, and how to find the key.

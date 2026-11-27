@@ -19,7 +19,7 @@ import { command_marker_token, with_marker_token, type Operation } from "../shar
 import type { ProvisioningSettings } from "./config.ts";
 import {
   install_operation, install_snippets, media_operation, missing_host_key, missing_tool_exit_code, parse_hardware_config, parse_install_record, parse_media_path,
-  parse_media_record,
+  parse_media_record, source_refusal,
   type InstallRecord, type InstallRequest, type MediaFormat,
 } from "./nixos/provision.ts";
 import { follow, start_run, track_wake } from "./runs.ts";
@@ -79,6 +79,8 @@ export interface ProvisionerOptions {
   default_media_root_dir: string;
   // The hosts the config declares agent keys for, which an install may not take over.
   declared_hosts: () => Set<string>;
+  // The flake references the config's flakes, deployments and caches name, which installs and media may use.
+  configured_flakes?: () => string[];
   // Called whenever the accepted provisioned keys change.
   on_agent_keys?: (keys: Map<string, string>) => void;
   // The server's public key line, which the new host's agent snippet lists, or null when the server has no key.
@@ -162,8 +164,13 @@ export class Provisioner {
     return null;
   }
 
+  // Why a flake and configuration may not be installed or built, or null when the config names or allows the flake.
+  source_refusal(flake: string, configuration: string): string | null {
+    return source_refusal(flake, configuration, this.options.configured_flakes?.() ?? [], this.settings.allowed_flakes);
+  }
+
   private request_refusal(request: InstallRequest): string | null {
-    const refusal = this.install_refusal();
+    const refusal = this.install_refusal() ?? this.source_refusal(request.flake, request.configuration);
     if (refusal !== null) return refusal;
     if (request.host === this.agents.own_host) return `'${request.host}' is the server's own host, which needs no agent`;
     if (request.host_key === null && !request.trust_unknown_host) return missing_host_key(request.address);
@@ -198,6 +205,8 @@ export class Provisioner {
 
   build_media(request: MediaRequest, trigger = "manual"): Promise<ProvisionOutcome> {
     return this.serial(async () => {
+      const refusal = this.source_refusal(request.flake, request.configuration);
+      if (refusal !== null) return { ok: false, message: refusal, job_id: null };
       const link_name = `${request.owner.slice(0, 60)}-${request.format}-${this.now()}-${randomBytes(3).toString("hex")}`.replace(/[^A-Za-z0-9._-]/g, "_");
       const operation = media_operation(this.settings, this.media_root_dir, request.flake, request.configuration, request.format, link_name);
       const launched = await this.launch(request.owner, "media", null, operation, null, trigger, link_name);
