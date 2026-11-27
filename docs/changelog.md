@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-26
 
+- fix(provisioning): build media and install only from configured or allowed flakes
 - docs(flows): show the automatic switch waiting for an absent agent
 - fix(deployment): wait for an absent build or switch agent instead of failing the automatic switch
 - docs(auth): describe the sign-in limits and how a proxy shares them

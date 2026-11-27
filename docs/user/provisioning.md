@@ -64,7 +64,7 @@ either can forget it.
 
 ## Install media
 
-The page builds install media for a deployment or any flake and attribute:
+The page builds install media for a deployment, or for any [allowed flake](#which-flakes) and attribute:
 
 - an **installer ISO**;
 - the **netboot** (iPXE) files;
@@ -74,6 +74,19 @@ It builds the configuration's own `system.build.isoImage`, `netbootRamdisk` or `
 otherwise the configuration extended with nixpkgs' installer module. Media is built on the server's own machine by its agent and
 linked under `media_root_dir`, so it stays in the store until you remove it from the page. Each file downloads from the
 page, for admins only, since a system can have secrets built into it.
+
+## Which flakes
+
+Building or installing a flake runs its code on the host that builds it, so installs and media take only the flakes
+the operator configured: a flake under `flakes`, or one a deployment or cache names. Another form of the same
+repository counts as the same flake, such as `git+https://github.com/example/fleet?ref=main` for
+`github:example/fleet`, and so does any branch or commit of it. To allow more, list them in `allowed_flakes`: a flake
+reference allows that repository or path, and one ending in `/`, such as `github:example-org/`, allows every
+repository under it. Any other flake is refused, and no job starts.
+
+Whatever is allowed, a flake that starts with `-`, holds spaces, a newline or `#`, holds `..`, or carries a query
+parameter other than `ref`, `rev`, `allRefs`, `dir` and `host` is refused, unless it is written exactly as configured.
+The attribute is letters, digits, `_`, `.` and `-`.
 
 ## Settings
 
@@ -90,4 +103,5 @@ The config's `provisioning` object:
 | `nix_bin`             | `nix`                     | The nix program media builds run.                                    |
 | `nix_args`            | flakes enabled            | Arguments before every nix command.                                  |
 | `media_root_dir`      | `/var/lib/x-nix-media` with the module, else `<state dir>/media` | Where each built medium is linked; the agent writes it and the server removes links from it. |
+| `allowed_flakes`      | none                      | Flake references, or prefixes ending in `/`, that installs and media may use beside the configured flakes; see [Which flakes](#which-flakes). |
 | `job_poll`            | `30s`                     | How often a running install or media build is read.                  |

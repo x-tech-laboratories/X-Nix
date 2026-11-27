@@ -262,6 +262,8 @@ export interface ProvisioningSettings {
   nix_args: string[];
   // Where each built install medium is linked, so it stays rooted until it is removed; under the state folder when null.
   media_root_dir: string | null;
+  // Flake references, or prefixes ending in /, that installs and media may use beside the configured flakes.
+  allowed_flakes: string[];
   job_poll: number;
 }
 
@@ -456,6 +458,7 @@ export function provisioning_settings(entry: unknown): ProvisioningSettings {
     nix_bin: read.text("nix_bin") ?? "nix",
     nix_args: read.list("nix_args", ["--extra-experimental-features", "nix-command flakes"]),
     media_root_dir: read.text("media_root_dir"),
+    allowed_flakes: read.list("allowed_flakes", []),
     job_poll: read.duration("job_poll", "30s"),
   };
 }

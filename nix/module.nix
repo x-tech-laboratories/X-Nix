@@ -170,8 +170,14 @@ in
       example = {
         ssh_key = "/var/lib/x-nix/install_key";
         agent_url = "wss://nix.example.org/api/agent";
+        allowed_flakes = [ "github:example-org/" ];
       };
-      description = "How the Provision page installs new hosts and builds install media, with the settings README.md lists.";
+      description = ''
+        How the Provision page installs new hosts and builds install media, with the settings README.md lists.
+        Installs and media take only the flakes `flakes`, `deployments` and `caches` name, in any form of the same
+        repository; `allowed_flakes` lists more flake references, or prefixes ending in `/` that allow every
+        repository under them.
+      '';
     };
 
     fleet = mkOption {
