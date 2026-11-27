@@ -172,7 +172,9 @@ flowchart TD
     long -- no --> wait([note: switching once it has])
     long -- yes --> staged{auto_switch_hold: an earlier fleet stage<br/>not yet in sync and soaked at this revision,<br/>or failed to switch to it?}
     staged -- yes --> held([note why; event once per target])
-    staged -- no --> due[auto_switch_due = target]
+    staged -- no --> agent{absent_agent: a needed build or switch agent<br/>not connected and cannot be woken?}
+    agent -- yes --> waiting([note: waiting to switch automatically])
+    agent -- no --> due[auto_switch_due = target]
     due --> next[next cycle: launch_auto_switch<br/>trigger automatic]
     next --> mark[auto_switch_target = target<br/>so it runs once per target]
 ```

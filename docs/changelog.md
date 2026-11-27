@@ -12,6 +12,8 @@ version.
 
 ### 2026-11-26
 
+- docs(flows): show the automatic switch waiting for an absent agent
+- fix(deployment): wait for an absent build or switch agent instead of failing the automatic switch
 - docs(auth): describe the sign-in limits and how a proxy shares them
 - feat(agents): sign what the server sends agents with a server key, and have agents check it
 - fix(auth): decide who may call a route by its matched pattern

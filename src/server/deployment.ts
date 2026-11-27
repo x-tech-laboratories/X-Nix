@@ -704,6 +704,8 @@ export class Deployment {
       evaluation.auto_switch_held = target;
       return [{ level: hold.level, text }];
     }
+    const absent = this.absent_agent();
+    if (absent !== null) return [{ level: "info", text: `Waiting to switch automatically: ${absent}` }];
     this.auto_switch_due = target;
     return [{ level: "warning", text: `Drift has lasted ${format_age(waited)}; switching automatically` }];
   }
@@ -718,6 +720,8 @@ export class Deployment {
 
   private async launch_auto_switch(target: string): Promise<void> {
     this.auto_switch_due = null;
+    // An agent that went away since the cycle that found the switch due starts nothing, and a later cycle tries again.
+    if (this.absent_agent() !== null) return;
     // A collection on the host holds the switch off, and a later cycle finds it due again.
     if (this.host?.collection_refusal() != null) return;
     const mismatch = this.revision_refusal();
@@ -744,6 +748,13 @@ export class Deployment {
     this.store.save_evaluation(this.id, evaluation);
     if (launched.job_id === null) this.record_failed_launch("switch", operation, "automatic", launched.error);
     else this.store.add_event(this.id, this.now(), "info", "Automatic switch started");
+  }
+
+  // Why an agent the automatic switch needs is away and cannot be woken, or null when every one is connected or can be woken.
+  private absent_agent(): string | null {
+    const needed = this.build_step() === null ? [this.agent_for("switch")] : [this.agent_for("build"), this.agent_for("switch")];
+    const absent = needed.find((host) => !this.agents.connected(host) && !this.agents.can_wake(host));
+    return absent === undefined ? null : `agent '${this.host_name(absent)}' is not connected`;
   }
 
   // Whether the cache holds the system and the host can fetch all of it, the cache holds it but the host cannot, or neither.
