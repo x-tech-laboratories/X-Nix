@@ -1183,6 +1183,71 @@ describe("automatic switch", () => {
     await collect(broken);
     expect(broken.deployment.busy()).toBe(false);
   });
+
+  // A deployment whose cache builds on another host, drifted long enough to switch by itself, with the builder away.
+  async function drift_built_elsewhere() {
+    const store = new Store(":memory:");
+    const agent = new FakeAgent();
+    const cache = new Cache(cache_settings({ id: "fleet", name: "Fleet", host: "builder", flake: "/etc/nixos", configurations: ["host"], cache_url: "https://cache.example/fleet/", info_url: false }), {
+      store, agents: new AgentPool("host", agent), now: () => clock.now,
+    });
+    const harness = make_deployment({ configuration: "host", cache: "fleet", ...automatic }, { store, agent, caches: [cache] });
+    evaluated(store, harness.deployment.id, target_closure, { flake_last_modified_epoch: clock.now - 3600 });
+    await collect(harness);
+    rewind_drift(harness, 1801);
+    await collect(harness);
+    return { ...harness, builder: new FakeAgent() };
+  }
+
+  const switch_jobs = (harness: { store: Store }) => harness.store.jobs().filter((job) => job.kind !== "eval");
+
+  it("waits for an absent build agent without a failed job, then switches once it is back", async () => {
+    const harness = await drift_built_elsewhere();
+
+    await cycle(harness);
+
+    expect(messages_of(harness)).toContain("Waiting to switch automatically: agent 'builder' is not connected");
+    expect(switch_jobs(harness)).toEqual([]);
+    expect(harness.deployment.busy()).toBe(false);
+
+    harness.agents.add("builder", harness.builder);
+    await collect(harness);
+    await cycle(harness);
+
+    expect(harness.store.jobs().find((job) => job.kind === "switch")).toMatchObject({ state: "running", trigger: "automatic" });
+    expect(harness.builder.last_run('"kind":"cache_build"')).toBeDefined();
+  });
+
+  it("starts nothing when the build agent leaves between finding the switch due and starting it", async () => {
+    const harness = await drift_built_elsewhere();
+    harness.agents.add("builder", harness.builder);
+    await collect(harness);
+    harness.agents.remove("builder");
+
+    await cycle(harness);
+
+    expect(switch_jobs(harness)).toEqual([]);
+    harness.agents.add("builder", harness.builder);
+    await collect(harness);
+    await cycle(harness);
+    expect(harness.store.jobs().find((job) => job.kind === "switch")).toMatchObject({ state: "running", trigger: "automatic" });
+  });
+
+  it("never retries a target whose build failed", async () => {
+    const harness = await drift_built_elsewhere();
+    harness.agents.add("builder", harness.builder);
+    await collect(harness);
+    await cycle(harness);
+    harness.builder.end(harness.builder.last_run('"kind":"cache_build"')!, "error: build failed\n", 1);
+    await cycle(harness);
+    expect(switch_jobs(harness).every((job) => job.state === "failed")).toBe(true);
+
+    await collect(harness);
+    await cycle(harness);
+
+    expect(harness.deployment.busy()).toBe(false);
+    expect(harness.builder.long_runs.filter((run) => run.command.includes('"kind":"cache_build"'))).toHaveLength(1);
+  });
 });
 
 // ── Daily jobs ───────────────────────────────────────────────────────────────

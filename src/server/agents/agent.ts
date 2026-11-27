@@ -160,6 +160,11 @@ export class AgentPool {
     return this.wake_settings.get(host ?? this.own_host)?.screen_off ?? null;
   }
 
+  // Whether a host's agent is connected now.
+  connected(host: string | null): boolean {
+    return this.agents.has(host ?? this.own_host);
+  }
+
   // Whether a host's agent is away and the host can be woken.
   can_wake(host: string | null): boolean {
     const name = host ?? this.own_host;
