@@ -10,6 +10,11 @@ version.
 
 ## Unreleased
 
+### 2026-11-27
+
+- test: raise the coverage floor to what the sudo group tests reach
+- feat(agent)!: give each host only the sudo rules its own configuration needs
+
 ### 2026-11-26
 
 - fix(provisioning): build media and install only from configured or allowed flakes

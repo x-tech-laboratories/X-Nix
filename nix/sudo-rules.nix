@@ -19,6 +19,8 @@
   gid ? null,
   # The sudo package, whose version says whether rules may be regular expressions.
   sudo_package ? pkgs.sudo,
+  # The host's boot loader, "systemd-boot", "grub" or "efi", whose tools alone are allowed; null allows every loader's.
+  boot_loader ? null,
 }:
 let
   system_bin = "/run/current-system/sw/bin";
@@ -31,6 +33,9 @@ let
   ];
 
   patterns = lib.importJSON ./sudo-patterns.json;
+
+  # Whether the rules for one boot loader's tools are added.
+  loader = name: boot_loader == null || boot_loader == name;
 
   # An older sudo cannot read `^…$` rules, so it gets the wider shell-style rules instead.
   exact = lib.versionAtLeast (lib.getVersion sudo_package) "1.9.10";
@@ -94,18 +99,18 @@ let
       collect_garbage
     ]
     # The boot loader's entries, read with root first since /boot is often root's alone.
-    ++ [
-      "${system_bin}/bootctl list --json\\=short"
+    ++ lib.optional (loader "systemd-boot") "${system_bin}/bootctl list --json\\=short"
+    ++ lib.optionals (loader "grub") [
       "${system_bin}/cat /boot/grub/grub.cfg"
       "${system_bin}/grub-editenv list"
     ]
     # inhibit_sleep's inhibitor, which holds until its stdin closes; the idle form is for a server not yet updated.
-    ++ [
+    ++ lib.optionals allow.sleepInhibitors [
       "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=switching cat"
     ]
     # The inhibitor every job holds on a host listed under wake_on_lan; the idle form is for a server not yet updated.
-    ++ [
+    ++ lib.optionals allow.sleepInhibitors [
       "${system_bin}/systemd-inhibit --what\\=sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
       "${system_bin}/systemd-inhibit --what\\=idle\\:sleep --mode\\=block --who\\=X-Nix --why\\=job cat"
     ]
@@ -128,11 +133,11 @@ let
       (either "${system_bin}/systemctl" patterns.stop_run_unit "stop x-nix-run-*")
     ]
     # Set next boot with the loader's own one-shot tool.
-    ++ lib.optionals allow.bootEntries [
-      (either "${system_bin}/bootctl" patterns.set_oneshot_entry "set-oneshot *")
-      (either "${system_bin}/grub-reboot" patterns.grub_reboot_entry "*")
-      (either "${system_bin}/efibootmgr" patterns.efi_boot_next "--bootnext *")
-    ]
+    ++ lib.optionals allow.bootEntries (
+      lib.optional (loader "systemd-boot") (either "${system_bin}/bootctl" patterns.set_oneshot_entry "set-oneshot *")
+      ++ lib.optional (loader "grub") (either "${system_bin}/grub-reboot" patterns.grub_reboot_entry "*")
+      ++ lib.optional (loader "efi") (either "${system_bin}/efibootmgr" patterns.efi_boot_next "--bootnext *")
+    )
     # post_switch runs any shell command as root, so this rule alone makes the user root.
     ++ lib.optional allow.postSwitch "/bin/sh -c *"
     # A switch over SSH to target_host logs in with root's own SSH setup and any NIX_SSHOPTS options, so this rule alone makes the user root.

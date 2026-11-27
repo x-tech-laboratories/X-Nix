@@ -53,7 +53,8 @@ without step 2, until you declare it.
 | `host`        | the hostname   | The name the agent logs in as, which must be the host's id in the server's config. |
 | `path`        | none           | Extra programs on the PATH of the commands the agent runs.           |
 | `sudoRules`   | `true`         | Install the sudo rules the agent needs; see [Installing](/user/installing/#what-runs-as-root). |
-| `sudoAllow.postSwitch`, `.targetHost`, `.bootEntries`, `.lockHolders`, `.flakeUpdates`, `.cacheSwitch` | `true` | Each keeps one group of sudo rules; see [Least privilege](/user/installing/#least-privilege). |
+| `sudoAllow.postSwitch`, `.bootEntries`, `.lockHolders`, `.cacheSwitch`, `.sleepInhibitors` | `true` | Each keeps one group of sudo rules; see [Least privilege](/user/installing/#least-privilege). |
+| `sudoAllow.targetHost`, `.flakeUpdates` | `false` | Each adds a group of sudo rules that is a root shell by itself. |
 | `sudoAllow.runUnits` | `runUnits.enable` | Keep the rules that start and stop run units. |
 | `sudoAllow.collectGarbageArgs` | any | The exact arguments Collect Garbage may pass to `nix-collect-garbage` as root. |
 | `runUnits.enable` | `true`    | Run each job as a transient systemd unit, `x-nix-run-<run id>.service`, so stopping it stops every process it started. |

@@ -290,6 +290,7 @@ in
         inherit (config.users.users.x-nix-agent) uid;
         inherit (config.users.groups.x-nix-agent) gid;
         sudo_package = config.security.sudo.package;
+        boot_loader = sudo_allow.boot_loader config;
       })
     ];
 
@@ -328,7 +329,8 @@ in
       }
       // lib.optionalAttrs (cfg.serverPublicKeys != [ ]) { X_NIX_AGENT_SERVER_KEYS_FILE = toString server_keys_file; }
       // lib.optionalAttrs cfg.pull.enable { X_NIX_AGENT_PULL_FILE = toString pull_file; }
-      // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; };
+      // lib.optionalAttrs cfg.runUnits.enable { X_NIX_AGENT_RUN_UNIT_FILE = toString run_unit_file; }
+      // lib.optionalAttrs cfg.sudoRules { X_NIX_AGENT_SUDO_FILE = toString (sudo_allow.groups_file pkgs cfg.sudoAllow); };
 
       # Only RestrictRealtime sandboxes it, because sudo and every switch it runs inherit the unit's sandbox and must still write the system.
       serviceConfig = {
