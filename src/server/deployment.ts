@@ -105,6 +105,9 @@ export interface Evaluation {
   switch_failure?: { revision: string | null; reason: string };
   // The target an automatic switch was last noted as held for, so each hold is noted once.
   auto_switch_held?: string;
+  // The system the flake was last seen to build, at the revision it was evaluated at: recorded when the host runs the
+  // evaluated target or a switch succeeds, the system then filled in from the next reading. Absent when never seen.
+  flake_system?: { system: string | null; revision: string | null };
 }
 
 // What a switch waits on: a build on another host, or the system it built reaching the cache.
@@ -480,6 +483,7 @@ export class Deployment {
       raise(evaluation.eval_unreachable ? "unavailable" : "failed");
       messages.push({ level: evaluation.eval_unreachable ? "warning" : "error", text: `Flake evaluation failed: ${evaluation.eval_error}` });
     }
+    if (evaluation.flake_system !== undefined && evaluation.flake_system.system === null) evaluation.flake_system.system = fields.current;
     const previous_current = this.reading()?.current ?? null;
     const target = evaluation.target;
     if (target !== null && !evaluated && previous_current !== null && previous_current !== fields.current && target !== fields.current) {
@@ -492,6 +496,7 @@ export class Deployment {
         evaluation.drift_target = null;
         evaluation.drift_since_epoch = null;
         if (evaluation.in_sync === undefined || evaluation.in_sync.revision !== evaluation.flake_revision) evaluation.in_sync = { revision: evaluation.flake_revision, since_epoch: now };
+        evaluation.flake_system = { system: fields.current, revision: evaluation.flake_revision };
         messages.push({ level: "info", text: "System matches the flake" });
       } else {
         delete evaluation.in_sync;
@@ -693,10 +698,9 @@ export class Deployment {
       this.ask_about_revision(mismatch);
       return [{ level: "warning", text: `Not switching automatically: ${mismatch}; evaluating again` }];
     }
-    const created = fields.profile_created_epoch ?? fields.switched_epoch;
-    // A generation newer than the flake came from elsewhere, such as an unpushed checkout, and switching would undo it.
-    if (created === null || evaluation.flake_last_modified_epoch === null || evaluation.flake_last_modified_epoch <= created) {
-      return [{ level: "info", text: "Not switching automatically: the running generation is newer than the flake" }];
+    // A system the flake was never seen to build came from elsewhere, such as an unpushed checkout, and switching would undo it.
+    if (evaluation.flake_system?.system !== fields.current) {
+      return [{ level: "info", text: "Not switching automatically: the running system was not built from this flake as far as X-Nix knows, so it may come from elsewhere, such as an unpushed checkout; switch once by hand to resume" }];
     }
     const stale = this.stale_inputs(evaluation, now);
     if (stale !== null) return [{ level: "warning", text: `Not switching automatically: ${stale}` }];
@@ -1135,7 +1139,9 @@ export class Deployment {
     if (kind !== "switch" && kind !== "test") return;
     const evaluation = this.evaluation();
     if (failure === null) delete evaluation.switch_failure;
-    else evaluation.switch_failure = { revision: evaluation.flake_revision, reason: failure };
+    // The system a succeeded switch runs is the next reading's, built from the revision it was evaluated at.
+    if (failure === null && kind === "switch") evaluation.flake_system = { system: null, revision: evaluation.flake_revision };
+    if (failure !== null) evaluation.switch_failure = { revision: evaluation.flake_revision, reason: failure };
     this.store.save_evaluation(this.id, evaluation);
   }
 

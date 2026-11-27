@@ -12,6 +12,7 @@ version.
 
 ### 2026-11-27
 
+- fix(deployment): switch automatically from any system the flake built, not by comparing switch and commit times
 - docs(developer): plan running the agent without root
 - feat(agent): run switch commands the host declares by name, and collect garbage with a fixed unit
 - test: raise the coverage floor to what the sudo group tests reach

@@ -34,8 +34,10 @@ evaluates again before judging drift, so a switch made by hand does not read as 
 ### Automatic switch
 
 With `auto_switch`, a deployment switches by itself once drift has lasted `auto_switch_after`. It switches once per
-target system, and never when the running generation is newer than the flake's last change, since that generation came
-from somewhere else, such as an unpushed checkout, and switching would undo it. While the agent that builds or switches
+target system, and only from a system X-Nix saw the flake build: one the host ran while it matched the evaluation, or
+the one a switch X-Nix ran left it on. Any other running system came from somewhere else, such as an unpushed checkout
+or a switch made outside X-Nix, and switching would undo it, so the deployment holds and says why until it is switched
+once by hand. While the agent that builds or switches
 the system is not connected and its host cannot be woken, it waits and says so, and switches once the agent is back.
 
 `auto_switch_after` is also how long a new lock waits before it reaches the host by itself: its clock starts when X-Nix
